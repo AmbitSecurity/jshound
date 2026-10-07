@@ -35,26 +35,39 @@ def _emit(data, out, text=False):
 
 
 def _format(records, fmt, title):
-    from .export import har, openapi, urls
+    from .export import har, openapi, table, urls
+    if fmt == "table":
+        return table.build(records), True
     if fmt == "openapi":
         return openapi.build(records, title=title), False
     if fmt == "har":
         return har.build(records, title=title), False
     if fmt == "urls":
         return "\n".join(urls.build(records, with_method=True)), True
-    return records, False                                    # jsonl/raw
+    if fmt == "jsonl":
+        return "\n".join(json.dumps(r) for r in records), True
+    return records, False                                    # json/raw
 
 
 def cmd_analyze(a):
     from .analyze import analyze as run
     records, paths = run(a.bodies, a.host, a.manifest)
     print(f"{len(paths)} scripts -> {len(records)} records", file=sys.stderr)
+    # A directory with nothing readable in it is not a host with no API, and `-o spec.json` on this
+    # path wrote a valid, importable, EMPTY OpenAPI document whose description reassured the reader
+    # about the 0 placeholders it contained.
+    if not paths and not records:
+        n = sum(len(f) for _r, _d, f in os.walk(a.bodies))
+        print(f"analyze: nothing readable in {a.bodies!r} ({n} file(s) present, no .js/.mjs/.cjs/"
+              f".html among them) — run `jshound fetch <url> -o {a.bodies}` first", file=sys.stderr)
+        return 1
     data, text = _format(records, a.format, a.title or a.host or "Recovered API")
     _emit(data, a.out, text)
 
 
 def cmd_export(a):
-    records = json.load(open(a.records))
+    from . import read_records
+    records = read_records(a.records)
     data, text = _format(records, a.format, a.title or "Recovered API")
     _emit(data, a.out, text)
 
@@ -122,6 +135,14 @@ def cmd_manifest(a):
             print(f"  nuxt, declared by the build: {len(d['routes'])} prerendered routes + "
                   f"{len(d['rule_routes'])} from route rules · {len(d['route_rules'])} rules total",
                   file=sys.stderr)
+            # A readable manifest that declares nothing is a fact about the BUILD, and a bare row of
+            # zeros reads like the tool failed instead. nuxt.com served 900 prerendered routes and now
+            # serves `"prerendered": []`, having moved to rendering on demand.
+            if not d["routes"] and not d["rule_routes"]:
+                print("  the manifest was read and declares nothing: this build prerenders no routes "
+                      "and sets no route rules, so it renders on demand. Its routes are not written "
+                      "down anywhere for this command to read — use `fetch` and `analyze` instead.",
+                      file=sys.stderr)
             out = d["routes"] + d["rule_routes"]
         for r in out:
             print(r)
@@ -137,7 +158,7 @@ def cmd_manifest(a):
 
 def cmd_fetch(a):
     from .fetch import collect
-    collect(a.url, a.out, not a.no_chunks, a.max_chunks)
+    collect(a.url, a.out, not a.no_chunks, a.max_chunks, allow_private=a.allow_private)
 
 
 def cmd_from_har(a):
@@ -188,8 +209,13 @@ def build_parser():
     p.add_argument("--version", action="version", version=f"jshound {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    fmt = dict(choices=["openapi", "har", "urls", "jsonl"], default="jsonl",
-               help="openapi=Burp/Caido contract import, har=Site Map import, urls=nuclei/ffuf")
+    # `jsonl` emitted a pretty-printed JSON ARRAY, which is not JSON Lines and broke `jq -c` per line
+    # and `while read`. Rather than redefine what the default produces, the two shapes now have two
+    # honest names: `json` is the array and stays the default, `jsonl` is one object per line.
+    fmt = dict(choices=["openapi", "har", "urls", "table", "json", "jsonl"], default="json",
+               help="table=the requests, to read; openapi=Burp/Caido contract import, har=Site Map "
+                    "import, urls=nuclei/ffuf, json=records as an array (default), jsonl=one record "
+                    "per line")
 
     s = sub.add_parser("analyze", help="directory of saved JS/HTML -> contracts (no network)")
     s.add_argument("bodies")
@@ -234,6 +260,8 @@ def build_parser():
     s.add_argument("-o", "--out", default="./bodies")
     s.add_argument("--no-chunks", action="store_true")
     s.add_argument("--max-chunks", type=int, default=400)
+    s.add_argument("--allow-private", action="store_true",
+                   help="allow URLs the target names in private address space (loopback, RFC1918, link-local); on by default when the target itself is private")
     s.set_defaults(fn=cmd_fetch)
 
     s = sub.add_parser("from-har", help="HAR export (DevTools/Burp/Caido) -> bodies dir (no network)")
@@ -277,8 +305,21 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
-    os.environ.setdefault("NODE_PATH", os.environ.get("NODE_PATH", "/usr/local/lib/node_modules"))
-    return a.fn(a)
+    # NODE_PATH is deliberately NOT defaulted here. Setting it to `/usr/local/lib/node_modules`
+    # shadowed every module's own fallback to the checkout's `node_modules`, which is where the Babel
+    # packages actually are, and the only reason anything worked was node's upward directory walk from
+    # `jshound/js/` — a walk that finds nothing once the package is installed non-editable.
+    # A CLI reports what went wrong; it does not hand the user a traceback. These are the failures a
+    # correct invocation can still hit — a path that is not there, a file that is not what it looks
+    # like, a node helper that did not run — and each already carries a sentence saying which.
+    try:
+        return a.fn(a)
+    except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as e:
+        print(f"{a.cmd}: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print(f"{a.cmd}: interrupted", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

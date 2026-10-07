@@ -39,9 +39,25 @@ PY_BIN = os.environ.get("BENCH_PYTHON", sys.executable)
 
 
 def _norm(s):
+    """Any tool's URL -> a comparable path, or None.
+
+    Three shapes reach this, and dropping either of the last two scores a tool for the FORM of its
+    answer rather than its content: a relative path (`/v1/thing`), an absolute URL (`https://h/v1/
+    thing`), and a path whose origin is a named-but-unresolved value (`{baseUrl}/v1/thing`). The last
+    is jshound's marker for "this endpoint is real, its base came from somewhere I could not follow",
+    and only accepting `startswith("/")` dropped three of this repo's own six fixture endpoints —
+    so `bench/run.py` reported 3/6 for jshound while COMPARISON.md reported 6/6 off the same files.
+    """
     if not s or not isinstance(s, str):
         return None
     s = s.split("?", 1)[0]
+    if s.startswith(("http://", "https://")):
+        rest = s.split("://", 1)[1]
+        s = "/" + rest.split("/", 1)[1] if "/" in rest else "/"
+    elif s.startswith("{"):
+        s = s[s.index("}") + 1:] if "}" in s else s
+        if not s.startswith("/"):
+            s = "/" + s
     if not s.startswith("/"):
         return None
     p, _params, _ok = normalize(s)

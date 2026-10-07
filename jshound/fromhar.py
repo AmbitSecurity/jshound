@@ -89,8 +89,18 @@ def _text(content):
 
 def convert(har_path, outdir):
     os.makedirs(outdir, exist_ok=True)
-    with open(har_path, encoding="utf-8", errors="replace") as fh:
-        har = json.load(fh)
+    # A HAR is an export from a browser or a proxy, so it is as trustworthy as whatever produced it.
+    # `json.load` raises on a truncated export, and RecursionError on a deeply nested one, and neither
+    # is worth a traceback when the answer is "this file is not a usable HAR".
+    try:
+        with open(har_path, encoding="utf-8", errors="replace") as fh:
+            har = json.load(fh)
+    except FileNotFoundError:
+        sys.exit(f"from-har: no such file: {har_path}")
+    except (json.JSONDecodeError, RecursionError, UnicodeDecodeError) as e:
+        sys.exit(f"from-har: {har_path} is not readable JSON ({type(e).__name__})")
+    if not isinstance(har, dict):
+        sys.exit(f"from-har: {har_path} is JSON but not a HAR (expected an object with a `log` key)")
     entries = (har.get("log") or {}).get("entries") or []
 
     rows, written, skipped = [], 0, 0

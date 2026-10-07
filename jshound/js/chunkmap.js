@@ -49,48 +49,183 @@ if (!ast) {
   process.exit(0);
 }
 
-// Any identifier the builder closes over resolves to a benign stub, so `r.p + "static/..."` yields
-// "static/..." rather than a ReferenceError that would lose the whole map.
-// A stub has to be CALLABLE as well as indexable. Element's builder is
-//     r.u = e => "bundles/" + r.h() + "/" + ({…}[e] || e) + ".js"
-// and a plain object for `r.h` makes `r.h()` throw "not a function", which killed the whole
-// evaluation: 8 chunk ids seen, 0 resolved, no URLs, no error anyone would notice.
-const CALLABLE = Object.assign(function () { return ""; },
-                               { p: "", u: () => "", miniCssF: () => "" });
-const STUB = new Proxy({}, {
-  has: () => true,
-  get: (_t, k) => (k === Symbol.unscopables ? undefined : CALLABLE),
-});
-
 // THE BUILDER'S SIBLINGS ARE IN THE FILE. `r.h = () => "488a74c4cbf74401eabd"` sits two expressions
 // away from `r.u`, and it holds the build hash every chunk URL needs. Stubbing it yields
 // `bundles//styles.js`; reading it yields the URL the app actually requests. So collect every
-// `<recv>.<prop> = <function|literal>` and hand the real ones to the evaluation, keeping the stub
-// only as the fallback for what is genuinely not here.
+// `<recv>.<prop> = <function|literal>` and keep the NODE, so the interpreter below can read the real
+// value. A sibling that is genuinely not in the file evaluates to the empty string.
 const siblings = new Map();          // receiver name -> Map(prop -> source)
 
-function receiverFor(name) {
-  const m = siblings.get(name);
-  const base = {};
-  if (m) {
-    for (const [k, src] of m) {
-      if (k === "u") continue;       // the builder itself — do not re-enter it
-      try { base[k] = new Function("__s", `with(__s){return (${src})}`)(STUB); } catch (_) {}
-    }
-  }
-  return new Proxy(base, {
-    has: () => true,
-    get: (t, k) => (k in t ? t[k] : (k === Symbol.unscopables ? undefined : CALLABLE)),
-  });
+
+// ── EVALUATING THE BUILDER WITHOUT RUNNING IT ───────────────────────────────────────────────────────
+//
+// This used to be `new Function("__s", "with(__s){return (" + code + ")}")(scopeFor(recv))`, where
+// `code` was generated from the target's own AST and the result was then CALLED. That is remote code
+// execution on whoever runs this tool, and `with` over a Proxy does not prevent it: the Proxy only
+// intercepts FREE IDENTIFIER lookups, so `process` and `require` resolve to the stub — but a member
+// access on a literal never consults the scope at all.
+//
+//     "".constructor.constructor("return process")()      // the real host process, every time
+//
+// Demonstrated against the stub that was here: uid, pid, cwd and the operator's environment, from a
+// bundle the operator merely pointed the tool at. On a machine doing reconnaissance that environment
+// holds cloud credentials, and the output looked perfectly healthy while it happened.
+//
+// So the builder is INTERPRETED instead. Its accepted shape is already narrow — one parameter, a
+// returned concatenation that indexes object literals by that parameter — and that shape needs only
+// string concatenation, object-literal lookup, and the sibling values (`r.p`, `r.h()`) that live in
+// the same file. Nothing below can call anything the target supplies; an unsupported node returns
+// undefined, the candidate is skipped, and `buildersFailed` counts it exactly as a throw used to.
+const MAX_DEPTH = 24;
+// The properties the evaluator this replaced carried on its stub. Reproduced exactly, because the
+// recorded chunk expectations depend on them: a builder reading `o.p` off a receiver that is not its
+// own got "" and the publicPath was reported separately.
+const STUB_PROPS = { p: "", u: "", miniCssF: "" };
+
+function sibNode(recvName, prop) {
+  const m = recvName ? siblings.get(recvName) : null;
+  const e = m ? m.get(String(prop)) : null;
+  return e ? e.node : null;
 }
 
-function scopeFor(name) {
-  const recv = name ? receiverFor(name) : null;
-  return new Proxy({}, {
-    has: () => true,
-    get: (_t, k) => (k === Symbol.unscopables ? undefined
-                     : (recv && k === name ? recv : CALLABLE)),
-  });
+function objLookup(objNode, key) {
+  const want = String(key);
+  for (const pr of objNode.properties || []) {
+    if (pr.type !== "ObjectProperty" || pr.computed) continue;
+    const k = pr.key && (pr.key.name !== undefined ? pr.key.name : pr.key.value);
+    if (String(k) === want) return evalNode(pr.value, { param: null, id: null, recv: null }, 0);
+  }
+  return undefined;
+}
+
+// The returned expression of an arrow or function, evaluated. Handles both `e => ...` and
+// `function(e){ return ... }`; a body that does anything other than return is not a builder.
+function evalFnReturn(fnNode, env, depth) {
+  if (!fnNode || depth > MAX_DEPTH) return undefined;
+  if (/FunctionDeclaration|FunctionExpression|ArrowFunctionExpression/.test(fnNode.type)) {
+    const inner = { ...env, param: (fnNode.params || [])[0] && fnNode.params[0].name || env.param };
+    const b = fnNode.body;
+    if (!b) return undefined;
+    if (b.type !== "BlockStatement") return evalNode(b, inner, depth + 1);
+    for (const st of b.body || []) {
+      if (st.type === "ReturnStatement") return evalNode(st.argument, inner, depth + 1);
+    }
+    return undefined;
+  }
+  return evalNode(fnNode, env, depth + 1);
+}
+
+function evalNode(node, env, depth) {
+  if (!node || depth > MAX_DEPTH) return undefined;
+  switch (node.type) {
+    case "StringLiteral": return node.value;
+    case "NumericLiteral": return String(node.value);
+    case "BooleanLiteral": return node.value ? "true" : "";
+    case "NullLiteral": return "";
+    case "ParenthesizedExpression": return evalNode(node.expression, env, depth + 1);
+    case "Identifier":
+      // The only identifier that means anything here is the builder's own parameter, which holds the
+      // chunk id. Everything else is deliberately unresolvable rather than looked up anywhere.
+      return node.name === env.param ? env.id : undefined;
+    case "TemplateLiteral": {
+      let out = "";
+      for (let i = 0; i < node.quasis.length; i++) {
+        const q = node.quasis[i].value;
+        out += (q.cooked !== undefined && q.cooked !== null) ? q.cooked : (q.raw || "");
+        if (i < (node.expressions || []).length) {
+          const v = evalNode(node.expressions[i], env, depth + 1);
+          if (v === undefined) return undefined;
+          out += v;
+        }
+      }
+      return out;
+    }
+    case "BinaryExpression": {
+      if (node.operator !== "+") return undefined;
+      const l = evalNode(node.left, env, depth + 1);
+      if (l === undefined) return undefined;
+      const r = evalNode(node.right, env, depth + 1);
+      if (r === undefined) return undefined;
+      return String(l) + String(r);
+    }
+    case "LogicalExpression": {
+      const l = evalNode(node.left, env, depth + 1);
+      if (node.operator === "||") {
+        return (l === undefined || l === "" || l === false) ? evalNode(node.right, env, depth + 1) : l;
+      }
+      if (node.operator === "??") {
+        return (l === undefined || l === null) ? evalNode(node.right, env, depth + 1) : l;
+      }
+      return undefined;
+    }
+    case "ConditionalExpression": {
+      // Both branches are real URLs for some id; take whichever resolves, consequent first. The old
+      // evaluator picked whatever the condition happened to evaluate to against a stub, which was
+      // arbitrary in exactly the same way.
+      const c = evalNode(node.consequent, env, depth + 1);
+      return c !== undefined ? c : evalNode(node.alternate, env, depth + 1);
+    }
+    case "MemberExpression": {
+      const key = node.computed
+        ? evalNode(node.property, env, depth + 1)
+        : (node.property && (node.property.name !== undefined ? node.property.name : node.property.value));
+      if (key === undefined) return undefined;
+      // an inline id map: {94:"a1b2",96:"c3d4"}[e]
+      if (node.object.type === "ObjectExpression") return objLookup(node.object, key);
+      if (node.object.type === "Identifier") {
+        // A sibling on the builder's OWN receiver is read for real: `r.p` is the publicPath and
+        // `r.h()` the build hash, and reading them is the difference between `bundles//styles.js`
+        // and the URL the app requests.
+        if (env.recv && node.object.name === env.recv) {
+          const sib = sibNode(env.recv, key);
+          if (sib) {
+            const v = evalNode(sib, { ...env, param: null }, depth + 1);
+            if (v !== undefined) return v;
+          }
+          return "";
+        }
+        // Any OTHER receiver is stubbed, which is what the evaluator this replaced did and what the
+        // webpack-4 fixture's expected output encodes. webpack 4 emits a NAMED builder, so there is
+        // no `__recv` to key on, and its `o.p` resolved through the stub to "" — the publicPath is
+        // reported separately rather than prefixed onto every URL. Matching that keeps the recorded
+        // expectations true. `p`/`u`/`miniCssF` were the stub's own keys; anything else stayed
+        // undefined, which poisons the concatenation and correctly drops the candidate.
+        return STUB_PROPS.hasOwnProperty(String(key)) ? "" : undefined;
+      }
+      return undefined;
+    }
+    case "CallExpression": {
+      const c = node.callee;
+      // r.h() — the build hash, which lives two expressions away in the same file
+      if (c && c.type === "MemberExpression" && c.object.type === "Identifier"
+          && env.recv && c.object.name === env.recv) {
+        const key = c.computed
+          ? evalNode(c.property, env, depth + 1)
+          : (c.property && (c.property.name !== undefined ? c.property.name : c.property.value));
+        const sib = key === undefined ? null : sibNode(env.recv, key);
+        if (sib) {
+          const v = evalFnReturn(sib, { ...env, param: null }, depth + 1);
+          if (v !== undefined) return v;
+        }
+        return "";
+      }
+      if (c && c.type === "MemberExpression" && c.object.type === "Identifier") {
+        const key = c.computed ? evalNode(c.property, env, depth + 1)
+                               : (c.property && (c.property.name !== undefined ? c.property.name : c.property.value));
+        return STUB_PROPS.hasOwnProperty(String(key)) ? "" : undefined;
+      }
+      return undefined;
+    }
+    default: return undefined;
+  }
+}
+
+// What `new Function` used to hand back: a callable taking an id and returning a URL, or undefined.
+function builderFor(fnNode) {
+  const param = (fnNode.params || [])[0];
+  if (!param || param.type !== "Identifier") return null;
+  const recv = fnNode.__recv || null;
+  return (id) => evalFnReturn(fnNode, { param: param.name, id: String(id), recv }, 0);
 }
 
 const builders = [];
@@ -112,7 +247,7 @@ traverse(ast, {
             .test(right.type)) return;
       if (!siblings.has(obj)) siblings.set(obj, new Map());
       const m = siblings.get(obj);
-      if (!m.has(prop)) { try { m.set(prop, generate(right).code); } catch (_) {} }
+      if (!m.has(prop)) { try { m.set(prop, { src: generate(right).code, node: right }); } catch (_) {} }
     },
   },
 });
@@ -199,7 +334,7 @@ traverse(ast, {
 // runtime. Resolving the result against the runtime file's own directory instead is wrong whenever the chunks are
 // served from somewhere else — which is the norm, because the runtime is usually an inline <script> in the HTML
 // while the chunks sit on a CDN. one partner portal ships its runtime inline on the page and its 718 chunks
-// under `//lf16-cdn-tos.tiktokcdn-us.com/obj/static-tx/i18n/ecom/partner_center/`, so every URL we built pointed at
+// under `//cdn.example.com/static/<app>/`, so every URL we built pointed at
 // the wrong host and 87% of the app was never fetched. The runtime states the base; read it.
 let publicPath = "";
 traverse(ast, {
@@ -262,8 +397,9 @@ for (const fnNode of builders) {
 
   let fn;
   try {
-    fn = new Function("__s", `with(__s){return (${code})}`)(scopeFor(fnNode.__recv));
-  } catch (_) { buildersFailed++; continue; }
+    fn = builderFor(fnNode);
+  } catch (_) { fn = null; }
+  if (!fn) { buildersFailed++; continue; }
 
   idsSeen += ids.size;
   for (const id of ids) {
@@ -411,13 +547,34 @@ if (out.size === 0 || shortfall) {
 // never speculate about something the structured pass already resolved
 for (const u of out) spec.delete(u);
 
+// A DECLARED CHUNK IS A URL PATH, AND MOST STRINGS ARE NOT.
+//
+// Six places add to `out`, so the guard is here, at the one point they all pass through — a filter
+// per call site is a filter one future call site will skip. A path component cannot hold whitespace,
+// a quote, a bracket or a brace without being escaped first, so a string carrying any of them was
+// never a chunk URL. Supabase's runtime put the whole Google Tag Manager snippet
+// (`(function(w,d,s,l,i){w[l]=w[l]||[]...`) into its id map, and `unfetched` duly offered it as a
+// chunk to go and download.
+//
+// Rejections are counted rather than dropped quietly, because "this bundle declares 40 chunks and 3
+// of its strings were not paths" is a different report from "it declares 37".
+function pathLike(v) {
+  if (typeof v !== "string" || !v) return false;
+  if (v.length > 2048) return false;
+  return !/[\s"'`(){}<>;\\]|^data:|^javascript:/i.test(v);
+}
+const rejected = [...out].filter((v) => !pathLike(v)).length
+                 + [...spec].filter((v) => !pathLike(v)).length;
+
 process.stdout.write(JSON.stringify({
   publicPath,
-  chunks: [...out],
-  speculative: [...spec],
+  chunks: [...out].filter(pathLike),
+  speculative: [...spec].filter(pathLike),
   fallback: out.size === 0 && spec.size > 0,
   // SAY HOW COMPLETE THIS IS. A caller that cannot tell "this bundle declares no chunks" from
   // "this bundle declares 40 and we built 12 URLs" cannot report a hole it does not know about.
   stats: { builders: builders.length, buildersFailed, idsSeen, idsResolved,
-           structured: out.size, speculative: spec.size },
+           structured: [...out].filter(pathLike).length,
+           speculative: [...spec].filter(pathLike).length,
+           notPathLike: rejected },
 }));

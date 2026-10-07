@@ -7,8 +7,8 @@ The previous design had static analysis do its own fetching: find the scripts a 
 with a dozen parallel workers, then parse. Three things went wrong at once, all of them predictable in
 hindsight:
 
-  - it fetched from our raw IP while crawling went through a stealth browser, so one channel got us
-    firewall-banned from three in-scope hosts while the other kept working
+  - it fetched from a different egress than the crawler used, so one channel got blocked by three
+    hosts' edge protection while the other kept working
   - it worked to a deadline, and on a 643 KB page it spent the entire budget walking 1271 links and fetched
     ZERO scripts — then reported "0 endpoints", which reads exactly like "this host has no API"
   - it re-downloaded bundles the crawler had already saved to disk minutes earlier
@@ -24,7 +24,7 @@ Chunk enumeration still matters: a bundle names lazy chunks the browser never lo
 surface. `--unfetched` prints them so they can be collected — usually by pointing the crawler at them,
 since that is the path already set up for it.
 
-  python analyze.py raw/bodies --host help.nextcloud.com --out raw/help.static.json
+  python analyze.py raw/bodies --host help.example.com --out raw/help.static.json
   python analyze.py raw/bodies --unfetched          # chunk URLs nobody has downloaded yet
 """
 import argparse, collections, hashlib, json, os, re, subprocess, sys, tempfile
@@ -32,12 +32,15 @@ from urllib.parse import urljoin, urlparse
 from html.parser import HTMLParser
 from concurrent.futures import ThreadPoolExecutor
 
+from jshound.nodeenv import node_env, node_failure
+
 # Resolved from the environment so the same file works inside the image and on a dev box.
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # The extractor sits beside this file, in js/.
 # Babel and terser are installed globally in the image; NODE_PATH points node at them from any cwd.
-NODE_PATH = os.environ.get("NODE_PATH") or "/usr/local/lib/node_modules"
+NODE_PATH = os.environ.get("NODE_PATH") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                            "node_modules")
 AST = os.path.join(HERE, "js", "static_ast.js")
 CHUNKMAP = os.path.join(HERE, "js", "chunkmap.js")
 
@@ -231,7 +234,7 @@ class _Doc(HTMLParser):
                                             "name": a.get("name") or a.get("id"), "value": parsed})
 
             # A URL LOOKS LIKE ONE. Requiring only "the attribute is named src/action" produced 18,434
-            # hits on one engagement, almost all of them noise: `<faceplate-tracker action="click">` where
+            # hits on one corpus, almost all of them noise: `<faceplate-tracker action="click">` where
             # `action` is an event name, and `<faceplate-loader src="concat:a,b,c">` where `src` is a
             # module list behind a pseudo-scheme. Neither is a request. A path starts with `/`, or `./`,
             # or a scheme we can actually fetch — anything else is a word that happens to sit on an
@@ -301,7 +304,7 @@ def inline_scripts(d, tmp=None):
     the first are picked up by the directory walk AND extracted again, so every inline script counts twice.
     An analysis pass should not modify the thing it is analysing.
 
-    A page's own inline JavaScript is JavaScript. scan.nextcloud.com's entire API — POST /api/queue with
+    A page's own inline JavaScript is JavaScript. one scanner service's entire API — POST /api/queue with
     a {url} body, a 201-means-still-scanning poll, a redirect to /results/{uuid} — lives in one inline
     jQuery block on the landing page, and analysing only .js FILES walked straight past it. The agent had
     to open the HTML itself and hand-write the records, which is the tool failing, not the agent excelling.
@@ -349,10 +352,10 @@ def config_values(d):
 
     A static bundle has no way to know its own deployment's base URL, so the server writes it into the page
     and the bundle reads it back. That is why `${k(c.baseUrl)}admin/realms/...` resolves to `{EXPR}` — the
-    value was never in any JavaScript file. On auth.nextcloud.com it is sitting in
+    value was never in any JavaScript file. On auth.example.com it is sitting in
 
         <script id="environment" type="application/json">
-          {"authServerUrl":"https://auth.nextcloud.com/auth", "serverBaseUrl":"...", "realm":"master"}
+          {"authServerUrl":"https://auth.example.com/auth", "serverBaseUrl":"...", "realm":"master"}
 
     in a file we already had on disk, and 474 endpoints kept an unresolved base because nothing opened it.
 
@@ -395,9 +398,9 @@ def config_values(d):
             # This function only ever read `<script type="application/json">` and <meta>, so it walked past
             # the one place the answer usually is. On one target the served HTML contains, in plain sight:
             #
-            #     window._apiGatewayHostname = "//apigw.app.client.example"
-            #     window._mgmtHostname       = "//mgmt.app.client.example"
-            #     window._biHostname / _pdfHostname / _visitorSyncHostname
+            #     window._gatewayHost = "//apigw.app.client.example"
+            #     window._adminHost       = "//mgmt.app.client.example"
+            #     window._reportHost / _docHost / _syncHost
             #
             # Five backend hosts, declared by the application, while the map filed that application's API
             # under the frontend. A static bundle cannot bake in its own deployment's base URL — that is
@@ -429,7 +432,7 @@ def _form_target(action, src_url, src_host, method="GET"):
     An absent `action` does NOT mean "/". HTML says a form with no action submits to the document's own URL,
     and the same is true of `action="#"` and of any relative action — all three resolve against the page.
     Recording them as "/" invented a root endpoint that nothing posts to, and did it for 88 of 462 forms
-    measured across 64 engagements (15% no action, 4% fragment-only), plus mis-filed the relative ones.
+    measured across 64 corpora (15% no action, 4% fragment-only), plus mis-filed the relative ones.
 
     We already know the serving URL — it was being read only to pull the hostname out of it — so resolve
     properly. Same-origin targets stay paths, which is what the rest of the pipeline stores; cross-origin
@@ -875,7 +878,7 @@ def _run_index(paths):
     if not paths:
         return {}
     try:
-        env = dict(os.environ); env["NODE_PATH"] = NODE_PATH
+        env = node_env(); env["NODE_PATH"] = NODE_PATH
         r = subprocess.run(["node", AST, "--index-only"] + paths, capture_output=True, env=env,
                            timeout=60 + 20 * len(paths))
         return json.loads(r.stdout or b"{}")
@@ -904,7 +907,7 @@ def _run(tool, paths):
     if not paths:
         return []
     try:
-        env = dict(os.environ); env["NODE_PATH"] = NODE_PATH
+        env = node_env(); env["NODE_PATH"] = NODE_PATH
         extra = ["--config", _CONFIG_FILE] if _CONFIG_FILE else []
         # The module index and the full file list, both built once over the WHOLE corpus. Without them a
         # batch can only resolve an import whose defining file happened to land in the same process.
@@ -914,14 +917,13 @@ def _run(tool, paths):
             extra += ["--fileset", _FILESET_FILE[0]]
         r = subprocess.run(["node", tool] + paths + extra, capture_output=True, env=env,
                            timeout=60 + 30 * len(paths))
-        if r.returncode != 0 and not r.stdout:
-            err = r.stderr.decode(errors="replace")
-            print(f"  ! extractor failed on {len(paths)} files: {err[:200]}", file=sys.stderr)
+        # NOT `and not r.stdout`: the extractor's own top-level catch prints `[]` before
+        # exiting non-zero, so a crashed batch always has stdout and was counted as a success.
+        why = node_failure(r)
+        if why:
+            print(f"  ! extractor failed on {len(paths)} files: {why}", file=sys.stderr)
             _AST_FAILED[0] += len(paths)
-            # the useful line is the one that says Error, not node's loader banner
-            lines = [l.strip() for l in err.splitlines() if l.strip()]
-            why = next((l for l in lines if "Error" in l or "error" in l), None)
-            _AST_WHY.add((why or (lines[0] if lines else f"exit {r.returncode}"))[:120])
+            _AST_WHY.add(why[:120])
             return []
         _AST_OK[0] += len(paths)
         # The extractor's own diagnostics are on stderr and capture_output swallows them, so
@@ -959,7 +961,7 @@ def batches(paths):
 # Tokens the code carries in a ROUTING HEADER rather than in a hostname, learned from the bundle.
 _HEADER_ROUTED = {}          # token -> the header name that carries it
 
-# `["plaid","scout","kyb","cato","ai","mgmt"].includes(r) && (p["x-api-host"] = r)`
+# `["alpha","beta","gamma","delta"].includes(r) && (p["x-service"] = r)`
 #
 # One regex for one very specific shape: a list of string literals, `.includes(X)`, and an assignment
 # of that same X to a header-shaped key. Tying the list to the assignment through the SAME identifier
@@ -979,13 +981,13 @@ def _find_header_routing(bodies):
     is `mgmt` a hostname or a header value? — and the application answers it in as many words:
 
         const {apiGatewayHost: l} = t.session, c = l + a;          // URL is ALWAYS gateway + path
-        ["plaid","scout","kyb","cato","ai","mgmt"].includes(r) && (p["x-api-host"] = r);
+        ["alpha","beta","gamma","delta"].includes(r) && (p["x-service"] = r);
 
     Both facts are in the source and neither needs an observation, which matters because the repair
     that reads them off the wire cannot run on a first crawl — there is nothing observed yet, and
     that is exactly when a map is most likely to be quoted and least likely to be checked.
 
-    That application ALSO publishes `window._mgmtHostname = "//mgmt.app.client.example"`, so the host exists and
+    That application ALSO publishes `window._adminHost = "//mgmt.app.client.example"`, so the host exists and
     is real; the application simply does not send these calls to it. A declared hostname is not
     evidence of transport, and this is what outranks it.
     """
@@ -1005,11 +1007,11 @@ def _find_header_routing(bodies):
 def _declared_gateway(declared):
     """The ONE API base the page declares, when it declares exactly one.
 
-    A service token in the bundle (`apiHost: APIHost.Scout`) does not have to name a HOST. Anchor routes
+    A service token in the bundle (`apiHost: APIHost.Alpha`) does not have to name a HOST. One application routes
     six logical services through a single gateway and selects between them with a request header:
 
         u = session.apiGatewayHost + url;
-        ["plaid","scout","kyb","cato","ai","mgmt"].includes(apiHost) && (headers["x-api-host"] = apiHost)
+        ["alpha","beta","gamma","delta"].includes(apiHost) && (headers["x-service"] = apiHost)
 
     So `scout` will never appear in the declared-host map, because it is not a host — and before this the
     row fell through to the loading document, which put 51 API endpoints on a Webflow marketing site. The
@@ -1029,12 +1031,12 @@ def _declared_host_map(cfg):
     """Service token -> hostname, from the base URLs the served page declares.
 
     A bundle names its backends with a symbol (`apiHost: APIHost.Mgmt`) and the page injects what those
-    symbols mean (`window._mgmtHostname = "//mgmt.app.client.example"`). Both halves are the APPLICATION's
+    symbols mean (`window._adminHost = "//mgmt.app.client.example"`). Both halves are the APPLICATION's
     own identifiers — this correlates two things the target said, rather than matching a vocabulary we
     invented, which is why it generalises past one naming convention.
 
     Normalised on both sides by stripping the decoration a config key carries (`_`, `Hostname`, `Host`,
-    `Url`, `BaseUrl`) and lowercasing, so `Mgmt` meets `_mgmtHostname`.
+    `Url`, `BaseUrl`) and lowercasing, so `Mgmt` meets `_adminHost`.
     """
     out = {}
     for k, v in (cfg or {}).items():
@@ -1055,6 +1057,27 @@ def _declared_host_map(cfg):
         if key:
             out.setdefault(key, h)
     return out
+
+
+def require_corpus(cmd, path):
+    """Refuse a path that cannot be a corpus, rather than reporting zero of everything.
+
+    `os.walk` on a path that is not there yields nothing, so a mistyped directory — or a file, or a
+    URL, which is the easy mistake because every FETCHING command takes one — came back as
+    `0 scripts -> 0 records` and exit 0. That reads as "this host has no API": a claim about the
+    target, made out of a typo. A confident zero is the one output this tool must never produce
+    quietly, which is the same reason `residual` and `precision` exist.
+    """
+    if os.path.isdir(path):
+        return
+    if "://" in str(path):
+        raise SystemExit(f"{cmd}: {path!r} is a URL — this reads a directory of already-fetched "
+                         f"files; run `jshound fetch {path} -o ./bodies` first")
+    if os.path.isfile(path):
+        here = os.path.dirname(str(path)) or "."
+        raise SystemExit(f"{cmd}: {path!r} is a file — this reads a DIRECTORY of saved bodies "
+                         f"(try `jshound {cmd} {here}`)")
+    raise SystemExit(f"{cmd}: {path!r}: no such directory")
 
 
 def _readable_non_js(d):
@@ -1078,11 +1101,12 @@ def analyze(bodies, host=None, manifest=None):
     directory per host is correct instead of merely convenient.
 
     USUALLY YOU WANT TO OMIT IT. The origin map places every file on its own, so passing a host mostly
-    just discards the rest of the directory — measured on one engagement, `--host www.example.com` cut
+    just discards the rest of the directory — measured on one corpus, `--host www.example.com` cut
     9,262 records to 1,640 and took every other host's endpoints with it. Pass one only when you are
     deliberately analysing a shared bodies directory one host at a time, and remember that it also claims
     every record whose origin is unknown (those rows say so in their note).
     """
+    require_corpus("analyze", bodies)
     paths = js_files(bodies)
     # NO JAVASCRIPT IS NOT NO SURFACE. This returned immediately when `js_files()` came back empty,
     # which skipped every channel that does not read JavaScript: `markup_records` (whose own docstring
@@ -1141,7 +1165,7 @@ def analyze(bodies, host=None, manifest=None):
     #
     # A body file with no entry in the origin map has no document and no serving host, so every endpoint
     # recovered from it is attributed by the `--host` fallback — or by nothing at all. That is survivable
-    # when it is a stray; it is not survivable when it is the application bundle. On one engagement the
+    # when it is a stray; it is not survivable when it is the application bundle. On one corpus the
     # unregistered files were the seven hand-fetched `app_*.js`, and `app_index.js` alone carried 448 of
     # the target's API endpoints: the most important file in the analysis was the one nothing could place.
     #
@@ -1166,7 +1190,7 @@ def analyze(bodies, host=None, manifest=None):
     #
     # The crawler names each body after the hash of its contents, so the same bundle fetched twice is one
     # file. A script fetched by hand lands beside it under a different name, and then it is not one file:
-    # it is parsed twice and every endpoint in it is recorded twice. Measured on one engagement, all seven
+    # it is parsed twice and every endpoint in it is recorded twice. Measured on one corpus, all seven
     # hand-fetched `app_*.js` were byte-identical to bodies already on disk — 4.5 MB reparsed, and 450
     # duplicate endpoint records which, having no registered origin, were then claimed by the --host
     # fallback and filed under a second host.
@@ -1215,11 +1239,11 @@ def analyze(bodies, host=None, manifest=None):
     # never against the origin of the script that contains it, so a bundle served from redditstatic.com
     # that fetches `/svc/shreddit/graphql` is making a request to www.reddit.com.
     #
-    # This was invisible while only in-scope bodies were saved — server and document were the same host.
+    # This was invisible while only same-host bodies were saved — server and document were the same host.
     # Once a page's bundles are kept wherever their CDN lives it stops being true: reddit.com's 210 scripts
     # arrive from 47 hosts, and attributing their relative paths to the CDN files the application's entire
     # API under a host that does not serve it. `_document.json` records the loading document; where it is
-    # absent (an engagement crawled by an older build) we fall back to the serving host, which is what the
+    # absent (a run crawled by an older build) we fall back to the serving host, which is what the
     # old behaviour was anyway.
     def doc_host_of(path):
         u = documents.get(os.path.basename(path).split("?")[0])
@@ -1299,7 +1323,7 @@ def analyze(bodies, host=None, manifest=None):
                 # The browser's rule — resolve a relative path against the document origin — applies to a
                 # string the browser resolves. It does not apply to a fragment handed to a client that
                 # prepends a base, because that string never reaches the URL resolver:
-                #     sendRequest({apiHost: APIHost.KYB, method:"post", url:"/ofac-screening-inquiry"})
+                #     sendRequest({apiHost: APIHost.Beta, method:"post", url:"/v1/compliance-check"})
                 # The extractor now flags those (`base_unresolved`, with the selector key and the service
                 # token it names). Applying the document rule to them filed 821 API endpoints under a
                 # Webflow marketing site on one target and put 857 endpoints under two hosts at once.
@@ -1312,14 +1336,14 @@ def analyze(bodies, host=None, manifest=None):
                 if r.get("base_unresolved") and rel:
                     # …unless the page told us what that service is. Both halves are the target's own
                     # naming: the bundle says `apiHost: APIHost.Mgmt`, the served HTML says
-                    # `window._mgmtHostname = "//mgmt.app.client.example"`. Where they meet, this stops
+                    # `window._adminHost = "//mgmt.app.client.example"`. Where they meet, this stops
                     # being a guess and becomes the application's own answer.
                     hint = str(r.get("base_hint") or "").strip().lower()
                     declared = _DECLARED_HOSTS.get(hint) if hint else None
                     # A TOKEN CARRIED IN A HEADER IS NOT AN ADDRESS, even when a host of that name
                     # is also declared. This branch ordering was backwards and it cost a third of
-                    # anchor's map: the page publishes `_mgmtHostname` AND routes mgmt calls through
-                    # the gateway with `x-api-host: mgmt`, so `declared` won and 331 endpoints were
+                    # that application's map: the page publishes `_adminHost` AND routes admin calls through
+                    # the gateway with `x-service: mgmt`, so `declared` won and 331 endpoints were
                     # filed under a hostname the application never sends to. Both facts were in the
                     # bundle the whole time; only one of them is about transport.
                     routed = _HEADER_ROUTED.get(hint) if hint else None
@@ -1364,7 +1388,7 @@ def analyze(bodies, host=None, manifest=None):
                 if h:
                     r["_host"] = h
                     # The PAGE, not just its host. "Declared somewhere in a 7MB bundle" is not a work item;
-                    # "declared by code that /home/invoices loads" is.
+                    # "declared by code that /app/reports loads" is.
                     r["_page"] = documents.get(os.path.basename(src or "")) if src else None
                 elif host:
                     # THE --host FALLBACK IS A GUESS AND MUST SAY SO.
@@ -1672,7 +1696,7 @@ def _document_map(bodies):
     """body file -> the DOCUMENT that loaded it, written by the crawler beside `_origin.json`.
 
     Separate file, separate concern: `_origin.json` says who served a body, this says which page pulled it
-    in. Absent on any engagement crawled before this existed, and callers fall back to the serving host —
+    in. Absent on any run crawled before this existed, and callers fall back to the serving host —
     which is exactly the old behaviour, so an old workspace still analyses the way it always did.
     """
     if not bodies:
@@ -1680,7 +1704,7 @@ def _document_map(bodies):
     m = {}
     # PRIMARY: the `d` field of _origin.jsonl. This map used to read `_document.json` alone — a file the
     # crawler stopped writing when _save_origin became append-only JSONL, and which is therefore absent
-    # from EVERY engagement on disk. The failure was silent and total: doc_host_of() returned None for
+    # from EVERY run on disk. The failure was silent and total: doc_host_of() returned None for
     # every file, so each bundle fell back to the host that SERVED it, and a site that ships its code from
     # a CDN lost its entire static surface. LinkedIn puts all 750 of its application bundles on
     # static.licdn.com, so `--host www.linkedin.com` filtered away 98 MB of its own JavaScript and yielded
@@ -1732,7 +1756,7 @@ def _origin_map(manifest, bodies=None):
     documents, not the ~1000 assets they pulled in. The crawler now writes `_origin.json` beside the bodies
     covering every saved file, so that is the primary source and the log is a fallback. Without it, six
     crawls sharing one bodies dir cannot be told apart and `--host X` mislabels every other host's bundles
-    as X — which cost one engagement a full re-crawl.
+    as X — which cost one run a full re-crawl.
     """
     m = {}
     if bodies:
@@ -1754,7 +1778,7 @@ def _origin_map(manifest, bodies=None):
                 print(f"  ! {bad} unreadable line(s) in _origin.jsonl", file=sys.stderr)
         # Legacy single-document format, and the corruption it was prone to. Several crawls sharing one
         # temp filename produced a file holding two concatenated JSON documents; `json.load` raises on
-        # that, the old code caught the exception and returned an EMPTY map, and an engagement with 1533
+        # that, the old code caught the exception and returned an EMPTY map, and a run with 1533
         # bodies silently lost every host attribution. Decode as many documents as the file contains, and
         # if any of it is unreadable SAY SO rather than returning nothing and looking like a clean miss.
         p = os.path.join(bodies, "_origin.json")
@@ -1824,7 +1848,7 @@ def unfetched(bodies, manifest=None):
     want = set()
     for p in js_files(bodies):
         try:
-            env = dict(os.environ); env["NODE_PATH"] = NODE_PATH
+            env = node_env(); env["NODE_PATH"] = NODE_PATH
             out = subprocess.run(["node", CHUNKMAP], stdin=open(p, "rb"), env=env,
                                  capture_output=True, timeout=120)
             d = json.loads(out.stdout or b"{}")

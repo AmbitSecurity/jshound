@@ -4,9 +4,10 @@
     jshound sourcemaps ./bodies --scope app.example.com
     jshound sourcemaps ./bodies --dry-run          report what is available and stop
 
-THIS TOOL FETCHES, and it is the only part of jshound that does. `analyze` deliberately does not,
-and that division stands: this requests only `.map` beside URLs the crawler already recorded, and
-only for hosts you name with `--scope`.
+THIS TOOL FETCHES, and with `fetch` it is the only part of jshound that does. `analyze` deliberately
+does not, and that division stands: this requests only `<url>.map` beside URLs already recorded in the
+corpus's `_origin.jsonl`, so it reaches no host whose JavaScript you do not already have. `--scope`
+narrows that further to the hosts you name; without it, every recorded host is in scope.
 
 WHAT IT IS WORTH, MEASURED — and the answer moved once Vite became common. The original figure here
 was "0-11% of routes", taken on webpack-era targets. Re-measured:
@@ -27,7 +28,7 @@ ships maps in production by default, which is why it reads differently now than 
 What they uniquely carry is the two things minification genuinely destroys:
 
   * TYPES — erased at compile time and recoverable from nowhere else. The original of an API client
-    reads `createInquiry(data: OfacScreeningInquiryRequest)` with the interface beside it; the
+    reads `createInquiry(data: ComplianceCheckRequest)` with the interface beside it; the
     shipped copy reads `async e => ...`.
   * ORIGINAL PARAMETER NAMES — `businessId`, not `e`. Which is what tells an authorization sweep
     that a slot wants a business id and not an invoice id.
@@ -49,42 +50,27 @@ import sys
 from .register_origin import register
 
 SKIP = re.compile(r"(^|/)(node_modules|webpack/runtime|webpack/bootstrap)/")
-_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+# A `.map` is the largest thing this ever downloads — Grafana's biggest is 38 MB — and it is still
+# the target that chooses the size, so the read is bounded. Higher than `fetch.MAX_BODY` because a
+# map legitimately dwarfs the bundle it describes; a truncated one fails `json.loads` and is skipped,
+# which is the right outcome for something this far outside the normal range.
+MAX_MAP = 256 * 1024 * 1024
 
 
 def fetch(url, timeout=40):
-    """(status, text). curl_cffi when present — its TLS fingerprint gets past more WAFs — else stdlib."""
-    try:
-        from curl_cffi import requests as rq
-    except ImportError:
-        pass
-    else:
-        # Any transport failure — DNS, TLS, connection reset, timeout — is a normal outcome when
-        # pointing at the open internet, not a reason to abort the run with a traceback.
-        try:
-            r = rq.get(url, impersonate="chrome", timeout=timeout)
-            return r.status_code, r.text
-        except Exception:                                  # noqa: BLE001
-            return None, ""
-    if True:
-        import urllib.error
-        import urllib.request
-        req = urllib.request.Request(url, headers={"User-Agent": _UA})
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as fh:
-                return fh.status, fh.read().decode("utf-8", "replace")
-        except urllib.error.HTTPError as e:
-            return e.code, ""
-        except Exception:                                  # noqa: BLE001
-            return None, ""
+    """(status, text). Shares `fetch.http_get`, which is where the transport, the UA and the read cap
+    live — this had its own copy, and that copy was the one place a response was read uncapped."""
+    from jshound.fetch import http_get
+    return http_get(url, timeout=timeout, max_bytes=MAX_MAP)
 
 
 def script_urls(bodies):
     """-> ([js urls], {url: document that loaded it}) from the crawler's origin manifest.
 
     The origin map, not a store: a script is an asset and most never reach a site map with a URL at
-    all. Measured on one engagement, a store held 4 script URLs where `_origin.jsonl` held 7,948, of
+    all. Measured on one corpus, a store held 4 script URLs where `_origin.jsonl` held 7,948, of
     which 309 were the application's own bundles.
     """
     urls, seen, doc_of = [], set(), {}
@@ -124,7 +110,7 @@ def safe_name(src):
 def harvest(bodies, hosts=None, dry_run=False, max_sources=4000, workers=8):
     urls, doc_of = script_urls(bodies)
     urls = [u for u in urls if in_scope(u, hosts)]
-    print(f"{len(urls)} in-scope script URL(s) recorded by the crawler", file=sys.stderr)
+    print(f"{len(urls)} script URL(s) recorded by the crawler", file=sys.stderr)
     if not urls:
         return 0
 

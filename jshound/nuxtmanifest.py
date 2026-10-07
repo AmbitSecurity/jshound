@@ -26,9 +26,12 @@ cost 293 routes on Supabase when the Next manifest URL was constructed from the 
 whatever prefix of a URL the document itself references ends at `/_nuxt/`.
 
 LIMIT, MEASURED: `prerendered` lists PRE-RENDERED routes, so a fully server-rendered Nuxt app with no
-prerendering declares an empty list even though it has routes, and an app built with
-`experimental.appManifest: false` serves no manifest at all (www.gitlab.com is Nuxt and has no readable
-`latest.json`). Both report as unavailable with the reason, rather than as zero routes.
+prerendering declares an empty list even though it has routes. nuxt.com itself moved that way: it
+served 900 prerendered routes and now serves `"prerendered": []`. That is reported as `available`
+with an empty route list and a line saying the build prerenders nothing, because the manifest WAS
+read and that is what it said — which is a different fact from not being able to read it. An app
+built with `experimental.appManifest: false` serves no manifest at all (www.gitlab.com is Nuxt and
+has no readable `latest.json`), and that one does report as unavailable, with the reason.
 """
 import argparse
 import json

@@ -15,10 +15,15 @@ have:
 | `vite-literal-chunks` | synthetic | Vite writes chunk paths down rather than building them |
 | `new-url-sinks` | synthetic | `new URL(path, base)` is the URL for every sink, not only `fetch` |
 
-Synthetic fixtures are hand-written and minimal; real ones are committed build output. Never a real
-target's JavaScript — that is someone else's code, it dates fast, and it makes the repo a
-redistribution of other people's work.
+Synthetic fixtures are hand-written and minimal; real ones are committed build output of a tiny app
+built locally with that bundler, which is why each carries that bundler's own runtime loader — see
+[NOTICE](../../NOTICE).
+
+Never a PRIVATE or authenticated target's JavaScript, and never anything naming a real target. Three
+fixtures do excerpt a PUBLIC build manifest — `next-build-manifest` and the two in `remix-manifest` —
+cut to the few lines the test needs with hostnames replaced by reserved example domains. Those are
+route paths and identifiers, not program code, and they are attributed in NOTICE.
 
 See [../../CONTRIBUTING.md](../../CONTRIBUTING.md). What would help most now is a bundler or a build
-configuration **not** in [../../SUPPORT.md](../../SUPPORT.md), or one that is listed and behaves
+configuration **not** in the README's **What it works on** section, or one that is listed and behaves
 differently for you — a fixture that fails is a complete contribution.

@@ -16,13 +16,18 @@ gap by asking each bundle which lazy chunks it declares and fetching those too, 
 of a code-split app's code lives.
 """
 import argparse
+import functools
 import hashlib
 import json
 import os
 import re
 import sys
+import ipaddress
+import socket
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
+
+from jshound.nodeenv import node_env
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -41,7 +46,15 @@ def is_javascript(body, content_type=""):
     return not _LOOKS_HTML.match(body or "")
 
 
-def http_get(url, timeout=30, with_url=False):
+# A response is read up to this and no further. The size of a body is the target's choice, and one
+# URL is enough: pointed at a generator, an uncapped read took 1,032 MB of RSS and wrote 524 MB into
+# the corpus directory before anything looked at it. The largest real chunk measured across the
+# corpora is under 12 MB, and a `.map` is the only thing that gets near this, which is why
+# `sourcemaps.py` raises it rather than this being tight.
+MAX_BODY = 64 * 1024 * 1024
+
+
+def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
     """(status, text), or (status, text, final_url) with `with_url`.
 
     curl_cffi when installed — its TLS fingerprint gets past more WAFs.
@@ -50,6 +63,9 @@ def http_get(url, timeout=30, with_url=False):
     document must use it. kit.svelte.dev redirects to svelte.dev and its markup links `./_app/...`;
     resolving that against the requested URL built `kit.svelte.dev/_app/...`, which answers with an
     error page, and the route table was reported as a parse failure on an app that has one.
+
+    Truncated at `max_bytes`. A truncated body is still returned, because a bundle cut off mid-file
+    still parses to something and the alternative is losing the whole target to one oversized file.
     """
     try:
         from curl_cffi import requests as rq
@@ -59,9 +75,27 @@ def http_get(url, timeout=30, with_url=False):
         # Any transport failure — DNS, TLS, connection reset, timeout — is a normal outcome when
         # pointing at the open internet, not a reason to abort the run with a traceback.
         try:
-            r = rq.get(url, impersonate="chrome", timeout=timeout)
-            final = str(getattr(r, "url", "") or url)
-            return (r.status_code, r.text, final) if with_url else (r.status_code, r.text)
+            r = rq.get(url, impersonate="chrome", timeout=timeout, stream=True)
+            try:
+                buf, n = [], 0
+                for part in r.iter_content():
+                    buf.append(part)
+                    n += len(part)
+                    if n >= max_bytes:
+                        break
+                raw = b"".join(buf)[:max_bytes]
+                enc = getattr(r, "encoding", None) or "utf-8"
+                try:
+                    body = raw.decode(enc, "replace")
+                except LookupError:
+                    body = raw.decode("utf-8", "replace")
+                final = str(getattr(r, "url", "") or url)
+                return (r.status_code, body, final) if with_url else (r.status_code, body)
+            finally:
+                try:
+                    r.close()
+                except Exception:                          # noqa: BLE001
+                    pass
         except Exception:                                  # noqa: BLE001
             return (None, "", url) if with_url else (None, "")
     if True:
@@ -70,13 +104,48 @@ def http_get(url, timeout=30, with_url=False):
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as fh:
-                body = fh.read().decode("utf-8", "replace")
+                body = fh.read(max_bytes).decode("utf-8", "replace")
                 final = fh.geturl() or url
                 return (fh.status, body, final) if with_url else (fh.status, body)
         except urllib.error.HTTPError as e:
             return (e.code, "", url) if with_url else (e.code, "")
         except Exception:                                   # noqa: BLE001
             return (None, "", url) if with_url else (None, "")
+
+
+# WHAT A TARGET IS ALLOWED TO MAKE THIS FETCH.
+#
+# Only the first URL is the user's. Everything after it — script srcs, `import()` specifiers, and
+# every chunk URL built out of a bundle's own runtime — is named by the target, and a chunk URL that
+# starts with `http` was fetched verbatim. So a page declaring
+# `http://169.254.169.254/latest/meta-data/iam/security-credentials/` as one of its chunks had that
+# fetched and written into the corpus directory, which is a credential read performed by whoever ran
+# the tool, from inside their network.
+#
+# Pointing this at an internal or local app is normal use, though, so the rule is about WHO chose the
+# address rather than which address it is: if the target the user named is itself private, private
+# space is in scope for that run. `--allow-private` says so explicitly for the mixed case.
+# Cached: a corpus run resolves the same two or three hostnames a few hundred times, and one lookup
+# per chunk URL was most of the wall clock in the scope tests.
+@functools.lru_cache(maxsize=4096)
+def host_is_private(host):
+    """True for loopback, link-local, RFC1918 and the other reserved ranges. Unresolvable is False —
+    the transport will fail and say so, and guessing here would hide a real DNS problem."""
+    if not host:
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified):
+            return True
+    return False
 
 
 class _Scripts(HTMLParser):  # noqa: D101 — docstring below
@@ -212,7 +281,7 @@ def js_imports(paths):
     if not paths:
         return {}
     js = os.path.join(os.path.dirname(os.path.abspath(__file__)), "js", "imports.js")
-    env = dict(os.environ)
+    env = node_env()
     env.setdefault("NODE_PATH", os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "node_modules"))
     out = {}
@@ -228,12 +297,86 @@ def js_imports(paths):
     return out
 
 
+def _aligned(declaring_url, chunk_path):
+    """The chunk's URL, built by overlapping its path with the URL of the file that declared it.
+
+    A relative chunk path is relative to the BUILD's asset root, which is neither the declaring
+    file's directory nor the document's origin. Supabase's dashboard is the clearest case: the
+    runtime lives at
+
+        https://frontend-assets.supabase.com/studio/<hash>/_next/static/chunks/1s0mal.js
+
+    and declares `static/chunks/1gdj.js` with an empty `publicPath`. Joining against the declaring
+    file gives `.../_next/static/chunks/static/chunks/1gdj.js` and joining against the document gives
+    `https://supabase.com/static/chunks/1gdj.js` — both 404. 126 declared chunks fetched 0.
+
+    The build root is recoverable without knowing the framework, because the declared path and the
+    declaring URL OVERLAP: the URL already contains `static/chunks/`, so cutting it at that segment
+    and appending the path reconstructs the root. Returns None when there is no overlap, which is the
+    normal case for a build whose `publicPath` already names the root.
+    """
+    seg = chunk_path.lstrip("./").split("/", 1)[0]
+    if not seg or seg.startswith("?"):
+        return None
+    path = urlsplit(declaring_url).path
+    at = path.find("/" + seg + "/")
+    if at < 0:
+        return None
+    root = declaring_url.split("?", 1)[0]
+    root = root[:root.index(path) + at + 1] if path in root else None
+    return root + chunk_path.lstrip("./") if root else None
+
+
+def chunk_candidates(declaring_url, chunk_path, public_path="", page_base=""):
+    """Every URL a declared chunk path might live at, best guess first.
+
+    One function because there are two callers and they must not disagree: `collect` fetches these,
+    and `unfetched` hands them to whatever else is doing the fetching — a browser, usually. When the
+    two had their own copies, the fetcher learned about asset roots and the reporter did not.
+
+    Order matters only for speed, since the caller takes whichever answers 200 with JavaScript in it.
+    """
+    if chunk_path.startswith("http"):
+        return [chunk_path]
+    out = []
+    aligned = _aligned(declaring_url, chunk_path)
+    if aligned:
+        out.append(aligned)
+    # `publicPath` is where the RUNTIME says its chunks live, so it beats the declaring file's own
+    # directory whenever the build sets it.
+    if public_path.startswith("/") or public_path.startswith("http"):
+        out.append(urljoin(page_base or declaring_url, urljoin(public_path, chunk_path)))
+    out.append(urljoin(declaring_url, chunk_path))
+    if page_base:
+        out.append(urljoin(page_base + "/", chunk_path.lstrip("/")))
+    seen, uniq = set(), []
+    for u in out:
+        if u and u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    return uniq
+
+
 def _name(url):
     return hashlib.sha1(url.encode()).hexdigest()[:20] + ".js"
 
 
-def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30):
+def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_private=False):
     os.makedirs(outdir, exist_ok=True)
+    # The user named this one, so it is fetched whatever it resolves to. Every URL after it was named
+    # by the target — see `host_is_private` — and is refused if it points into private space, unless
+    # the target itself does, which is what scanning a local or internal app looks like.
+    private_ok = bool(allow_private) or host_is_private(urlsplit(url).hostname)
+    refused = set()
+
+    def in_scope(u):
+        if private_ok:
+            return True
+        if host_is_private(urlsplit(u).hostname):
+            refused.add(u)
+            return False
+        return True
+
     status, html = http_get(url, timeout)
     if not html:
         print(f"  ! {url} returned {status} with no body", file=sys.stderr)
@@ -271,6 +414,8 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30):
         if u in seen or not u.startswith("http"):
             continue
         seen.add(u)
+        if not in_scope(u):
+            continue
         st, body = http_get(u, timeout)
         if st != 200 or not body or not is_javascript(body):
             continue
@@ -309,6 +454,8 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30):
             if u in seen:
                 continue
             seen.add(u)
+            if not in_scope(u):
+                continue
             st, body = http_get(u, timeout)
             if st != 200 or not body or not is_javascript(body):
                 continue
@@ -353,14 +500,9 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30):
                     continue
                 pub = res.get("publicPath") or ""
                 for c in (res.get("chunks") or []):
-                    if c.startswith("http"):
-                        cands = [c]
-                    else:
-                        cands = []
-                        if pub.startswith("/") or pub.startswith("http"):
-                            cands.append(urljoin(page_base, urljoin(pub, c)))
-                        cands.append(urljoin(u, c))
-                        cands.append(urljoin(page_base + "/", c.lstrip("/")))
+                    cands = chunk_candidates(u, c, pub, page_base)
+                    if not cands:
+                        continue
                     key = cands[0]
                     if key not in candidates:
                         candidates[key] = cands
@@ -378,6 +520,8 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30):
                         already += 1          # already pulled in by an earlier pass
                         break
                     seen.add(cu)
+                    if not in_scope(cu):
+                        continue
                     st, body = http_get(cu, timeout)
                     if st != 200 or not body or not is_javascript(body):
                         continue      # an SPA catch-all is a 404 wearing a 200
@@ -401,6 +545,15 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30):
                   + (f", capped at --max-chunks {max_chunks}"
                      if fetched_ok >= max_chunks else ""), file=sys.stderr)
 
+    # Named and counted, not silently dropped: a refusal here is the one case where the target has
+    # surface this did not read, and the fix is a flag rather than a mystery.
+    if refused:
+        hosts = sorted({urlsplit(u).hostname or "?" for u in refused})
+        shown = ", ".join(hosts[:4]) + (", ..." if len(hosts) > 4 else "")
+        print(f"  ! refused {len(refused)} URL(s) the target named in private address space "
+              f"({shown}) — pass --allow-private if that is surface you meant to read",
+              file=sys.stderr)
+
     with open(os.path.join(outdir, "_origin.jsonl"), "a") as fh:
         for r in rows:
             fh.write(json.dumps(r) + "\n")
@@ -416,9 +569,54 @@ def main(argv=None):
     ap.add_argument("-o", "--out", default="./bodies")
     ap.add_argument("--no-chunks", action="store_true")
     ap.add_argument("--max-chunks", type=int, default=400)
+    ap.add_argument("--allow-private", action="store_true",
+                    help="allow URLs the target names in private address space (loopback, RFC1918, link-local); on by default when the target itself is private")
     a = ap.parse_args(argv)
-    collect(a.url, a.out, not a.no_chunks, a.max_chunks)
+    collect(a.url, a.out, not a.no_chunks, a.max_chunks, allow_private=a.allow_private)
 
 
 if __name__ == "__main__":
     main()
+
+
+def unfetched(bodies, manifest=None):
+    """Chunk URLs the bundles in `bodies` declare that are not on disk there.
+
+    This prints rather than downloads, because the thing that already has a session, a stealth
+    browser and an egress the target answers is whatever collected the corpus — not this. The
+    standalone path is `collect`, which fetches them itself; the integration path is this, handing
+    the list back to a crawler.
+
+    The URL building is `chunk_candidates`, the same function `collect` fetches through, so the two
+    cannot drift. That mattered: resolving a relative chunk against the declaring file's own
+    directory is wrong whenever the build has an asset root, and supabase.com/dashboard declared 126
+    chunks and retrieved none of them that way.
+    """
+    from .analyze import _origin_map, js_files
+    from . import chunk_map
+
+    origins = _origin_map(manifest, bodies)
+    have = {os.path.basename(p).split("?")[0] for p in js_files(bodies)}
+    want, unresolved = set(), 0
+    for p in js_files(bodies, with_inline=False):
+        try:
+            res = chunk_map(open(p, errors="replace").read())
+        except Exception:                                   # noqa: BLE001
+            continue
+        src = origins.get(os.path.basename(p))
+        pub = res.get("publicPath") or ""
+        for c in (res.get("chunks") or []):
+            base = os.path.basename(str(c).split("?")[0])
+            if not base or base in have:
+                continue
+            if str(c).startswith("http"):
+                want.add(c)
+            elif src:
+                cands = chunk_candidates(src, c, pub, "")
+                if cands:
+                    want.add(cands[0])
+            else:
+                # No recorded origin means a relative path cannot become a URL. Counted, because a
+                # silent drop here looks identical to a bundle that declared nothing.
+                unresolved += 1
+    return sorted(want), unresolved

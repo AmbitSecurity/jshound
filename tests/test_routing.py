@@ -11,7 +11,6 @@ import os
 import subprocess
 import sys
 
-import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "routing-evidence")

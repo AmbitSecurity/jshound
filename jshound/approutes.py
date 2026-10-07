@@ -39,6 +39,8 @@ homepage, so a crawler that only follows <a href> can never reach the code behin
 import argparse, json, os, re, sys, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
+from jshound.nodeenv import node_env
+
 # Next serves its chunk directory at more than one path. webpack builds put it at
 # `static/chunks/`, Turbopack at `static/immutable/chunks/` — and keying on the literal
 # `static/chunks/` found ZERO chunks on every Turbopack target, which is now Next's default.
@@ -89,7 +91,14 @@ def main():
     ap.add_argument("--max-rounds", type=int, default=6)
     ap.add_argument("--workers", type=int, default=8)
     a = ap.parse_args()
-    from curl_cffi import requests as rq
+    # `fetch.py` and `sourcemaps.py` both treat this as optional and fall back to urllib; this did
+    # not, so `jshound routes` was the one documented command that died with a bare ImportError on
+    # the install the README prescribes.
+    try:
+        from curl_cffi import requests as rq
+    except ImportError:
+        sys.exit("routes: this command needs curl_cffi for its TLS fingerprint — "
+                 "install it with `pip install \"jshound[fetch]\"`")
 
     # AUTHORITATIVE SOURCE FIRST. A Pages-Router build serves its whole route table and its chunk list
     # in `_buildManifest.js`; those are the build's own declarations, not inferences from filenames, so
@@ -161,7 +170,7 @@ def main():
         if not files:
             return set()
         ast_js = os.path.join(os.path.dirname(os.path.abspath(__file__)), "js", "static_ast.js")
-        env = dict(os.environ)
+        env = node_env()
         env.setdefault("NODE_PATH", os.path.join(  # repo-local; the image sets NODE_PATH itself
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
     "node_modules"))

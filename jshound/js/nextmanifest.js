@@ -9,32 +9,35 @@
  *     self.__BUILD_MANIFEST = { "/account/me": ["static/chunks/1ir8gf5k36l2m.js"], ..., sortedPages: [...] }
  *     self.__BUILD_MANIFEST_CB && self.__BUILD_MANIFEST_CB()
  *
- * so it is EVALUATED, the same way chunkmap.js evaluates `__webpack_require__.u`, rather than scraped.
- * Scraping it would be guesswork over a minified object; running it returns the structure the framework
- * itself reads at runtime. That distinction is the whole point: these routes are not inferred from
- * filenames or string literals, they are the build's own declaration, so the floor on precision is the
- * build being wrong about itself.
+ * so it is READ FROM THE AST rather than scraped — the same way `chunkmap.js` reads
+ * `__webpack_require__.u`. Brace-counting a minified object is guesswork; walking the assignment's
+ * right-hand side returns the structure the framework itself reads at runtime. That distinction is the
+ * whole point: these routes are not inferred from filenames or string literals, they are the build's
+ * own declaration, so the floor on precision is the build being wrong about itself.
  *
- * Evaluation happens in a vm context holding `self` and nothing else — no require, no process, no fs —
- * and under a wall-clock timeout. The omitted `*_CB` callbacks short-circuit by design.
+ * None of the file is executed. An earlier version evaluated it in a `vm` context and two escapes out
+ * of that were reproduced against it — see `literal.js`, which replaced it. The `*_CB` callbacks are
+ * not data and are ignored, which is also what they did before: they short-circuit on an absent
+ * callback by design.
  */
 const fs = require("fs");
-const vm = require("vm");
 const path = require("path");
+const literal = require("./literal.js");
 
-const TIMEOUT_MS = 5000;
+/* Every global this reads. Named rather than walked, so a file cannot enlarge what is read by
+ * assigning more. */
+const GLOBALS = ["__BUILD_MANIFEST", "__SSG_MANIFEST", "__MIDDLEWARE_MATCHERS"];
 
 function evaluate(file) {
-  const sandbox = { self: {} };
-  sandbox.self.self = sandbox.self;
-  sandbox.window = sandbox.self;
-  vm.createContext(sandbox);
+  let src;
   try {
-    vm.runInContext(fs.readFileSync(file, "utf8"), sandbox, { timeout: TIMEOUT_MS });
+    src = fs.readFileSync(file, "utf8");
   } catch (e) {
     return { error: String((e && e.message) || e) };
   }
-  return { self: sandbox.self };
+  const got = literal.assignedGlobals(src, GLOBALS);
+  if (got.error) return { error: got.error };
+  return { self: got };
 }
 
 /* `[id]` -> `{id}`, `[...slug]` -> `{slug}`, `[[...path]]` -> `{path}`; a `(group)` carries no URL
@@ -118,12 +121,12 @@ function main() {
     const ssg = s.__SSG_MANIFEST;
     if (ssg) {
       found.push("__SSG_MANIFEST");
-      // NOT `instanceof Set`. The Set is constructed inside the vm context, so it is an instance of
-      // THAT realm's Set and `instanceof` against this realm's is false — the prerendered list came
-      // back empty every time until a fixture had a non-empty one. Well-known symbols are shared
-      // across realms, so asking whether it is iterable works where asking what it is does not.
-      const items = Array.isArray(ssg) ? ssg
-        : (typeof ssg === "object" && typeof ssg[Symbol.iterator] === "function") ? [...ssg] : [];
+      // A real build writes this as `new Set([...])`, not an array. It arrives here as an array
+      // anyway because the conversion in `vmvalue.js` drains any iterable inside the context — which
+      // is also the only place that Set can be recognised, since it belongs to the context's realm
+      // and `instanceof Set` against ours is false. That mismatch returned an empty prerendered list
+      // every time until a fixture had a non-empty one, so it is worth not forgetting.
+      const items = Array.isArray(ssg) ? ssg : [];
       for (const p of items) {
         if (typeof p === "string" && p.startsWith("/")) out.ssg.push(template(p));
       }

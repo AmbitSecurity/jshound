@@ -13,8 +13,8 @@ from code and can be wrong about one; a manifest route is the build's own declar
 so the only way it is wrong is if the build is wrong about itself. On Supabase's dashboard it yields 293
 routes — 103 of them `/api/*` — against the 0 that deriving routes from chunk filenames returns there.
 
-Three manifests are read when linked, and all three are EVALUATED rather than scraped (see
-`js/nextmanifest.js` for why, and for the sandbox they run in):
+Three manifests are read when linked, and all three are READ FROM THE SYNTAX TREE rather than scraped
+(see `js/nextmanifest.js` for why, and `js/literal.js` for why none of them is run):
 
     _buildManifest.js             every route, each route's chunks, and `__rewrites`
     _ssgManifest.js               which of those routes were statically generated
@@ -26,7 +26,7 @@ THE MANIFEST URL IS NEVER CONSTRUCTED. Guessing `{origin}/_next/static/{buildId}
 already contains the correct absolute URL, query string and all, so it is read from there.
 
 LIMIT, MEASURED: an App Router build serves no `_buildManifest.js` at all. Of the Next apps tested,
-every Pages-Router one linked a manifest and every App-Router one linked none; see SUPPORT.md. For those
+every Pages-Router one linked a manifest and every App-Router one linked none; see the README. For those
 apps the route table has to come from chunk paths (`approutes.py`) or from path literals in the code.
 """
 import argparse
@@ -38,6 +38,8 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from jshound.fetch import document_refs, http_get                       # noqa: E402
+
+from jshound.nodeenv import node_env, node_failure
 
 # Exact basenames, compared as strings against the parsed URL path. Next names these files itself and
 # has never minified or hashed the names, so there is nothing here for a pattern to match loosely.
@@ -115,11 +117,14 @@ def read(doc_url, timeout=30, workdir=None):
                 "document": doc_url, "manifest_urls": urls}
 
     js = os.path.join(os.path.dirname(os.path.abspath(__file__)), "js", "nextmanifest.js")
-    env = dict(os.environ)
+    env = node_env()
     env.setdefault("NODE_PATH", os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "node_modules"))
     try:
         r = subprocess.run(["node", js] + files, capture_output=True, env=env, timeout=120)
+        why = node_failure(r)
+        if why:
+            return {"available": False, "reason": f"reader failed: {why}", "document": doc_url, "manifest_urls": fetched}
         data = json.loads(r.stdout or b"{}")
     except Exception as e:                                 # noqa: BLE001
         return {"available": False, "reason": f"evaluator failed: {e}",

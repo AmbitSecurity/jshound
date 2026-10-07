@@ -125,7 +125,7 @@ for (const file of inputs) {
         }
         rec.imports = [...new Set(rec.imports)];
         // An object of numeric keys mapping to functions is NOT enough. Vite ships lookup tables of exactly that
-        // shape, and accepting them left `mods` non-empty on a Vite app, so the ESM path never ran and gmelius
+        // shape, and accepting them left `mods` non-empty on a Vite app, so the ESM path never ran and one API
         // produced a 2 MB tree from a 14 MB cache with zero endpoints in it. A webpack module is one whose body
         // USES the require it was handed — an export table or an import call. Behaviour, not shape.
         if (rec.exports.length || rec.imports.length) { mods.set(id, rec); packed.add(file); }
@@ -164,7 +164,7 @@ const nameOf = (code) => {
 // modules, one chunk per file, and the import graph is written as `import{x}from"./other.js"`. For those the
 // unbundling is already done — the work is just to read the graph off the imports and keep the same shape of
 // output, so everything downstream (naming, reachability) does not care which bundler built the app.
-// NOT either/or. A cache routinely holds a third-party bundle alongside the app's own chunks — gmelius ships
+// NOT either/or. A cache routinely holds a third-party bundle alongside the app's own chunks — one API ships
 // Stripe's SDK, which is webpack-built, so `mods` came back non-empty and the ESM path never ran for the Vite
 // chunks that are the actual application. Whether a FILE was packed is a per-file fact, so treat it that way and
 // send everything else through the ESM reader.

@@ -11,7 +11,7 @@ file, and without an origin entry neither is known.
 
 A script fetched by hand — curl, a python one-liner, anything that is not the crawler or
 your crawler — lands in the bodies directory with no entry, and then every endpoint in it is
-attributed by the `--host` fallback. That is not a small loss. On one engagement the seven hand-fetched
+attributed by the `--host` fallback. That is not a small loss. On one corpus the seven hand-fetched
 `app_*.js` files were unregistered and `app_index.js` alone held 448 of the target's API endpoints: the
 most valuable file in the analysis was the one nothing could place, and a second analysis pass for a
 second host claimed the same endpoints again, filing 857 of them under two hosts at once.

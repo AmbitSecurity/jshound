@@ -78,11 +78,11 @@ def test_js_by_extension_when_mime_is_wrong():
 
 def test_a_har_round_trips_into_recovered_endpoints(tmp_path):
     """END TO END, because this is the repo's whole answer for an authenticated app and only the
-    writing half was covered. SUPPORT.md points at HAR import for anything the fetcher cannot reach —
+    writing half was covered. The README points at HAR import for anything the fetcher cannot reach —
     behind a login, behind a real browser — so the claim that matters is not "files were written" but
     "endpoints came back", including the parts that need cross-file resolution.
 
-    Every measured number in SUPPORT.md comes from an anonymous fetch. This test is the one place the
+    Every measured number in the README comes from an anonymous fetch. This test is the one place the
     login-gated path is exercised at all, so it checks the harder recoveries rather than just a URL:
     a base held in a const and joined at the call site, an axios instance's `baseURL`, and a header.
     """
@@ -214,12 +214,20 @@ def test_a_corpus_with_no_javascript_at_all_still_yields_records(tmp_path):
     assert "/api/v2/users/42/avatar" in got, got
 
 
-def test_a_directory_with_nothing_readable_still_returns_nothing(tmp_path):
-    """The guard did not go away, it moved: nothing of any kind to read means nothing to do."""
+def test_a_directory_with_nothing_readable_says_so_instead_of_returning_zero(tmp_path):
+    """Nothing of any kind to read means nothing to do — and SAYING so, with a non-zero exit.
+
+    An empty result here used to be indistinguishable from a host that has no API: `0 scripts -> 0
+    records`, exit 0, and with `-o spec.json` a valid, importable, empty OpenAPI document whose
+    description reassured the reader about the 0 placeholders it contained. Nothing is written now,
+    and the exit code says why.
+    """
     import subprocess
     (tmp_path / "notes.txt").write_text("not a body")
     out = tmp_path / "recs.json"
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", str(tmp_path), "-o", str(out)],
-                   capture_output=True, text=True, cwd=root, check=True)
-    assert json.loads(out.read_text()) == []
+    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", str(tmp_path), "-o", str(out)],
+                       capture_output=True, text=True, cwd=root)
+    assert r.returncode == 1, r.stdout[-500:] + r.stderr[-500:]
+    assert "nothing readable" in r.stderr
+    assert not out.exists()      # and no empty spec left behind to be imported into a scanner

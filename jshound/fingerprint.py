@@ -40,6 +40,8 @@ import sys
 import subprocess
 from html.parser import HTMLParser
 
+from jshound.nodeenv import node_env, node_failure
+
 # BUNDLER AND FRAMEWORK ARE DIFFERENT QUESTIONS, and conflating them made the output useless for
 # deciding what to run. The bundler determines whether there is a module registry to walk and how
 # chunk URLs are formed; the framework determines where routing lives. Remix is Vite underneath and
@@ -139,7 +141,7 @@ def js_signals(js_files):
         return {}, 0, 0, {}
     here = os.path.dirname(os.path.abspath(__file__))
     script = os.path.join(here, "js", "fingerprint.js")
-    env = {**os.environ,
+    env = {**node_env(),
            "NODE_PATH": os.environ.get("NODE_PATH") or os.path.join(
                os.path.dirname(here), "node_modules")}
     sig, per_file, parsed, failed = {}, {}, 0, 0
@@ -148,10 +150,16 @@ def js_signals(js_files):
         try:
             r = subprocess.run(["node", "--max-old-space-size=4096", script, *batch],
                                capture_output=True, text=True, env=env, timeout=600)
-            d = json.loads(r.stdout or "{}")
         except Exception:                                    # noqa: BLE001
             failed += len(batch)
             continue
+        # `json.loads(r.stdout or "{}")` added nothing to EITHER counter when the helper crashed, so
+        # a missing `@babel/parser` reported `js_parsed: 0, js_parse_failures: 0` — no files read and
+        # nothing wrong with any of them.
+        if node_failure(r):
+            failed += len(batch)
+            continue
+        d = json.loads(r.stdout or "{}")
         for k, v in (d.get("signals") or {}).items():
             sig[k] = sig.get(k, 0) + v
         per_file.update(d.get("perFile") or {})

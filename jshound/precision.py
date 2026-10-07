@@ -47,7 +47,6 @@ import argparse
 import json
 import os
 import re
-import sys
 
 _MINIFIED = re.compile(r"^[a-zA-Z$_][a-zA-Z0-9$_]{0,2}$")
 _DATE = re.compile(r"^[YMDHhmsSAaZzWwEeQqkKgGtTlLoOxX:,./\- \[\]]+$")
@@ -95,7 +94,10 @@ _SLOT = re.compile(r"\{[^{}]*\}")
 
 
 def check(bodies, records_path, verbose=False):
-    records = json.load(open(records_path))
+    from jshound.analyze import require_corpus
+    require_corpus("precision", bodies)
+    from jshound import read_records
+    records = read_records(records_path)
     eps = [r for r in records if (r.get("_kind") or "endpoint") == "endpoint"]
     text = _corpus_text(bodies)
     findings = {"not-in-corpus": [], "date-format": [], "unencoded-space": []}
@@ -132,6 +134,11 @@ def check(bodies, records_path, verbose=False):
         if frags and not any(f in text for f in frags):
             findings["not-in-corpus"].append((t, r.get("sink")))
 
+    # Every endpoint is "not in corpus" when the corpus is empty, so this reported 100% invented from
+    # no evidence at all. The inverse of residual's empty-corpus case, and refused for the same reason.
+    if not text:
+        raise SystemExit(f"precision: read 0 bytes from {bodies!r} — every endpoint would score as "
+                         "not-in-corpus, which says nothing about the records")
     total = sum(len(v) for v in findings.values())
     print(f"  endpoints checked   : {len(eps)}")
     print(f"  corpus bytes read   : {len(text):,}")

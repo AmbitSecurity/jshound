@@ -39,6 +39,8 @@ from urllib.parse import urlsplit
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from jshound.fetch import document_imports, document_refs, http_get     # noqa: E402
 
+from jshound.nodeenv import node_env, node_failure
+
 
 def entry_url(doc_url, html):
     """The client entry module, and the app's base path, from a URL the DOCUMENT references.
@@ -88,11 +90,14 @@ def read(doc_url, timeout=30, workdir=None):
         fh.write(body)
 
     js = os.path.join(os.path.dirname(os.path.abspath(__file__)), "js", "sveltekit.js")
-    env = dict(os.environ)
+    env = node_env()
     env.setdefault("NODE_PATH", os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "node_modules"))
     try:
         r = subprocess.run(["node", js, fp], capture_output=True, env=env, timeout=120)
+        why = node_failure(r)
+        if why:
+            return {"available": False, "reason": f"reader failed: {why}", "is_sveltekit": True, "entry": entry, "document": doc_url}
         data = json.loads(r.stdout or b"{}")
     except Exception as e:                                 # noqa: BLE001
         return {"available": False, "is_sveltekit": True, "entry": entry,

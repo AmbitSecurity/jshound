@@ -9,14 +9,14 @@ Library use mirrors the CLI, because the CLI is a thin shell over exactly these 
     har     = jshound.to_har(records)
     lines   = jshound.to_urls(records, with_method=True)
 
-    chunks  = jshound.chunk_urls(open("main.js").read())   # lazy chunks, by evaluating the builder
+    chunks  = jshound.chunk_urls(open("main.js").read())   # lazy chunks, read out of the builder
     detail  = jshound.chunk_map(open("main.js").read())    # ...with coverage stats
     tree    = jshound.unbundle("./out", ["main.js"])        # webpack registry -> module tree
 
 `analyze` reads a directory of already-downloaded bodies and makes NO network requests. That is a
 deliberate split, not an omission: fetching belongs to whatever already does it well for you — a
 crawler, a proxy export, curl — and duplicating a worse copy of it inside the analyser is how the
-original tool got three hosts firewall-banned. `jshound.fetch` is a convenience for the standalone
+original tool got blocked by three hosts' edge protection. `jshound.fetch` is a convenience for the standalone
 case and is the only part that touches the network.
 """
 __version__ = "0.1.0"
@@ -27,6 +27,7 @@ from .export import openapi as _openapi
 from .export import urls as _urls
 
 __all__ = ["analyze", "to_openapi", "to_har", "to_urls", "chunk_urls", "chunk_map", "unbundle",
+           "read_records", "unfetched", "analyze_with_paths",
            "residual", "graphql_operations", "__version__"]
 
 
@@ -51,6 +52,33 @@ def to_urls(records, include_unresolved=False, with_method=False):
     return _urls.build(records, include_unresolved=include_unresolved, with_method=with_method)
 
 
+def read_records(path):
+    """Records from a file written by `analyze -f jsonl`, or any earlier JSON array of them.
+
+    `-f jsonl` emits one object per line, as the name says. It used to emit a pretty-printed JSON
+    ARRAY, so files written before that are still read here rather than rejected — and an OpenAPI or
+    HAR document is not records, so saying so beats a KeyError three frames down.
+    """
+    import json
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    if text.lstrip().startswith("["):
+        data = json.loads(text)
+    else:
+        try:
+            data = [json.loads(ln) for ln in text.splitlines() if ln.strip()]
+        except json.JSONDecodeError:
+            doc = json.loads(text)                  # a single object spanning many lines
+            if isinstance(doc, dict) and {"log", "openapi", "paths"} & set(doc):
+                raise ValueError(
+                    f"{path} is an exported document (OpenAPI or HAR), not records — pass the file "
+                    "written by `analyze -f jsonl`") from None
+            data = doc
+    if not isinstance(data, list):
+        raise ValueError(f"{path} does not hold a list of records")
+    return data
+
+
 def chunk_map(js_source):
     """Full chunk analysis: {publicPath, chunks, speculative, fallback, stats}.
 
@@ -60,12 +88,48 @@ def chunk_map(js_source):
     import json
     import os
     import subprocess
+
+    from .nodeenv import node_env, node_failure
     here = os.path.dirname(os.path.abspath(__file__))
-    r = subprocess.run(["node", os.path.join(here, "js", "chunkmap.js")],
-                       input=js_source, capture_output=True, text=True,
-                       env={**os.environ, "NODE_PATH": os.environ.get(
-                           "NODE_PATH", "/usr/local/lib/node_modules")})
-    return json.loads(r.stdout or "{}")
+    env = node_env()
+    env.setdefault("NODE_PATH", os.path.join(os.path.dirname(here), "node_modules"))
+    try:
+        r = subprocess.run(["node", os.path.join(here, "js", "chunkmap.js")],
+                           input=js_source, capture_output=True, text=True,
+                           env=env, timeout=120)
+    except FileNotFoundError:
+        raise RuntimeError("node is not on PATH — the extractors are JavaScript, so this needs "
+                           "Node 18 or newer") from None
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("the chunk extractor did not finish within 120s on this bundle") from None
+    # `json.loads(r.stdout or "{}")` is what this used to be, and it turned every failure into a
+    # bundle that declares no chunks: a missing `@babel/parser` printed `{}` with exit 0 and an empty
+    # stderr. The docstring above promises the caller can tell those two apart, so the exit code and
+    # stderr have to be read rather than dropped.
+    why = node_failure(r, need_output=True)
+    if why:
+        raise RuntimeError("the chunk extractor failed: " + why)
+    return json.loads(r.stdout)
+
+
+def unfetched(bodies, manifest=None):
+    """-> (chunk URLs the corpus declares but does not contain, count that could not be resolved).
+
+    For a caller that has its own fetcher. `jshound.fetch.collect` does this and the downloading in
+    one pass; this is the half to use when something else — a crawler with a session, a browser —
+    should make the requests.
+    """
+    from .fetch import unfetched as _u
+    return _u(bodies, manifest)
+
+
+def analyze_with_paths(bodies, host=None, manifest=None):
+    """-> (records, the files that were read). `analyze` returns only the records.
+
+    The file list is what distinguishes "this corpus holds no requests" from "nothing was read", so a
+    caller that reports coverage needs it.
+    """
+    return _analyze(bodies, host, manifest)
 
 
 def chunk_urls(js_source):

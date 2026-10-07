@@ -1,0 +1,49 @@
+jshound
+Copyright (c) 2026 Ambit Security
+
+This product includes software developed by third parties, as listed below.
+
+--------------------------------------------------------------------------------
+Compiled bundler runtime code, in test fixtures only
+--------------------------------------------------------------------------------
+
+Three fixtures under tests/fixtures/ are the output of a real local build, and so
+each contains that bundler's own runtime loader (1.5-3.3 KB of loader glue per
+fixture). The bundlers intend this code to ship inside application bundles. All
+three are MIT licensed.
+
+  tests/fixtures/webpack5-module-federation/
+      webpack 5 jsonp chunk-loading and Module Federation runtime
+      Copyright JS Foundation and other contributors
+      MIT -- https://github.com/webpack/webpack
+
+  tests/fixtures/metro-rn/
+      metro-runtime module registry polyfill
+      Copyright (c) Meta Platforms, Inc. and affiliates
+      MIT -- https://github.com/facebook/metro
+
+  tests/fixtures/parcel-build/
+      Parcel 2 parcelRequire loader and js/bundle-url/cache runtime modules
+      Copyright (c) 2017-present Devon Govett and contributors
+      MIT -- https://github.com/parcel-bundler/parcel
+
+--------------------------------------------------------------------------------
+Reduced excerpts of public build manifests, in test fixtures only
+--------------------------------------------------------------------------------
+
+Three fixtures are minimal excerpts of PUBLIC build manifests, cut down to the few
+lines a test needs, with hostnames replaced by reserved example domains. They are
+route paths, key names and identifiers rather than program code.
+
+  tests/fixtures/next-build-manifest/        shape of a Next.js Pages Router manifest
+  tests/fixtures/remix-manifest/             shapes of a Remix v2 and a React Router v7 manifest
+
+  The React Router website is MIT licensed:
+      Copyright (c) React Training LLC 2015-2021, Shopify Inc. 2022-2025
+      https://github.com/remix-run/react-router-website
+
+--------------------------------------------------------------------------------
+
+Everything else in this repository is original work under the MIT License; see
+LICENSE. Third-party packages used at runtime are resolved from their registries
+and are not redistributed here.

@@ -1,0 +1,44 @@
+"""What is allowed to come out of the chunk map as a URL.
+
+Six places in `chunkmap.js` add to the chunk set, so the guard sits at the one point they all pass
+through: a filter per call site is a filter the next call site forgets.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import jshound   # noqa: E402
+
+
+def test_a_string_that_cannot_be_a_url_path_is_not_a_chunk():
+    """Supabase's runtime holds the whole Google Tag Manager snippet in an id map —
+    `(function(w,d,s,l,i){w[l]=w[l]||[]...` — and it came back out as a chunk URL to go and
+    download. A URL path component cannot carry whitespace, a quote, a bracket or a brace without
+    being escaped first, so a string holding any of them was never a path."""
+    src = ('(function(){var r={};r.p="";'
+           'r.u=function(e){return ({'
+           '1:"static/chunks/real.a1b2.js",'
+           '2:"(function(w,d,s,l,i){w[l]=w[l]||[];})(window,document)",'
+           '3:"has a space.js"'
+           '})[e]};r.e(1);r.e(2);r.e(3);})()')
+    res = jshound.chunk_map(src)
+    assert "static/chunks/real.a1b2.js" in res["chunks"]
+    for c in res["chunks"] + res["speculative"]:
+        assert not any(ch in c for ch in "(){} \"'"), c
+
+
+def test_what_the_guard_rejected_is_counted_not_dropped_quietly():
+    """"40 declared, 3 of them not paths" is a different report from "37 declared"."""
+    src = ('(function(){var r={};r.p="";'
+           'r.u=function(e){return ({1:"a.js",2:"not a path.js"})[e]};r.e(1);r.e(2);})()')
+    res = jshound.chunk_map(src)
+    assert res["stats"]["notPathLike"] >= 1
+
+
+def test_a_clean_bundle_rejects_nothing():
+    fix = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "..", "examples", "demo-app", "app.4f2a9c1e.js")
+    res = jshound.chunk_map(open(fix).read())
+    assert len(res["chunks"]) == 3
+    assert res["stats"]["notPathLike"] == 0
+    assert res["stats"]["idsSeen"] == res["stats"]["idsResolved"] == 3

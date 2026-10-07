@@ -7,10 +7,11 @@
  *
  *     window.__remixManifest = {"entry":{...},"routes":{"root":{...}},"url":"...","version":"..."};
  *
- * EVALUATED rather than scraped, for the same reason `nextmanifest.js` evaluates `_buildManifest.js`:
- * brace-counting a minified object is guesswork, while running the assignment returns the structure the
- * framework itself reads. The context holds `window`/`self` and nothing else — no require, no process —
- * under a wall-clock timeout.
+ * READ FROM THE AST rather than scraped, for the same reason `nextmanifest.js` reads
+ * `_buildManifest.js` that way: brace-counting a minified object is guesswork, while walking the
+ * assignment returns the structure the framework itself reads. Nothing in the document is executed —
+ * an earlier version evaluated the right-hand side in a `vm` context, and the escape that cost is
+ * written up in `literal.js`.
  *
  * What the manifest declares, per route, and why each matters:
  *
@@ -24,51 +25,31 @@
  *   module+imports every chunk that route needs, as absolute URLs.
  */
 const fs = require("fs");
-const vm = require("vm");
-const parser = require("@babel/parser");
-const traverse = require("@babel/traverse").default;
-const generate = require("@babel/generator").default;
+const literal = require("./literal.js");
 
-const TIMEOUT_MS = 5000;
-
-/* PARSE THE MODULE, THEN EVALUATE ONLY THE ASSIGNED EXPRESSION.
+/* PARSE THE MODULE, THEN READ ONLY THE ASSIGNED OBJECT.
  *
  * Running the whole script is what the first version did and it recovered nothing: Remix ships the
- * assignment inside a `<script type="module">` that also carries ESM `import` statements, so
- * `vm.runInContext` throws "Cannot use import statement outside a module" before reaching the
- * assignment. Babel parses the module happily; the right-hand side is then a self-contained object
- * literal, and evaluating just that expression in an empty context is both narrower and safer than
- * running the file. */
+ * assignment inside a `<script type="module">` that also carries ESM `import` statements, so an
+ * evaluator throws "Cannot use import statement outside a module" before reaching the assignment.
+ * Babel parses the module happily, and the right-hand side is then a self-contained object literal —
+ * which is data, so it is walked rather than run.
+ *
+ * `__reactRouterManifest` wins when a document somehow declares both: the two flavours differ in
+ * their data protocol (`<path>.data` against `<path>?_data=<id>`), and asking a v7 app for `?_data=`
+ * returns 200 text/html, a hit that looks real and is worthless. */
 let flavour = null;
 
 function evaluate(src) {
-  let ast;
-  try {
-    ast = parser.parse(src, { sourceType: "unambiguous", errorRecovery: true });
-  } catch {
-    return null;
+  const got = literal.assignedGlobals(src, ["__reactRouterManifest", "__remixManifest"]);
+  if (got.error) return null;
+  for (const [name, fl] of [["__reactRouterManifest", "react-router-v7"], ["__remixManifest", "remix"]]) {
+    if (Object.prototype.hasOwnProperty.call(got, name)) {
+      flavour = fl;
+      return got[name];
+    }
   }
-  let rhs = null;
-  traverse(ast, {
-    AssignmentExpression(p) {
-      if (rhs) return;
-      const l = p.node.left;
-      if (!l || l.type !== "MemberExpression" || l.computed) return;
-      const prop = l.property && (l.property.name || l.property.value);
-      if (prop !== "__remixManifest" && prop !== "__reactRouterManifest") return;
-      rhs = p.node.right;
-      flavour = prop === "__reactRouterManifest" ? "react-router-v7" : "remix";
-    },
-  });
-  if (!rhs) return null;
-  try {
-    const code = generate(rhs, { concise: true }).code;
-    const sandbox = Object.create(null);
-    vm.createContext(sandbox);
-    return vm.runInContext(`(${code})`, sandbox, { timeout: TIMEOUT_MS });
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 /* Remix route paths are SEGMENTS that nest through `parentId`, so a child's URL is only meaningful

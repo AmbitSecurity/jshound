@@ -23,7 +23,7 @@
 #     jshound fetch https://play.grafana.org/ -o "$CORPORA/t_grafana" --max-chunks 150
 #
 # Point CORPORA at wherever you keep them. They are deliberately not in the repo: they are megabytes
-# of someone else's JavaScript, they go stale as targets ship, and the numbers in SUPPORT.md are dated
+# of someone else's JavaScript, they go stale as targets ship, and the README's numbers carry the date
 # for that reason.
 set -u
 

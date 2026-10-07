@@ -7,7 +7,6 @@ and guessing wrong produces a 200 that carries nothing.
 import json
 import os
 import subprocess
-import sys
 
 import pytest
 

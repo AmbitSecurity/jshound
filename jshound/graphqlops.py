@@ -128,6 +128,8 @@ def extract(source, origin=None):
 
 def scan(bodies):
     """-> operation records across every .js/.html file in a bodies directory."""
+    from jshound.analyze import require_corpus
+    require_corpus("graphql", bodies)
     out, seen = [], set()
     for root, _d, files in os.walk(bodies):
         for f in sorted(files):

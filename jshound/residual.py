@@ -2,7 +2,7 @@
 """residual.py — measure what static analysis MISSED, not what it found.
 
 A count of endpoints is a number you cannot check. `1546 routes` reads exactly the same whether the
-extractor got everything or half, which is how an engagement reported "routes and contracts captured"
+extractor got everything or half, which is how a run reported "routes and contracts captured"
 while holding 7 contracts across 479 endpoints.
 
 The checkable measurement is a RESIDUAL. Crudely grep every path-shaped string out of the saved bundles,
@@ -19,7 +19,7 @@ not a target with a big API, it is a tool with a hole.
   jshound residual <bodies-dir> <records.json>    what analyze missed in what your crawler saved
   residual.py <bodies-dir> <records.json> -v    also print the missed paths
 
-Ported from recon/js/residual.py, which reads recon's own cache layout; this reads an engagement workspace.
+Reads a saved bodies directory rather than a crawler's internal cache.
 """
 import json, os, re, sys
 from collections import Counter
@@ -35,7 +35,10 @@ _READABLE = re.compile(r'\.(js|mjs|cjs|ts|jsx|tsx|json|html?|rsc|txt|map)$', re.
 
 
 def classify(bodies, records_path, verbose=False):
-    records = json.load(open(records_path))
+    from jshound.analyze import require_corpus
+    require_corpus("residual", bodies)
+    from jshound import read_records
+    records = read_records(records_path)
     claimed = set()
     for r in records:
         t = r.get("template") or r.get("uri") or r.get("path") or r.get("value") or ""
@@ -94,6 +97,11 @@ def classify(bodies, records_path, verbose=False):
         else:
             buckets["other"] += 1
 
+    # A score off an empty corpus is not a zero, it is an absence of evidence — and "0 missed, 0.0%"
+    # is the most reassuring line this tool can print. It is refused rather than printed.
+    if not files:
+        raise SystemExit(f"residual: read 0 files from {bodies!r} — nothing to measure the records "
+                         "against, so there is no residual to report")
     tot = sum(buckets.values()) or 1
     miss = buckets.get("MISSED-apiish", 0)
     print(f"  files read          : {files}")

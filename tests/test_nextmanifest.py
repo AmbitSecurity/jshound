@@ -181,20 +181,35 @@ def test_each_manifest_reports_which_globals_it_defined(out):
     assert out["errors"] == []
 
 
-# ---- the sandbox --------------------------------------------------------------------------------
+# ---- the file is read, not run ------------------------------------------------------------------
+#
+# These files come off the open internet. An earlier version evaluated them in a `vm` context, and
+# both fixtures below are working escapes out of that context, reduced to the shape that matters. The
+# route table is the assertion: each one smuggles an `/escaped-<pid>` route that can only appear if
+# the escape worked.
 
-def test_the_manifest_cannot_reach_the_process():
-    """These files come off the open internet and are RUN. The context holds `self` and the standard
-    JavaScript globals — no `process`, no `require`, no `fs` — so a file reaching for one gets a
-    ReferenceError that is reported, and the run continues."""
+def test_statements_in_a_manifest_do_not_run():
+    """`hostile.js` reaches for the host realm through `self.constructor.constructor`, then calls
+    `process.exit(1)`. Reading the assignment ignores both, and the one real route still comes back."""
     out = run("hostile.js")
-    assert out["errors"] and "process is not defined" in out["errors"][0]["error"]
-    assert out["routes"] == [] and out["api_routes"] == []
+    assert templates(out) == {"/a"}
+    assert not [t for t in templates(out) if "escaped" in t]
+    assert out["errors"] == []
+
+
+def test_a_getter_in_a_manifest_is_not_invoked():
+    """The escape `Object.create(null)` did not close: a getter on the returned object ran in the host
+    realm when host code read the property, and `Error.prepareStackTrace` + `CallSite.getFunction()`
+    walked from there to a host function. A getter is not data, so it is skipped."""
+    out = run("hostile-getter.js")
+    assert templates(out) == {"/b"}
+    assert not [t for t in templates(out) if "escaped" in t]
+    assert out["errors"] == []
 
 
 def test_one_unreadable_manifest_does_not_lose_the_others():
     """Partial failure is normal — a CDN can serve one of the three as an error page."""
-    out = run("hostile.js", "_buildManifest.js")
+    out = run("error-page.js", "_buildManifest.js")
     assert len(out["errors"]) == 1
     assert "/account/me" in templates(out)
 

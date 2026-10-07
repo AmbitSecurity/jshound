@@ -16,16 +16,19 @@ before drawing any conclusion from a small tree, and reach for analyze.py instea
 """
 import json, os, subprocess, sys
 
+from jshound.nodeenv import node_env
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Babel and terser are installed globally in the image; NODE_PATH points node at them from any cwd.
-NODE_PATH = os.environ.get("NODE_PATH") or "/usr/local/lib/node_modules"
+NODE_PATH = os.environ.get("NODE_PATH") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                            "node_modules")
 UNBUNDLE = os.path.join(HERE, "js", "unbundle.js")
 
 
 def unbundle(outdir, paths):
     if not os.path.exists(UNBUNDLE):
         sys.exit(f"unbundle.js not found at {UNBUNDLE}")
-    env = dict(os.environ)
+    env = node_env()
     env.setdefault("NODE_PATH", NODE_PATH)
     r = subprocess.run(["node", "--max-old-space-size=4096", UNBUNDLE, outdir] + list(paths),
                        capture_output=True, text=True, env=env, timeout=900)

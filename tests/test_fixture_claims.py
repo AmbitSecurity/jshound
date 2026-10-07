@@ -51,3 +51,29 @@ def test_three_lazy_chunk_urls_are_built():
     src = open(os.path.join(DEMO, "app.4f2a9c1e.js")).read()
     for c in res["chunks"]:
         assert c not in src, f"{c} is a literal in the bundle — the fixture no longer proves anything"
+
+
+def test_the_readmes_opening_blocks_are_the_real_output():
+    """The first thing anyone sees is three console blocks. They are pasted output, so they rot
+    silently — this pins them to the commands that produce them."""
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
+
+    def run(*args):
+        r = subprocess.run([sys.executable, "-m", "jshound.cli", *args],
+                           capture_output=True, text=True, cwd=root)
+        assert r.returncode == 0, r.stderr[-800:]
+        return r.stdout.rstrip("\n")
+
+    chunks = run("chunks", "examples/demo-app/app.4f2a9c1e.js", "--quiet")
+    assert chunks in readme, f"README's chunks block is stale:\n{chunks}"
+
+    table = run("analyze", "examples/demo-app", "--host", "demo-app.test", "-f", "table")
+    assert table in readme, f"README's table block is stale:\n{table}"
+
+    # ...and the claim the chunks block is making, which is the whole hook
+    src = open(os.path.join(root, "examples", "demo-app", "app.4f2a9c1e.js"), encoding="utf-8").read()
+    for built in chunks.splitlines():
+        assert built not in src, f"{built} IS in the bundle — the README's premise is wrong"
