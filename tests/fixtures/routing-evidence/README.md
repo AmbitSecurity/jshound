@@ -1,11 +1,11 @@
-# Hash routing or path routing — what counts as evidence
+# Hash routing or path routing, what counts as evidence
 
 The distinction matters more than most fields here: a hash route never reaches the server, so it
 answers 404 to any request, while a path route returns the app shell. Mislabelling path as hash turns
 a map into a work list and makes someone skip real routes.
 
 It used to be a regex over the chunk's source. Measured over 11 corpora holding 557 route records,
-that produced exactly **two** labels — Grafana's and Slack's — and **both were wrong**. Each app is
+that produced exactly **two** labels, Grafana's and Slack's, and **both were wrong**. Each app is
 path-routed and each was called hash-routed.
 
 | directory | what it holds | expected |
@@ -20,4 +20,4 @@ the library calling itself; a call whose callee is imported is code reaching int
 outside, and only that is evidence. A corpus with evidence for both sides reports nothing.
 
 None of the 21 real corpora in this repo produce a positive, which is why the only true positive here
-is a fixture — and why Grafana's single label disappearing is the measured result.
+is a fixture, and why Grafana's single label disappearing is the measured result.

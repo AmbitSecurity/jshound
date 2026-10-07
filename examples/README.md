@@ -1,7 +1,7 @@
 # examples/demo-app
 
 A tiny webpack-shaped bundle that exercises the things string extractors cannot do. Nothing here
-touches the network — run it in thirty seconds and check the claims yourself.
+touches the network, so you can run it in thirty seconds and check the claims yourself.
 
 ```bash
 jshound chunks examples/demo-app/app.4f2a9c1e.js
@@ -32,8 +32,8 @@ POST   https://demo-app.test/v1/media
 POST   https://demo-app.test/v1/subscribe
 ```
 
-Six endpoints across four different sinks — `fetch`, `XMLHttpRequest.open`, `navigator.sendBeacon`
-and a `FormData` upload — with the verb on every one. Three of them are written in the source as
+Six endpoints across four different sinks (`fetch`, `XMLHttpRequest.open`, `navigator.sendBeacon`
+and a `FormData` upload) with the verb on every one. Three of them are written in the source as
 `` `${this.baseUrl}/v1/...` ``, where `baseUrl` is set in a *different module* from the call; the
 path only resolves if you follow the property across the module boundary.
 
@@ -61,5 +61,5 @@ query string in a path key, so `env` is emitted as a query *parameter* instead. 
 carries it in `queryString` for the same reason.
 
 `operationId` is the client's own method name, read out of the bundle. Each property records where
-the value comes from. The document validates as OpenAPI 3.1 — there is a test asserting it — so it
+the value comes from. The document validates as OpenAPI 3.1, asserted by a test, so it
 imports into Burp's OpenAPI Parser or Caido directly.

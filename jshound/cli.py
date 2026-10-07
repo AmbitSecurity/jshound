@@ -49,6 +49,57 @@ def _format(records, fmt, title):
     return records, False                                    # json/raw
 
 
+def cmd_map(a):
+    """Fetch and read one application, in one command.
+
+    `fetch` then `analyze` was always the real workflow, and making someone type both meant the first
+    thing a new reader did was wire two commands together before seeing a single endpoint. This is
+    the default: `jshound tesla.com` collects the JavaScript and prints the requests.
+
+    The JavaScript is kept, under `.jshound/<host>` unless `--bodies` says otherwise, because
+    collecting it is the slow part and every other command in here reads a directory of it.
+    """
+    from urllib.parse import urlsplit
+
+    from .analyze import analyze as run
+    from .fetch import collect
+
+    target = a.target if "://" in a.target else "https://" + a.target
+    host = urlsplit(target).hostname or a.target
+    bodies = a.bodies or os.path.join(".jshound", host)
+
+    saved = collect(target, bodies, with_chunks=not a.no_chunks, max_chunks=a.max_chunks,
+                    timeout=a.timeout, allow_private=a.allow_private)
+    if not saved:
+        # A target that served nothing is not a target with no API, and this is the one place the
+        # distinction is cheap to make: we know whether anything came back.
+        print(f"map: collected no JavaScript from {target}. Either the document was unreachable, or "
+              f"it builds its script tags at runtime. Drive a browser, export the session as a HAR, "
+              f"and run `jshound from-har session.har -o {bodies}` instead.", file=sys.stderr)
+        return 1
+
+    records, paths = run(bodies, a.host or host, None)
+    requests = [r for r in records if (r.get("_kind") or "endpoint") in ("endpoint", "route")]
+    # Endpoints first, because that is the number the reader came for. The record count is every
+    # kind the extractor emits, most of which are the working-out rather than the answer.
+    print(f"{len(paths)} scripts -> {len(requests)} endpoints ({len(records)} records)",
+          file=sys.stderr)
+
+    # NOTHING ON STDOUT IS THE WORST OUTPUT THIS COMMAND HAS. `tesla.com` is a server-rendered
+    # marketing page: 3 scripts, no requests in them, and an empty table reads as a tool that
+    # failed. Say which of the two it was, and what the next move is.
+    if not requests:
+        print(f"  no requests recovered from {len(paths)} script(s). This is a real answer when the "
+              f"page is server-rendered or its API calls live behind a login; it is the wrong answer "
+              f"if the app builds its script tags at runtime, which `fetch` cannot follow. "
+              f"`jshound fingerprint {bodies}` says which kind of app this is.", file=sys.stderr)
+
+    data, text = _format(records, a.format, a.title or host)
+    _emit(data, a.out, text)
+    print(f"  JavaScript kept in {bodies} — `jshound analyze {bodies}` re-reads it without "
+          f"fetching again", file=sys.stderr)
+
+
 def cmd_analyze(a):
     from .analyze import analyze as run
     records, paths = run(a.bodies, a.host, a.manifest)
@@ -203,11 +254,16 @@ def cmd_residual(a):
     classify(a.bodies, a.records, verbose=a.verbose)
 
 
+PRIVATE_HELP = ("allow URLs the target names in private address space (loopback, RFC1918, "
+                "link-local); on by default when the target itself is private")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="jshound",
                                 description="Recover a SPA's API contracts from its shipped JavaScript.")
     p.add_argument("--version", action="version", version=f"jshound {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
+    p._jshound_commands = sub.choices       # read by main() for the bare-target shortcut
 
     # `jsonl` emitted a pretty-printed JSON ARRAY, which is not JSON Lines and broke `jq -c` per line
     # and `while read`. Rather than redefine what the default produces, the two shapes now have two
@@ -216,6 +272,22 @@ def build_parser():
                help="table=the requests, to read; openapi=Burp/Caido contract import, har=Site Map "
                     "import, urls=nuclei/ffuf, json=records as an array (default), jsonl=one record "
                     "per line")
+
+    s = sub.add_parser("map", help="fetch an app's JavaScript and read it, in one command (FETCHES)")
+    s.add_argument("target", help="a URL or a bare hostname, e.g. tesla.com")
+    s.add_argument("-o", "--out", help="write the result here instead of stdout")
+    # `table` here, `json` everywhere else: this command exists to be run by a person who wants to
+    # see the requests, and the first thing it prints should be readable.
+    s.add_argument("-f", "--format", **dict(fmt, default="table"))
+    s.add_argument("--bodies", help="where to keep the JavaScript (default: .jshound/<host>)")
+    s.add_argument("--host", help="attribute records to this host instead of the target's")
+    s.add_argument("--title", help="title for the OpenAPI/HAR document")
+    s.add_argument("--no-chunks", action="store_true",
+                   help="do not follow the lazy chunks the bundles declare")
+    s.add_argument("--max-chunks", type=int, default=400)
+    s.add_argument("--timeout", type=int, default=30)
+    s.add_argument("--allow-private", action="store_true", help=PRIVATE_HELP)
+    s.set_defaults(fn=cmd_map)
 
     s = sub.add_parser("analyze", help="directory of saved JS/HTML -> contracts (no network)")
     s.add_argument("bodies")
@@ -260,8 +332,7 @@ def build_parser():
     s.add_argument("-o", "--out", default="./bodies")
     s.add_argument("--no-chunks", action="store_true")
     s.add_argument("--max-chunks", type=int, default=400)
-    s.add_argument("--allow-private", action="store_true",
-                   help="allow URLs the target names in private address space (loopback, RFC1918, link-local); on by default when the target itself is private")
+    s.add_argument("--allow-private", action="store_true", help=PRIVATE_HELP)
     s.set_defaults(fn=cmd_fetch)
 
     s = sub.add_parser("from-har", help="HAR export (DevTools/Burp/Caido) -> bodies dir (no network)")
@@ -304,7 +375,14 @@ def build_parser():
 
 
 def main(argv=None):
-    a = build_parser().parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = build_parser()
+    # `jshound tesla.com` means `jshound map tesla.com`. A subcommand is the common case for every
+    # other verb here, but the common case for a first run is a hostname, and making that an
+    # argparse error is a bad first thirty seconds.
+    if argv and argv[0] not in parser._jshound_commands and not argv[0].startswith("-"):
+        argv = ["map"] + argv
+    a = parser.parse_args(argv)
     # NODE_PATH is deliberately NOT defaulted here. Setting it to `/usr/local/lib/node_modules`
     # shadowed every module's own fallback to the checkout's `node_modules`, which is where the Babel
     # packages actually are, and the only reason anything worked was node's upward directory walk from

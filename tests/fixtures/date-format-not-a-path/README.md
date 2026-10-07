@@ -1,4 +1,4 @@
-moment/dayjs ship a locale table — `{LTS:"h:mm:ss A", LT:"h:mm A", L:"MM/DD/YYYY"}` — and `L`
+moment/dayjs ship a locale table, `{LTS:"h:mm:ss A", LT:"h:mm A", L:"MM/DD/YYYY"}`, and `L`
 reached a client-verb sink, so Notion produced an endpoint whose URL was `MM/DD/YYYY`.
 
 Requiring a leading slash would have caught it and would also have discarded real relative paths

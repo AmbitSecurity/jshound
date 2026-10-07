@@ -17,7 +17,7 @@ pip install xnLinkFinder
 
 **The table understates the result on purpose.** Every tool is reduced to a set of paths, because a
 path is the only unit all of them emit. jshound's real output is a method, a body schema with
-field provenance, a content type, the client's headers and the page that loads the call — and four
+field provenance, a content type, the client's headers and the page that loads the call, and four
 of those five have no column here. `+method` and `+body` report how much of each tool's result the
 comparison cannot represent.
 

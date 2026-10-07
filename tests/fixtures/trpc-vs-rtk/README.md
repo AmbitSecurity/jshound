@@ -1,5 +1,5 @@
-tRPC and RTK Query generate the same call shape — a member chain ending in `useQuery`/`useMutation`
-— and only one of them means `/api/trpc/<router>.<procedure>`.
+tRPC and RTK Query generate the same call shape, a member chain ending in `useQuery`/`useMutation`
+, and only one of them means `/api/trpc/<router>.<procedure>`.
 
 Measured on Grafana: the duck-type matched RTK Query's `api.endpoints.<name>.useMutation()` and
 produced 13 records at paths like `/api/trpc/hK.endpoints.upsertRuleGroupForNamespace`, while the

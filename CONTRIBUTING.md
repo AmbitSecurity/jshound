@@ -9,7 +9,7 @@ those was a gap until a fixture proved it, and the README's **What it works on**
 is verified against what.
 
 So the most useful thing you can send is a bundler, or a build configuration, that the README does
-not already cover — or one it does cover that behaves differently for you. That starts with a file
+not already cover, or one it does cover that behaves differently for you. That starts with a file
 that fails.
 
 ## Adding a fixture
@@ -26,7 +26,7 @@ tests/fixtures/vite-flat-esm/
 
 Rules that keep the corpus usable:
 
-- **Synthetic, or your own build output — never scraped.** Hand-write the smallest bundle that
+- **Synthetic, or your own build output, never scraped.** Hand-write the smallest bundle that
   reproduces the shape, or commit the output of building a tiny app with the bundler itself, which
   is how `parcel-build`, `metro-rn` and `webpack5-module-federation` were made. Never a PRIVATE or
   authenticated target's JavaScript, and never anything that names a real target: it is someone
@@ -37,7 +37,7 @@ Rules that keep the corpus usable:
   paths and identifiers rather than program code, and they are attributed in [NOTICE](NOTICE).
 - **Minimal.** If deleting a line still reproduces the gap, delete it.
 - **Say what should happen.** `expected.json` is the claim. A fixture with no expectation is a bug
-  report, which is also welcome — just open an issue instead.
+  report, which is also welcome. Just open an issue instead.
 
 A failing fixture is a complete contribution. You do not have to fix it.
 
@@ -59,7 +59,7 @@ for f in jshound/js/*.js; do node --check "$f"; done
 ## Benchmarks
 
 Numbers in a PR need the corpus they came from, or they are not numbers. `bench/run.py` buckets
-every tool's output by the same rules so that minifier debris cannot be counted as attack surface —
+every tool's output by the same rules so that minifier debris cannot be counted as attack surface.
 if you are reporting a comparison, use it, and say what you ran it against.
 
 ## Changing the extractor: diff the records, not the totals
@@ -73,7 +73,7 @@ CORPORA=~/.cache/jshound-corpora bench/regress.sh after
 python3 bench/regress_diff.py before after
 ```
 
-Build the corpora with `jshound fetch` — one directory per target — and keep them outside the repo;
+Build the corpora with `jshound fetch`, one directory per target, and keep them outside the repo;
 they are megabytes of someone else's JavaScript and they go stale as targets ship, which is why the
 README's measured tables carry the date they were taken.
 
@@ -82,12 +82,12 @@ session, each of which a count would have read backwards:
 
 | | what the count said | what the records said |
 |---|---|---|
-| 886 → **888** | small gain | 27 fabricated templates removed, 29 real ones recovered in their place — kept |
-| 886 → **887** | small gain | a base glued onto the wrong API; 4 correct records displaced by 5 wrong ones — reverted |
-| 1736 → **1737** | small gain | 1 real endpoint gained, one parameter name degraded `{param:f}` → `{unary}` — reverted |
+| 886 to **888** | small gain | 27 fabricated templates removed, 29 real ones recovered in their place. Kept |
+| 886 to **887** | small gain | a base glued onto the wrong API; 4 correct records displaced by 5 wrong ones. Reverted |
+| 1736 to **1737** | small gain | 1 real endpoint gained, one parameter name degraded from `{param:f}` to `{unary}`. Reverted |
 
 Two of those three changes looked like improvements and made the output worse. A third looked
-net-negative on a 60-file subset of one corpus and was fine on the whole thing — subsets flatter
+net-negative on a 60-file subset of one corpus and was fine on the whole thing. Subsets flatter
 changes, so run the full set before believing a result.
 
 ## Licensing of contributions
