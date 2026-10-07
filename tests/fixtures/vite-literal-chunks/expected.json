@@ -1,0 +1,3 @@
+{"chunks": ["assets/src-97epdJdY.js", "assets/react-dom-BzP9Lo1b.js", "assets/preload-helper-Czpn1I53.js",
+            "./BoardHistoryLog-D7tgZ4er.js", "./settings-Bq12Xy9z.js"],
+ "endpoints": [{"method": "POST", "template": "/api/v1/boards"}]}

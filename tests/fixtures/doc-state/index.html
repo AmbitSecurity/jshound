@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+  <!-- Asana's shape: a 17 KB JSON blob in a meta content attribute. config_values() reads metas but
+       caps content at 400 chars, so a payload this size is dropped whole and never JSON-parsed. -->
+  <meta name="window" content='{"loginConfig":{"oauthProviders":{"google":{"oauthActionUrl":"https://app.example.com/-/oauth","oauthProviderUrl":"https://accounts.google.com/o/oauth2/auth"}},"recaptchaV2SiteKey":"6Lc_key"}}'>
+</head>
+<body>
+  <!-- Datadog's shape: the declared auth surface in a hidden input, in a document with NO <form>, so
+       markup_records' hidden-field path never sees it. -->
+  <input id="auth_settings" name="auth_settings" type="hidden" value='{"login_url":"/account/login?","openid_login_url":"/account/oauth2?provider=google","forgot_password_url":"/account/forgot_password","recaptcha_login_url":"/account/login/recaptcha?","allowed_login_methods":["SAML","google_oidc","standard"],"authentication_token":"tok_abc123"}'>
+
+  <!-- Slack's shape: data-props. The slashes are JSON-escaped in the source, so no text search finds
+       these three OAuth entry points. -->
+  <div data-props='{"geoRootUrl":"https://example.com/","userOauth":{"apple":{"redirect_url":"https://example.com/signin/oauth/apple/start?email_first=1"},"google":{"redirect_url":"https://example.com/signin/oauth/google/start?email_first=1"}}}'></div>
+
+  <!-- NOISE THAT MUST NOT BE EMITTED, each a real case from the corpora: -->
+
+  <!-- deno.com renders a deno.json snippet into a `code` attribute. These are workspace DIRECTORY
+       names that satisfy every URL-shape test and are not requests. Not an allowlisted attribute. -->
+  <div code='{"workspaces":["./api","./core","./web"]}'></div>
+
+  <!-- GitLab serialises its sidebar menu. Following navigation is the crawler's channel and
+       markup_records deliberately excludes it. Not an allowlisted attribute. -->
+  <aside data-sidebar='{"current_menu_items":[{"link":"/explore/projects"},{"link":"/explore/groups"}]}'></aside>
+
+  <!-- Radix UI component state. An allowlisted attribute, but the value is a bare word, not a
+       document, so it is rejected for not parsing as an object or array. -->
+  <div data-state="closed"></div>
+
+  <!-- A third-party CDN bundle, which is all a `bundle_url` leaf ever is. -->
+  <div data-config='{"bundle_url":"https://cdn.example.net/rum/datadog-rum.js"}'></div>
+</body>
+</html>

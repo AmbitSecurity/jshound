@@ -1,0 +1,1 @@
+var n="https://api.eb.test";async function e(){return fetch(new URL("/v1/alpha",n),{method:"GET"})}async function c(t){return fetch("/api/v1/beta",{method:"POST",body:JSON.stringify({x:t,kind:"eb"})})}async function a(){return(await import("./lazy-IEUVTO2D.js")).go()}document.addEventListener("click",()=>{e(),c(1),a()});

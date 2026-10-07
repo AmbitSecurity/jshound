@@ -1,0 +1,12 @@
+{
+  "name": "jshound",
+  "version": "0.1.0",
+  "description": "Recover a SPA's API contracts from the JavaScript it ships.",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@babel/generator": "^7.29.0",
+    "@babel/parser": "^7.29.9",
+    "@babel/traverse": "^7.29.8"
+  }
+}

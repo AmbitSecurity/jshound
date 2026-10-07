@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci || npm install
+      - run: pip install -e . pytest openapi-spec-validator
+      - run: pytest tests -q
+      - name: node parsers compile
+        run: for f in jshound/js/*.js; do node --check "$f"; done
+      - name: cli smoke test
+        run: |
+          jshound --version
+          echo '(()=>{var r={};r.u=e=>"static/chunks/"+e+"."+{12:"a1b2c3"}[e]+".js";})()' \
+            | jshound chunks -
