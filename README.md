@@ -4,75 +4,81 @@ Recover a web app's API from the JavaScript it ships. Method, path, body fields,
 
 ```console
 $ jshound supabase.com/dashboard
-155 scripts -> 165 endpoints (766 records)
+155 scripts -> 224 endpoints (2242 records)
 
 POST   /platform/auth/{ref}/magiclink                  {"email":"state:email"}
-POST   /platform/auth/{ref}/otp                        {"phone":"state:phone"}
 POST   /platform/projects/{ref}/db-password            {"password":"input:t"}
-POST   /v1/branches/{branch_id_or_ref}                 {"branch_name":"input:t","git_branch":"input:n","persistent",...}
-DELETE /v1/projects/{param_n}/vanity-subdomain
+POST   /passkeys/authentication/verify                 {"challenge_id":"state:challengeId","credential":"state:cred,...}  application/json?
 POST   /v2/projects/{ref}/advisors/run                 {"data":{"type":"string","attributes":{"lints":"computed:map"}}}
+DELETE /api/integrations/stripe-sync                   {"projectRef":"input:e","startTime":"input:t"}  application/json
+DELETE /v1/projects/{param_n}/vanity-subdomain
 ...
 ```
 
-One hostname. No crawling, no clicking through the UI, no login. 64 GET, 64 POST, 15 DELETE,
-13 PATCH, 8 PUT and 1 HEAD, measured 2026-10-07. 213 of the 218 files it collected came from
-`frontend-assets.supabase.com`, which is where that build actually lives, and 145 of them were lazy
-chunks the page never loaded.
+100 POST, 82 GET, 18 DELETE, 13 PATCH, 8 PUT and 3 HEAD, with a body contract on 53 of them.
+Measured 2026-10-07.
+
+Takes a hostname, a list of them, or a scope file on stdin. No credentials and no session: the only
+requests it makes are GETs for the JavaScript a browser downloads on page load, which are static
+public assets off a CDN. Everything after that happens offline, against files on your disk.
 
 ## What's jshound?
 
-A single page app ships its entire API client to the browser. Every request the app is built to make
-is sitting in that bundle: the URL, the method, the fields it sends, the headers it attaches. jshound
-reads it out and hands you the requests.
+Single page apps are one of the most common ways a web application gets built, and an SPA hands its
+whole API client to the browser. Every request the app is built to make is in that bundle: the URL,
+the method, the field names it sends, the content type, the headers it attaches. If you can read the
+bundle properly you do not have to discover the API by clicking through the UI, because the client
+already knows all of it.
 
-SPAs are how web applications get built now. The recon tooling for them was written when JavaScript
-shipped as readable files with readable paths, and then bundlers ate the frontend. The tools that
-pull strings out of JavaScript still work exactly as well as they ever did, which is to say they
-reach a fraction of a modern app and tell you nothing about what to send to it.
+Reading it properly is the hard part, and it is why extracting strings does not get you there.
 
-There are two reasons a search through the bundle does not work, both of them from the app above.
+### How it works
 
-**The URLs are built at runtime.** A code split app never writes its lazy chunk URLs down. Webpack
-ships a function and calls it when the user navigates:
+1. **Collect the whole bundle, not the entry point.** A code split app loads most of its code later,
+   on navigation, and never writes those URLs down. Webpack ships a builder and calls it at
+   `import()` time, so jshound reads the builder out of the syntax tree, evaluates it for every chunk
+   id it can find, fetches the results, and repeats until a round turns up nothing new. On the app
+   above that is 145 extra files, and the build lives on a CDN that nobody put in scope.
 
-```js
-r.u = e => "static/chunks/" + ({12:"settings",34:"billing"}[e] || e) + "." + {12:"a1b2c3d4"}[e] + ".js"
-```
+2. **Find the call sites, not the strings.** Every file is parsed with Babel, and what it looks for
+   is the places a request is actually made: `fetch`, `axios`, `XMLHttpRequest.open`,
+   `navigator.sendBeacon`, `EventSource`, `WebSocket`, `new URL(...)` passed into one of those, and
+   the per-app request wrapper that most real codebases put in front of all of them. A sink has
+   arguments; a string does not.
 
-So the URL is nowhere in the file:
+3. **Resolve each argument back to a value.** This is where the contract comes from. A path is
+   usually assembled: `${this.baseUrl}/orgs/${id}/members` is three values from three places, and
+   the file that assigns `this.baseUrl` is usually not the file that uses it. So every property
+   assignment, every export and every const in the whole corpus is indexed in a pass that runs
+   first, and then each argument is traced through it: parameters back to their call sites, members
+   back to the object literal that defined them, re-exports back to the module that owns them.
 
-```console
-$ grep -c "settings.a1b2c3d4.js" examples/demo-app/app.4f2a9c1e.js
-0
-$ jshound chunks examples/demo-app/app.4f2a9c1e.js --quiet
-static/chunks/settings.a1b2c3d4.js
-static/chunks/billing.e5f6a7b8.js
-static/chunks/admin.c9d0e1f2.js
-```
+4. **Assemble the request from the call, not from the URL.** The method comes from the options
+   object, or from the wrapper's own default, or from the sink itself. The body's field names come
+   from the object literal being serialised, with a note on where each value came from. The content
+   type comes from a `FormData`, a `JSON.stringify`, or an explicit header, and says which. The
+   headers come from the client's own defaults, so the `x-` headers an app requires travel with the
+   endpoint that needs them.
 
-Most of a code split app's code lives behind those URLs, so most of its API does too. jshound reads
-the builder out of the syntax tree and evaluates it, without running any of the target's code.
+5. **Mark anything that did not resolve.** An unresolved slice is written `{EXPR}`, an incomplete
+   body list gets a `~`, an inferred content type gets a trailing `?`. The unmarked records are
+   worth trusting because the marked ones exist, and `precision` and `residual` measure both
+   directions against the corpus you just ran.
 
-**The paths are assembled.** `${this.baseUrl}/orgs/${id}` is three values from three places, and the
-file that assigns `this.baseUrl` is usually not the file that uses it. jshound indexes every property
-assignment across the whole corpus first, then follows the link.
+### What it recovers
 
-## Why jshound?
-
-- **Full requests, not a URL list.** Method, path, body fields, content type, headers.
-- **Follows lazy chunks** until no new ones appear, including the ones served from a CDN the page
-  links but nobody put in scope.
-- **Reads the route table** where the build declares one: Next, Nuxt, SvelteKit, Remix, React Router.
-  A declared route is the build's own statement of what it routes, not a guess from a filename.
-- **Exports to OpenAPI, HAR and URL lists.** Burp, Caido, nuclei and ffuf take the output directly.
-- **Says what it could not resolve.** `{EXPR}` for an unresolved slice, `~` for an incomplete body, a
-  trailing `?` for an inferred content type. The unmarked records are worth trusting because the
-  marked ones exist.
-- **Measures itself.** `precision` reports what it invented and `residual` what it missed, both
-  against the corpus you just ran it on.
-- **Never executes the target's code.** Everything is read from the parsed syntax tree.
-- **Works behind a login**, by reading a HAR you exported from a browser or a proxy.
+| | |
+|---|---|
+| endpoints | a method and a path for each, with parameters named where the code names them |
+| body contracts | the field names, where each value came from, and the content type |
+| request headers | the client's own defaults, including the `x-` headers an app requires |
+| query parameters | separately from the path, with their names |
+| GraphQL operations | the document, the operation name, and the variables with their types |
+| framework route tables | what the build itself declares, for Next, Nuxt, SvelteKit, Remix and React Router |
+| client-side routes | the router's own table, which is the page surface rather than the API |
+| server state | config, feature flags and URLs the server serialised into the document |
+| cookies and auth | the names the client sets and reads, and the auth scheme per client |
+| validators | `zod` schemas, which are a body contract written down by the developer |
 
 ## Installing jshound
 
@@ -86,38 +92,28 @@ pip install -e ".[fetch]"
 Needs Python 3.9 or newer and Node 18 or newer. The venv is not optional on Debian, Ubuntu, Fedora or
 Homebrew Python, which refuse to install into the system environment.
 
-## How to use jshound
+## Try it offline, in thirty seconds
 
-One hostname does the whole thing: collect the JavaScript, follow the lazy chunks, read the requests.
-
-```bash
-jshound app.example.com
-```
-
-The JavaScript is kept under `.jshound/<host>`, because collecting it is the slow part and every
-other command reads a directory of it. So the formats are a re-read, not a re-fetch:
-
-```bash
-jshound analyze .jshound/app.example.com -f openapi -o spec.json   # import into Burp or Caido
-jshound analyze .jshound/app.example.com -f har                    # a site map
-jshound analyze .jshound/app.example.com -f urls                   # pipe into nuclei or ffuf
-```
-
-Behind a login, fetching will not get far, and that is where the surface that matters lives. Drive a
-browser, export the session as a HAR from DevTools or Burp, and read that instead:
-
-```bash
-jshound from-har session.har -o ./bodies && jshound analyze ./bodies -f table
-```
-
-If the build declares its own route table, read that. No fetching, about a second:
+There is a five line bundle in `examples/demo-app`. It is a webpack app that lazy loads three
+chunks, and the URLs of those chunks are not in it:
 
 ```console
-$ jshound manifest https://supabase.com/dashboard
-  next, declared by the build: 293 routes (103 api, 190 page) · 191 chunks · 2 rewrites
+$ grep -c "settings.a1b2c3d4.js" examples/demo-app/app.4f2a9c1e.js
+0
+$ jshound chunks examples/demo-app/app.4f2a9c1e.js --quiet
+static/chunks/settings.a1b2c3d4.js
+static/chunks/billing.e5f6a7b8.js
+static/chunks/admin.c9d0e1f2.js
 ```
 
-Offline, on the example app in this repo, which a test pins so it cannot go stale:
+The bundle ships the builder instead of the answer, and calls it when the user navigates:
+
+```js
+r.u = e => "static/chunks/" + ({12:"settings",34:"billing",56:"admin"}[e] || e)
+         + "." + {12:"a1b2c3d4",34:"e5f6a7b8",56:"c9d0e1f2"}[e] + ".js"
+```
+
+Now read the requests out of the same app:
 
 ```console
 $ jshound analyze examples/demo-app --host demo-app.test -f table
@@ -129,7 +125,88 @@ POST   /v1/subscribe              {"email":"computed:trim","pageUri":"state:href
 GET    /v1/users/{param_o}/profile
 ```
 
-Three of those six are only reachable by following a base URL into a different file.
+Six endpoints across four different sinks, with a verb on every one. Three of them are only
+reachable by following a base URL into a different file, which is the thing a string scanner cannot
+do. A test asserts this output, so it cannot quietly stop being true.
+
+## Walk through a real app
+
+```console
+$ jshound supabase.com/dashboard
+  chunks: 146 declared over 3 round(s), 145 fetched, 0 already had, 1 unreachable
+  216 script(s) -> .jshound/supabase.com  [145 chunk-table, 68 script-src, 3 inline]
+  13 runtime config value(s) from injected HTML (page, buildId, assetPrefix, viewport, googlebot…)
+  62 duplicate body/bodies skipped (identical bytes under another name): 12fc3a97a2a2f5ffa083.js, 1f0f057531ebc61a541b.js, 41d4532fd8371e614d6d.js, 56697fad9a77afed5010.js, 579483ec2246013c6ff1.js (+57 more)
+  parsing 155 scripts with 15 workers, 2.3MB batches
+  302 original module name(s) mapped onto content-hashed bodies, so relative imports can resolve
+  module index: 0 export(s), 3535 property value(s) across 155 files, independent of how they are batched
+  34 body encoding(s) inferred from the sole request builder in the same file (labelled as inferred, not read)
+  merged 511 duplicate call site(s) into their endpoints (per host, which the extractor cannot do)
+  11 path literal(s) dropped: a call site elsewhere in the bundle already recovered their method
+  9 request(s) had a body but no resolvable URL, recorded as request-no-url, not counted as endpoints
+155 scripts -> 224 endpoints (2242 records)
+  kept in .jshound/supabase.com, so `jshound analyze .jshound/supabase.com` re-reads it without fetching again
+```
+
+That is the whole log, which is the point: every line of it is a number you can check. The document
+on `supabase.com` named four scripts and those named the rest, so **213 of the 217 files came from
+`frontend-assets.supabase.com`**, which is where that build actually lives. **145 of them are lazy
+chunks the page itself never loaded**, found by evaluating the chunk builder over three rounds until
+a round turned up nothing new. Nothing was logged into, and the only requests were GETs for static
+assets.
+
+The lines in the middle are the analysis saying what it did and did not resolve: 34 content types
+were inferred from the file's own request builder rather than read at the call site, and are marked
+`application/json?` for it; 9 requests had a body but no URL anyone could resolve, so they are filed
+as `request-no-url` and are not counted among the 224.
+
+The corpus stays on disk, so changing your mind about the format is a re-read and not a re-fetch:
+
+```bash
+jshound analyze .jshound/supabase.com -f openapi -o spec.json   # import into Burp or Caido
+jshound analyze .jshound/supabase.com -f har                    # a site map
+jshound analyze .jshound/supabase.com -f urls                   # pipe into nuclei or ffuf
+```
+
+Ask what built it, and what to expect as a result:
+
+```console
+$ jshound fingerprint .jshound/supabase.com
+  bundler: turbopack · framework: next (from the served document) · module ids: mixed · 215 of 217 files parsed
+  209 file(s) of it served from frontend-assets.supabase.com, not from supabase.com
+  ! 1 file(s) could not be parsed, so anything in them is missing rather than absent
+```
+
+A Next Pages Router build, a Nuxt build, SvelteKit, Remix and React Router all publish their own
+route table. Read that instead of inferring anything, because it is the build's own statement of
+what it routes. No fetching of assets, about a second:
+
+```console
+$ jshound manifest https://supabase.com/dashboard
+  next, declared by the build: 293 routes (103 api, 190 page) · 191 chunks · 2 rewrites · 0 prerendered
+```
+
+## Several targets, or a scope file
+
+```bash
+jshound app.example.com api.example.com
+cat scope.txt | jshound
+```
+
+Each host gets its own corpus under `.jshound/<host>`, and the records carry the host that actually
+served the file, so a shared directory does not blur two targets into one.
+
+## Behind a login
+
+Fetching will not get far against an authenticated app, and that is where the surface that matters
+lives. Drive a browser, export the session as a HAR from DevTools or Burp, and read that instead:
+
+```bash
+jshound from-har session.har -o ./bodies && jshound analyze ./bodies -f table
+```
+
+This is the same analysis over a better corpus. A HAR carries the responses the browser actually
+received, so it reaches the code that only loads once you are signed in.
 
 ## Commands
 

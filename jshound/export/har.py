@@ -13,7 +13,7 @@ nothing downstream could then tell the difference between evidence and inference
 import json
 from datetime import datetime, timezone
 
-from .paths import looks_like_source_file, normalize, split_origin, split_query
+from .paths import UNRESOLVED_ORIGIN, looks_like_source_file, normalize, split_origin, split_query
 
 _SKIP_BODY = {"GET", "HEAD", "OPTIONS", "TRACE"}
 
@@ -22,6 +22,11 @@ def _url(rec):
     tmpl = rec.get("template") or rec.get("url") or ""
     origin, _ = split_origin(tmpl)
     path, _params, resolved = normalize(tmpl)
+    if origin == UNRESOLVED_ORIGIN:
+        # The base is a value the analysis could not follow. Keeping the slot visible is the point:
+        # a proxy importing this sees an address it must substitute, rather than a wrong host that
+        # looks real. `resolved` is already False here, which is how callers filter them.
+        return origin + path, False
     if origin and "://" in origin:
         base = origin
     elif rec.get("_host"):

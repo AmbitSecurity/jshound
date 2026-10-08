@@ -91,7 +91,7 @@ def read(doc_url, timeout=30):
         why = ("a request in front of the app is blocking it" if st in (401, 403)
                else "an app built with experimental.appManifest:false serves none")
         return {"available": False, "is_nuxt": True, "assets_base": base, "status": st,
-                "reason": f"Nuxt app, but builds/latest.json {err} — {why}",
+                "reason": f"Nuxt app, but builds/latest.json {err}, {why}",
                 "document": doc_url}
     bid = latest.get("id")
     if not bid:

@@ -137,7 +137,7 @@ def check(bodies, records_path, verbose=False):
     # Every endpoint is "not in corpus" when the corpus is empty, so this reported 100% invented from
     # no evidence at all. The inverse of residual's empty-corpus case, and refused for the same reason.
     if not text:
-        raise SystemExit(f"precision: read 0 bytes from {bodies!r} — every endpoint would score as "
+        raise SystemExit(f"precision: read 0 bytes from {bodies!r}, every endpoint would score as "
                          "not-in-corpus, which says nothing about the records")
     total = sum(len(v) for v in findings.values())
     print(f"  endpoints checked   : {len(eps)}")
@@ -146,7 +146,7 @@ def check(bodies, records_path, verbose=False):
         print(f"  {k:<20}: {len(v)}")
     print(f"  >>> questionable    : {total}  ({(100 * total / len(eps)) if eps else 0:.1f}%)")
     if total and (verbose or total <= 12):
-        print("\n  read these — a finding is a question, not a verdict:")
+        print("\n  read these, a finding is a question, not a verdict:")
         for k, v in findings.items():
             for t, sink in v[:10]:
                 print(f"    [{k}] {sink}  {t}")

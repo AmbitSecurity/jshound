@@ -323,7 +323,7 @@ def main(argv=None):
     else:
         print(payload)
     if not res["bundlers"] and not res["framework"]:
-        print("  no bundler signature found — check the output by hand rather than assuming a "
+        print("  no bundler signature found, check the output by hand rather than assuming a "
               "failure.", file=sys.stderr)
 
 

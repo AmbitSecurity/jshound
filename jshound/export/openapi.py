@@ -57,7 +57,7 @@ def _schema_from(rec, zod_by_name):
     # empty object schema with the expression in the description says what is actually known.
     if rec.get("body_param"):
         return {"type": "object",
-                "description": f"body is `{rec['body_param']}` — field names are a compile-time "
+                "description": f"body is `{rec['body_param']}`, field names are a compile-time "
                                f"type and are not present in the shipped JavaScript"}
     keys = rec.get("body_keys")
     if isinstance(keys, list) and keys:
@@ -131,7 +131,7 @@ def build(records, title="Recovered API", version="0.0.0"):
                 "name": p["name"], "in": "path", "required": True,
                 "schema": {"type": "string"},
                 "description": ("recovered name" if p["resolved"] else
-                                "UNRESOLVED in the shipped code — substitute a real value"),
+                                "UNRESOLVED in the shipped code, substitute a real value"),
             } for p in params]
         # Query names come from three places: the template's own `?a=b`, a `query_schema` the
         # extractor built, and a plain `query` list. Merge and de-duplicate.

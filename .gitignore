@@ -9,3 +9,5 @@ out/
 *.har
 spec.json
 .pytest_cache/
+.jshound/
+records.json

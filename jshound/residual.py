@@ -100,7 +100,7 @@ def classify(bodies, records_path, verbose=False):
     # A score off an empty corpus is not a zero, it is an absence of evidence — and "0 missed, 0.0%"
     # is the most reassuring line this tool can print. It is refused rather than printed.
     if not files:
-        raise SystemExit(f"residual: read 0 files from {bodies!r} — nothing to measure the records "
+        raise SystemExit(f"residual: read 0 files from {bodies!r}, nothing to measure the records "
                          "against, so there is no residual to report")
     tot = sum(buckets.values()) or 1
     miss = buckets.get("MISSED-apiish", 0)

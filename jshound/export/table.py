@@ -19,7 +19,7 @@ together.
 """
 import json
 
-from .paths import looks_like_source_file, normalize, split_origin
+from .paths import UNRESOLVED_ORIGIN, looks_like_source_file, normalize, split_origin
 
 _MEDIA = {
     "json": "application/json",
@@ -76,7 +76,8 @@ def build(records, with_origin=False):
         method = (rec.get("method") or "GET").upper()
         shown = path
         if with_origin:
-            base = origin if origin else (f"https://{rec['_host']}" if rec.get("_host") else "")
+            base = ("" if origin == UNRESOLVED_ORIGIN else
+                    origin if origin else (f"https://{rec['_host']}" if rec.get("_host") else ""))
             shown = base + path
         body = _body(rec)
         # `content_type` is the header as written. Absent that, `body_encoding` is what the call site

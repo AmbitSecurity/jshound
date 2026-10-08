@@ -41,7 +41,7 @@ def register(bodies, pairs, document=None):
                 print(f"  {base}: already registered", file=sys.stderr)
                 continue
             if not os.path.exists(os.path.join(bodies, base)):
-                print(f"  {base}: not in {bodies} — nothing to register", file=sys.stderr)
+                print(f"  {base}: not in {bodies}, nothing to register", file=sys.stderr)
                 continue
             # `d` is the DOCUMENT that loaded the script, which is what decides the host of a relative
             # path. Absent an explicit one, the fetch URL is the best available answer and is marked as

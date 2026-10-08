@@ -20,22 +20,40 @@ id-to-name map and an id-to-hash map at `import()` time, so the string only exis
 runs. jshound recovers the builder and runs it.
 
 ```bash
+jshound analyze examples/demo-app --host demo-app.test -f table
+```
+
+```
+GET    /api/feature-flags
+POST   /t/events                  {"sid":"?","evt":"?"}
+POST   /v1/media                  {"file":"file-upload"}                multipart/form-data
+DELETE /v1/sessions/current
+POST   /v1/subscribe              {"email":"computed:trim","pageUri":"state:href"}  application/json
+GET    /v1/users/{param_o}/profile
+```
+
+Six endpoints across four different sinks (`fetch`, `XMLHttpRequest.open`, `navigator.sendBeacon`
+and a `FormData` upload) with the verb on every one. Three of them are written in the source as
+`` `${this.baseUrl}/v1/...` ``, where `baseUrl` is set in a *different module* from the call, so the
+path only resolves by following the property across the module boundary.
+
+Those same three have no ADDRESS, and `-f urls` says so by leaving them out:
+
+```bash
 jshound analyze examples/demo-app --host demo-app.test -f urls
 ```
 
 ```
 DELETE https://demo-app.test/v1/sessions/current
-GET    https://demo-app.test/api/feature-flags
-GET    https://demo-app.test/v1/users/{param_o}/profile
-POST   https://demo-app.test/t/events
-POST   https://demo-app.test/v1/media
-POST   https://demo-app.test/v1/subscribe
+GET https://demo-app.test/api/feature-flags
+POST https://demo-app.test/t/events
 ```
 
-Six endpoints across four different sinks (`fetch`, `XMLHttpRequest.open`, `navigator.sendBeacon`
-and a `FormData` upload) with the verb on every one. Three of them are written in the source as
-`` `${this.baseUrl}/v1/...` ``, where `baseUrl` is set in a *different module* from the call; the
-path only resolves if you follow the property across the module boundary.
+The bundle assigns `apiBase: "https://api.demo-app.test"`, which is not the host the document is on.
+So substituting `--host` over `{baseUrl}` would print three real-looking routes pointed at a server
+the application never calls, which is the worst output this tool can produce. A URL list is a list of
+things you can request; `-f table` above still shows all six, and `--include-unresolved` puts them in
+the URL list with the slot visible.
 
 And the contract, not just the path:
 

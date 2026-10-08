@@ -9,7 +9,7 @@ Paths that still contain an unresolved placeholder are omitted by default: a lin
 looks like a finding. `--include-unresolved` prints them anyway, because when you are picking fuzz
 targets by hand the shape is exactly what you want.
 """
-from .paths import looks_like_source_file, normalize, split_origin
+from .paths import UNRESOLVED_ORIGIN, looks_like_source_file, normalize, split_origin
 
 
 def build(records, include_unresolved=False, with_method=False):
@@ -29,8 +29,18 @@ def build(records, include_unresolved=False, with_method=False):
             continue
         if not resolved and not include_unresolved:
             continue
-        base = origin if (origin and "://" in origin) else (
-            f"https://{rec['_host']}" if rec.get("_host") else "")
+        # An UNRESOLVED origin is not a missing one. `{BASE_PATH}/api/incident-status` is a real
+        # endpoint whose base the analysis could not resolve, and the host that served the FILE is
+        # not it: supabase.com/dashboard serves its bundle from a CDN that answers no API call, so
+        # this produced 45 lines pointed at a host the app never talks to. A URL list is a list of
+        # things you can request, so these are left out of it unless they are asked for.
+        if origin == UNRESOLVED_ORIGIN:
+            if not include_unresolved:
+                continue
+            base = origin
+        else:
+            base = origin if (origin and "://" in origin) else (
+                f"https://{rec['_host']}" if rec.get("_host") else "")
         if not base:
             continue
         line = f"{(rec.get('method') or 'GET').upper()} {base}{path}" if with_method else base + path

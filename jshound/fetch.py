@@ -540,7 +540,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_pri
             # Every declared chunk is accounted for, because an unexplained remainder is exactly
             # where a quiet failure hides: 142 declared and 20 fetched reads like a 86% miss until
             # you are told the other 119 were already in hand.
-            print(f"  chunks: {len(declared)} declared over {rounds} round(s) — "
+            print(f"  chunks: {len(declared)} declared over {rounds} round(s), "
                   f"{fetched_ok} fetched, {already} already had, {unreachable} unreachable"
                   + (f", capped at --max-chunks {max_chunks}"
                      if fetched_ok >= max_chunks else ""), file=sys.stderr)
@@ -551,7 +551,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_pri
         hosts = sorted({urlsplit(u).hostname or "?" for u in refused})
         shown = ", ".join(hosts[:4]) + (", ..." if len(hosts) > 4 else "")
         print(f"  ! refused {len(refused)} URL(s) the target named in private address space "
-              f"({shown}) — pass --allow-private if that is surface you meant to read",
+              f"({shown}), pass --allow-private if that is surface you meant to read",
               file=sys.stderr)
 
     with open(os.path.join(outdir, "_origin.jsonl"), "a") as fh:

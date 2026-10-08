@@ -96,7 +96,7 @@ def read(doc_url, timeout=30, workdir=None):
         # evidence — the same mistake as reporting an endpoint nothing in the bundle supports.
         next_app = any(p in html for p in ("/_next/", "__NEXT_DATA__", "__next_f"))
         return {"available": False, "is_next": next_app,
-                "reason": ("Next app, but links no _buildManifest.js — an App Router build serves none"
+                "reason": ("Next app, but links no _buildManifest.js, an App Router build serves none"
                            if next_app else "not a Next.js app (no /_next/ references in the document)"),
                 "document": doc_url, "manifest_urls": []}
 

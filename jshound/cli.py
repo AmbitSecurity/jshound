@@ -34,7 +34,7 @@ def _emit(data, out, text=False):
         print(payload)
 
 
-def _format(records, fmt, title):
+def _format(records, fmt, title, include_unresolved=False):
     from .export import har, openapi, table, urls
     if fmt == "table":
         return table.build(records), True
@@ -43,20 +43,42 @@ def _format(records, fmt, title):
     if fmt == "har":
         return har.build(records, title=title), False
     if fmt == "urls":
-        return "\n".join(urls.build(records, with_method=True)), True
+        # An endpoint whose base did not resolve has no URL, so it is not in a URL list by default.
+        # It is still real surface, and this is how you ask to see it with the slot left visible.
+        return "\n".join(urls.build(records, with_method=True,
+                                     include_unresolved=include_unresolved)), True
     if fmt == "jsonl":
         return "\n".join(json.dumps(r) for r in records), True
     return records, False                                    # json/raw
 
 
+def _targets(a):
+    """The hosts to map: arguments, or one per line on stdin.
+
+    Every tool in this space takes a list, because a scope is a list. `-` or an empty argument list
+    with something piped in reads stdin, so `cat scope.txt | jshound` works.
+    """
+    given = list(a.targets or [])
+    if "-" in given or (not given and not sys.stdin.isatty()):
+        given = [t for t in given if t != "-"]
+        given += [ln.strip() for ln in sys.stdin if ln.strip() and not ln.startswith("#")]
+    out, seen = [], set()
+    for t in given:
+        t = t if "://" in t else "https://" + t
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 def cmd_map(a):
-    """Fetch and read one application, in one command.
+    """Fetch and read an application, in one command.
 
-    `fetch` then `analyze` was always the real workflow, and making someone type both meant the first
-    thing a new reader did was wire two commands together before seeing a single endpoint. This is
-    the default: `jshound tesla.com` collects the JavaScript and prints the requests.
+    `fetch` then `analyze` was always the real workflow, and making someone wire two commands
+    together before seeing a single endpoint was a bad first thirty seconds. This is the default:
+    `jshound app.example.com` collects the JavaScript and prints the requests.
 
-    The JavaScript is kept, under `.jshound/<host>` unless `--bodies` says otherwise, because
+    Each target gets its own corpus under `.jshound/<host>`, kept rather than discarded, because
     collecting it is the slow part and every other command in here reads a directory of it.
     """
     from urllib.parse import urlsplit
@@ -64,40 +86,66 @@ def cmd_map(a):
     from .analyze import analyze as run
     from .fetch import collect
 
-    target = a.target if "://" in a.target else "https://" + a.target
-    host = urlsplit(target).hostname or a.target
-    bodies = a.bodies or os.path.join(".jshound", host)
-
-    saved = collect(target, bodies, with_chunks=not a.no_chunks, max_chunks=a.max_chunks,
-                    timeout=a.timeout, allow_private=a.allow_private)
-    if not saved:
-        # A target that served nothing is not a target with no API, and this is the one place the
-        # distinction is cheap to make: we know whether anything came back.
-        print(f"map: collected no JavaScript from {target}. Either the document was unreachable, or "
-              f"it builds its script tags at runtime. Drive a browser, export the session as a HAR, "
-              f"and run `jshound from-har session.har -o {bodies}` instead.", file=sys.stderr)
+    targets = _targets(a)
+    if not targets:
+        print("map: no targets. Pass a hostname, or pipe a list of them in.", file=sys.stderr)
+        return 1
+    if a.bodies and len(targets) > 1:
+        print("map: --bodies names one directory, so it cannot hold several targets. Drop it and "
+              "each goes to .jshound/<host>.", file=sys.stderr)
         return 1
 
-    records, paths = run(bodies, a.host or host, None)
-    requests = [r for r in records if (r.get("_kind") or "endpoint") in ("endpoint", "route")]
-    # Endpoints first, because that is the number the reader came for. The record count is every
-    # kind the extractor emits, most of which are the working-out rather than the answer.
-    print(f"{len(paths)} scripts -> {len(requests)} endpoints ({len(records)} records)",
-          file=sys.stderr)
+    worst, all_records = 0, []
+    for target in targets:
+        host = urlsplit(target).hostname or target
+        bodies = a.bodies or os.path.join(".jshound", host)
+        if len(targets) > 1:
+            print(f"\n==> {host}", file=sys.stderr)
 
-    # NOTHING ON STDOUT IS THE WORST OUTPUT THIS COMMAND HAS. `tesla.com` is a server-rendered
-    # marketing page: 3 scripts, no requests in them, and an empty table reads as a tool that
-    # failed. Say which of the two it was, and what the next move is.
-    if not requests:
-        print(f"  no requests recovered from {len(paths)} script(s). This is a real answer when the "
-              f"page is server-rendered or its API calls live behind a login; it is the wrong answer "
-              f"if the app builds its script tags at runtime, which `fetch` cannot follow. "
-              f"`jshound fingerprint {bodies}` says which kind of app this is.", file=sys.stderr)
+        saved = collect(target, bodies, with_chunks=not a.no_chunks, max_chunks=a.max_chunks,
+                        timeout=a.timeout, allow_private=a.allow_private)
+        if not saved:
+            # A target that served nothing is not a target with no API, and this is the one place
+            # the distinction is cheap to make: we know whether anything came back.
+            print(f"  collected no JavaScript from {target}. Either the document was unreachable, "
+                  f"or the app builds its script tags at runtime, which fetching cannot follow. "
+                  f"Drive a browser, export the session, and read that: "
+                  f"`jshound from-har session.har -o {bodies}`.", file=sys.stderr)
+            worst = 1
+            continue
 
-    data, text = _format(records, a.format, a.title or host)
+        # NOT `a.host or host`. Passing the target's own hostname makes `analyze` filter to records
+        # served BY that host, and a build's assets usually are not: supabase.com/dashboard serves
+        # 209 of its 217 files from frontend-assets.supabase.com, so filtering to the document host
+        # threw away 59 of 224 endpoints, all of them the app's own code. Attribution still happens
+        # per record, so each one carries the host that served it; what changes is that none are
+        # dropped. `--host` is there for the case where you do want one host out of a shared corpus.
+        records, paths = run(bodies, a.host, None)
+        requests = [r for r in records if (r.get("_kind") or "endpoint") in ("endpoint", "route")]
+        # Endpoints first, because that is the number the reader came for. The record count is every
+        # kind the extractor emits, most of which is the working-out rather than the answer.
+        print(f"{len(paths)} scripts -> {len(requests)} endpoints ({len(records)} records)",
+              file=sys.stderr)
+
+        # NOTHING ON STDOUT IS THE WORST OUTPUT THIS COMMAND HAS. tesla.com is a server-rendered
+        # marketing page: 3 scripts, no requests in them, and an empty table reads as a tool that
+        # broke. Say which of the two happened, and what to run next.
+        if not requests:
+            print(f"  no requests recovered from {len(paths)} script(s). That is a real answer for a "
+                  f"server-rendered page, or one whose API calls sit behind a login. It is the wrong "
+                  f"answer if the app builds its script tags at runtime. "
+                  f"`jshound fingerprint {bodies}` says which kind of app this is.", file=sys.stderr)
+
+        print(f"  kept in {bodies}, so `jshound analyze {bodies}` re-reads it without fetching "
+              f"again", file=sys.stderr)
+        all_records.extend(records)
+
+    if not all_records:
+        return worst or 1
+    data, text = _format(all_records, a.format, a.title or urlsplit(targets[0]).hostname,
+                         getattr(a, 'include_unresolved', False))
     _emit(data, a.out, text)
-    print(f"  JavaScript kept in {bodies} — `jshound analyze {bodies}` re-reads it without "
-          f"fetching again", file=sys.stderr)
+    return worst
 
 
 def cmd_analyze(a):
@@ -110,16 +158,18 @@ def cmd_analyze(a):
     if not paths and not records:
         n = sum(len(f) for _r, _d, f in os.walk(a.bodies))
         print(f"analyze: nothing readable in {a.bodies!r} ({n} file(s) present, no .js/.mjs/.cjs/"
-              f".html among them) — run `jshound fetch <url> -o {a.bodies}` first", file=sys.stderr)
+              f".html among them), run `jshound fetch <url> -o {a.bodies}` first", file=sys.stderr)
         return 1
-    data, text = _format(records, a.format, a.title or a.host or "Recovered API")
+    data, text = _format(records, a.format, a.title or a.host or "Recovered API",
+                         getattr(a, 'include_unresolved', False))
     _emit(data, a.out, text)
 
 
 def cmd_export(a):
     from . import read_records
     records = read_records(a.records)
-    data, text = _format(records, a.format, a.title or "Recovered API")
+    data, text = _format(records, a.format, a.title or "Recovered API",
+                         getattr(a, 'include_unresolved', False))
     _emit(data, a.out, text)
 
 
@@ -192,7 +242,7 @@ def cmd_manifest(a):
             if not d["routes"] and not d["rule_routes"]:
                 print("  the manifest was read and declares nothing: this build prerenders no routes "
                       "and sets no route rules, so it renders on demand. Its routes are not written "
-                      "down anywhere for this command to read — use `fetch` and `analyze` instead.",
+                      "down anywhere for this command to read, use `fetch` and `analyze` instead.",
                       file=sys.stderr)
             out = d["routes"] + d["rule_routes"]
         for r in out:
@@ -224,8 +274,34 @@ def cmd_sourcemaps(a):
 
 
 def cmd_fingerprint(a):
+    """A line a person can read, with the full object behind `--json`.
+
+    This printed a 17-key JSON object and the README promised a one-line summary that was printed
+    nowhere. A fingerprint answers one question, which is what to expect from this app, so the
+    answer should fit on a line. `--json` and `-o` still give the object, because that is what a
+    caller wants.
+    """
     from .fingerprint import scan
-    _emit(scan(a.bodies), a.out)
+    d = scan(a.bodies)
+    if a.json or a.out:
+        _emit(d, a.out)
+        return
+    bits = [f"bundler: {d.get('bundler') or 'none detected'}"]
+    if d.get("framework"):
+        bits.append(f"framework: {d['framework']} (from the {d.get('framework_basis', '?')})")
+    if d.get("module_id_mode"):
+        bits.append(f"module ids: {d['module_id_mode']}")
+    bits.append(f"{d.get('js_parsed', 0)} of {d.get('files_scanned', 0)} files parsed")
+    print("  " + " · ".join(bits))
+    # Where the code is served from is the thing people get wrong about scope, so it goes on screen
+    # rather than only into the JSON.
+    for name, hosts in (d.get("bundler_hosts") or {}).items():
+        for host, n in hosts:
+            if host and host != d.get("document_host"):
+                print(f"  {n} file(s) of it served from {host}, not from {d.get('document_host')}")
+    if d.get("js_parse_failures"):
+        print(f"  ! {d['js_parse_failures']} file(s) could not be parsed, so anything in them is "
+              f"missing rather than absent")
 
 
 def cmd_graphql(a):
@@ -274,19 +350,25 @@ def build_parser():
                     "per line")
 
     s = sub.add_parser("map", help="fetch an app's JavaScript and read it, in one command (FETCHES)")
-    s.add_argument("target", help="a URL or a bare hostname, e.g. tesla.com")
+    s.add_argument("targets", nargs="*",
+                   help="hostnames or URLs. `-`, or nothing with a list piped in, reads stdin")
     s.add_argument("-o", "--out", help="write the result here instead of stdout")
     # `table` here, `json` everywhere else: this command exists to be run by a person who wants to
     # see the requests, and the first thing it prints should be readable.
     s.add_argument("-f", "--format", **dict(fmt, default="table"))
     s.add_argument("--bodies", help="where to keep the JavaScript (default: .jshound/<host>)")
-    s.add_argument("--host", help="attribute records to this host instead of the target's")
+    s.add_argument("--host", help="keep only records served by this host, and attribute "
+                                  "unknown origins to it. The default keeps every host the app "
+                                  "loads its own code from")
     s.add_argument("--title", help="title for the OpenAPI/HAR document")
     s.add_argument("--no-chunks", action="store_true",
                    help="do not follow the lazy chunks the bundles declare")
     s.add_argument("--max-chunks", type=int, default=400)
     s.add_argument("--timeout", type=int, default=30)
     s.add_argument("--allow-private", action="store_true", help=PRIVATE_HELP)
+    s.add_argument("--include-unresolved", action="store_true",
+                   help="in `-f urls`, also list endpoints whose base did not resolve, "
+                        "with the slot left visible")
     s.set_defaults(fn=cmd_map)
 
     s = sub.add_parser("analyze", help="directory of saved JS/HTML -> contracts (no network)")
@@ -296,6 +378,9 @@ def build_parser():
     s.add_argument("--title")
     s.add_argument("-f", "--format", **fmt)
     s.add_argument("-o", "--out")
+    s.add_argument("--include-unresolved", action="store_true",
+                   help="in `-f urls`, also list endpoints whose base did not resolve, "
+                        "with the slot left visible")
     s.set_defaults(fn=cmd_analyze)
 
     s = sub.add_parser("export", help="re-format a saved records.json")
@@ -303,6 +388,9 @@ def build_parser():
     s.add_argument("--title")
     s.add_argument("-f", "--format", **fmt)
     s.add_argument("-o", "--out")
+    s.add_argument("--include-unresolved", action="store_true",
+                   help="in `-f urls`, also list endpoints whose base did not resolve, "
+                        "with the slot left visible")
     s.set_defaults(fn=cmd_export)
 
     s = sub.add_parser("chunks", help="lazy-chunk URLs, by evaluating webpack's own builder")
@@ -350,6 +438,7 @@ def build_parser():
     s = sub.add_parser("fingerprint", help="what built this app, and what to expect from it")
     s.add_argument("bodies")
     s.add_argument("-o", "--out")
+    s.add_argument("--json", action="store_true", help="the full object instead of a summary line")
     s.set_defaults(fn=cmd_fingerprint)
 
     s = sub.add_parser("graphql", help="GraphQL operations the client ships (no network)")
@@ -382,6 +471,10 @@ def main(argv=None):
     # argparse error is a bad first thirty seconds.
     if argv and argv[0] not in parser._jshound_commands and not argv[0].startswith("-"):
         argv = ["map"] + argv
+    elif not argv and not sys.stdin.isatty():
+        # `cat scope.txt | jshound`. With no argv at all the subparser is required and argparse
+        # errors out before the line above can do anything, so a piped list needs its own case.
+        argv = ["map"]
     a = parser.parse_args(argv)
     # NODE_PATH is deliberately NOT defaulted here. Setting it to `/usr/local/lib/node_modules`
     # shadowed every module's own fallback to the checkout's `node_modules`, which is where the Babel

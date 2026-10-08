@@ -871,7 +871,7 @@ def _build_module_index(paths, workers, batches):
         print(f"  {len(aliases)} original module name(s) mapped onto content-hashed bodies, so relative "
               f"imports can resolve", file=sys.stderr)
     print(f"  module index: {len(exports)} export(s), {len(propvals)} property value(s) across "
-          f"{len(paths)} files — independent of how they are batched", file=sys.stderr)
+          f"{len(paths)} files, independent of how they are batched", file=sys.stderr)
 
 
 def _run_index(paths):
@@ -1071,11 +1071,11 @@ def require_corpus(cmd, path):
     if os.path.isdir(path):
         return
     if "://" in str(path):
-        raise SystemExit(f"{cmd}: {path!r} is a URL — this reads a directory of already-fetched "
+        raise SystemExit(f"{cmd}: {path!r} is a URL, this reads a directory of already-fetched "
                          f"files; run `jshound fetch {path} -o ./bodies` first")
     if os.path.isfile(path):
         here = os.path.dirname(str(path)) or "."
-        raise SystemExit(f"{cmd}: {path!r} is a file — this reads a DIRECTORY of saved bodies "
+        raise SystemExit(f"{cmd}: {path!r} is a file, this reads a DIRECTORY of saved bodies "
                          f"(try `jshound {cmd} {here}`)")
     raise SystemExit(f"{cmd}: {path!r}: no such directory")
 
@@ -1147,7 +1147,7 @@ def analyze(bodies, host=None, manifest=None):
         print(f"  {len(_DECLARED_HOSTS)} backend host(s) declared by the served page: "
               + ", ".join(f"{k}={v}" for k, v in list(_DECLARED_HOSTS.items())[:6]), file=sys.stderr)
     if _DECLARED_GATEWAY:
-        print(f"  single API gateway declared by the page: {_DECLARED_GATEWAY} — wrapper-composed URLs "
+        print(f"  single API gateway declared by the page: {_DECLARED_GATEWAY}. Wrapper-composed URLs "
               f"whose service token is not itself a host resolve here, not to the document", file=sys.stderr)
     global _HEADER_ROUTED
     _HEADER_ROUTED = _find_header_routing(bodies)
@@ -1179,7 +1179,7 @@ def analyze(bodies, host=None, manifest=None):
     if _unreg:
         _big = sorted(_unreg, key=lambda n: -os.path.getsize(os.path.join(bodies, n))
                       if os.path.exists(os.path.join(bodies, n)) else 0)
-        print(f"  ! {len(_unreg)} script(s) have NO recorded origin — nothing says which document loaded "
+        print(f"  ! {len(_unreg)} script(s) have NO recorded origin. Nothing says which document loaded "
               f"them, so their endpoints are attributed by the --host fallback or not at all: "
               f"{', '.join(_big[:6])}" + (f" (+{len(_big)-6} more)" if len(_big) > 6 else ""),
               file=sys.stderr)
@@ -1490,11 +1490,11 @@ def analyze(bodies, host=None, manifest=None):
     for r in recs:
         if (r.get("_kind") or "endpoint") == "endpoint" and not (r.get("template") or r.get("url")):
             r["_kind"] = "request-no-url"
-            r.setdefault("note", "a request was recovered — method and body — but its URL did not "
+            r.setdefault("note", "a request was recovered, method and body, but its URL did not "
                                  "resolve. Not an endpoint; it has no address to send to.")
             nourl += 1
     if nourl:
-        print(f"  {nourl} request(s) had a body but no resolvable URL — recorded as "
+        print(f"  {nourl} request(s) had a body but no resolvable URL, recorded as "
               f"request-no-url, not counted as endpoints", file=sys.stderr)
     return recs, paths
 
@@ -1797,11 +1797,11 @@ def _origin_map(manifest, bodies=None):
                 while i < len(raw) and raw[i] in " \r\n\t":
                     i += 1
             if docs > 1:
-                print(f"  ! _origin.json held {docs} concatenated JSON documents — written by parallel "
+                print(f"  ! _origin.json held {docs} concatenated JSON documents, written by parallel "
                       f"crawls sharing a temp file. Merged them; {len(m)} entries recovered.",
                       file=sys.stderr)
             elif not docs:
-                print(f"  ! _origin.json is unreadable — host attribution will be missing, not empty",
+                print(f"  ! _origin.json is unreadable. Host attribution will be missing, not empty",
                       file=sys.stderr)
             # Trailing garbage is a THIRD corruption shape and it used to pass in silence, because the
             # warnings above only fire on 0 or >1 documents. reddit's file is one valid document of 148
@@ -1809,7 +1809,7 @@ def _origin_map(manifest, bodies=None):
             # file's tail. Exactly one document decoded, so nothing was said, and the run could not tell a
             # partial map from a complete one.
             if i < len(raw) and raw[i:].strip():
-                print(f"  ! _origin.json has {len(raw)-i} trailing byte(s) that are not JSON — a shorter "
+                print(f"  ! _origin.json has {len(raw)-i} trailing byte(s) that are not JSON, a shorter "
                       f"write landed on a longer file. {len(m)} entries survived; the rest are GONE, not "
                       f"empty. Re-crawling is the only way to recover them.", file=sys.stderr)
     # Coverage is the number that tells you whether attribution can work at all. A map with 148 entries for
@@ -1877,7 +1877,7 @@ def main():
     ap.add_argument("--host")
     ap.add_argument("--out")
     ap.add_argument("--unfetched", action="store_true")
-    ap.add_argument("--manifest", help="a crawl .jsonl — needed to resolve RELATIVE chunk paths to URLs")
+    ap.add_argument("--manifest", help="a crawl .jsonl, needed to resolve RELATIVE chunk paths to URLs")
     a = ap.parse_args()
 
     if a.unfetched:
@@ -1886,7 +1886,7 @@ def main():
             print("  ! no --manifest given: relative chunk paths cannot be resolved to URLs and were "
                   "dropped. Pass the crawl .jsonl.", file=sys.stderr)
         print("\n".join(w))
-        print(f"\n# {len(w)} chunk(s) declared but never downloaded — "
+        print(f"\n# {len(w)} chunk(s) declared but never downloaded, "
               f"collect them with your crawler, then re-run analyze", file=sys.stderr)
         return
 
@@ -1898,7 +1898,7 @@ def main():
           f"-> {len(recs)} records  {dict(kinds.most_common(8))}")
     if not paths:
         # An empty result must never be silently indistinguishable from a clean one.
-        print("  ! no JavaScript found. That is not 'this host has no API' — it means the crawler saved "
+        print("  ! no JavaScript found. That is not 'this host has no API'. It means the crawler saved "
               "nothing here. Check the crawl ran and that bodies are being written.", file=sys.stderr)
     # DID THE EXTRACTOR RUN? Answer this BEFORE writing anything, because a number that came out of a
     # broken toolchain is worse than no number: it gets quoted.
@@ -1912,11 +1912,11 @@ def main():
               file=sys.stderr)
         raise SystemExit(4)
     if _bad > _ok:
-        print(f"\n  !! the extractor failed on {_bad} of {_ok + _bad} files — MORE than it parsed.\n"
+        print(f"\n  !! the extractor failed on {_bad} of {_ok + _bad} files, MORE than it parsed.\n"
               f"     Treat the counts below as a floor, not a map. Reason: "
               f"{'; '.join(sorted(_AST_WHY)) or 'unknown'}", file=sys.stderr)
     elif _bad:
-        print(f"  ({_bad} of {_ok + _bad} files unparsed — endpoints in those are missing)",
+        print(f"  ({_bad} of {_ok + _bad} files unparsed, endpoints in those are missing)",
               file=sys.stderr)
 
     if a.out:

@@ -129,7 +129,7 @@ def harvest(bodies, hosts=None, dry_run=False, max_sources=4000, workers=8):
         maps = [m for m in ex.map(probe, urls) if m]
 
     if not maps:
-        print("no sourcemaps served — the minified extraction is the whole story here, which is the "
+        print("no sourcemaps served, the minified extraction is the whole story here, which is the "
               "normal case for about half of targets", file=sys.stderr)
         return 0
 

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 # `{location.origin}`, `{window.location.host}` — the app asking for its own deployment URL. That is a
 # SERVER, not a path segment, and leaving it inline produces paths no tool can request.
-_ORIGIN = re.compile(r"^\{(?:window\.)?(?:location\.(?:origin|host|href)|origin|baseUrl|BASE_URL)\}", re.I)
+_ORIGIN = re.compile(r"^\{(?:window\.)?(?:location\.(?:origin|host|href)|origin)\}", re.I)
 _PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
 # Rails/Express templates ship their params as `:name`, and they survive into the recovered path
 # (`/api/:version/projects/:id`). A spec cannot carry them literally — `:id` would be requested as the
@@ -25,8 +25,30 @@ _COLON_PARAM = re.compile(r"(?<=/):([A-Za-z_][A-Za-z0-9_]*)(?=/|$)")
 _UNRESOLVED = {"expr", "", "..."}
 
 
+# A TEMPLATE THAT BEGINS WITH A SLOT HAS NO ADDRESS.
+#
+# `{BASE_PATH}/api/incident-status` is a real endpoint whose base the analysis could not resolve. It
+# is not a relative path, and treating it as one means something downstream supplies an origin: the
+# URL exporter used the host that served the FILE, which on supabase.com/dashboard is a CDN, so 45
+# endpoints came out as `https://frontend-assets.supabase.com/{BASE_PATH}/api/...`. That CDN serves
+# no API. A real-looking route pointed somewhere the application never calls is the worst output this
+# tool produces, and it is worse than printing nothing.
+#
+# `{baseUrl}` was in `_ORIGIN` for the same reason and is just as wrong: it is a value the app
+# ASSIGNED, often to a different host than the document. The demo fixture in this repo assigns
+# `apiBase: "https://api.demo-app.test"` and `--host demo-app.test` was being substituted over it.
+# What stays in `_ORIGIN` is only the forms that mean "this document's own origin" by definition,
+# which is the one case where the document host is the right answer rather than a guess.
+UNRESOLVED_ORIGIN = "{?}"
+
+
 def split_origin(template):
-    """-> (origin_or_None, path). Absolute URLs and `{location.origin}` prefixes both become an origin."""
+    """-> (origin_or_None, path).
+
+    An absolute URL and a `{location.origin}` prefix both give a real origin. A template that starts
+    with any OTHER slot gives `UNRESOLVED_ORIGIN`, which is not None: None means "relative to the
+    document", and these are not.
+    """
     t = (template or "").strip()
     if not t:
         return None, "/"
@@ -37,6 +59,10 @@ def split_origin(template):
         u = urlsplit(t)
         if u.scheme and u.netloc:
             return f"{u.scheme}://{u.netloc}", (u.path or "/") + (f"?{u.query}" if u.query else "")
+    if t.startswith("{"):
+        slot = _PLACEHOLDER.match(t)
+        if slot:
+            return UNRESOLVED_ORIGIN, t[slot.end():] or "/"
     return None, t
 
 

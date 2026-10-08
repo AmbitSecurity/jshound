@@ -97,7 +97,7 @@ def main():
     try:
         from curl_cffi import requests as rq
     except ImportError:
-        sys.exit("routes: this command needs curl_cffi for its TLS fingerprint — "
+        sys.exit("routes: this command needs curl_cffi for its TLS fingerprint, "
                  "install it with `pip install \"jshound[fetch]\"`")
 
     # AUTHORITATIVE SOURCE FIRST. A Pages-Router build serves its whole route table and its chunk list
