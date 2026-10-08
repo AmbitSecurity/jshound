@@ -4,9 +4,6 @@ Recover a web app's API from the JavaScript it ships. Method, path, body fields,
 
 ![jshound mapping supabase.com/dashboard: 155 scripts in, 224 endpoints out, with the body contract on each](docs/demo.svg)
 
-100 POST, 82 GET, 18 DELETE, 13 PATCH, 8 PUT and 3 HEAD, with a body contract on 53 of them.
-Measured 2026-10-07.
-
 Takes a hostname, a list of them, or a scope file on stdin. No credentials and no session: the only
 requests it makes are GETs for the JavaScript a browser downloads on page load, which are static
 public assets off a CDN. Everything after that happens offline, against files on your disk.

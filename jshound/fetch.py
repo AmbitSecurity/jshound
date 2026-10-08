@@ -46,6 +46,86 @@ def is_javascript(body, content_type=""):
     return not _LOOKS_HTML.match(body or "")
 
 
+# AN UPSTREAM PROXY, for the whole run. Set by the CLI, read by every request this module makes.
+#
+# What it is for, measured rather than assumed: rate limits, geofences and IP bans. What it is NOT
+# for is a bot-protection challenge. Through a residential exit in Riyadh on Saudi Telecom, claude.ai,
+# lovable.dev and tesla.com returned byte-for-byte the same 403 they return from a datacenter VPN in
+# New York, because "Just a moment..." and Akamai's Bot Manager are decided by whether the client
+# runs JavaScript, and no HTTP client does, whatever its IP or its TLS fingerprint.
+#
+# `PROXY_CA` is the proxy's own root, for one that intercepts TLS. Bright Data does on port 33335.
+PROXY = None
+PROXY_CA = None
+
+# WHICH BROWSER TO LOOK LIKE, and what to try when that one is refused.
+#
+# `impersonate="chrome"` was the default, and it was the WORST choice measured. Sixteen sites from one
+# VPN exit, six profiles each: Chrome 142 got past 13, Safari 17 got past all 16. The likely reason is
+# that the default target is what most automated traffic sends, so it is what bot defences have
+# learned to score down.
+#
+# No single profile is safe to hardcode, though, and that is measured too: across two runs ten
+# minutes apart, Chrome 131 and Firefox both got into claude.ai and lovable.dev in the first and were
+# challenged in the second. A refusal is partly a reputation score that moves. So the document is
+# retried down this list when it comes back refused, and whichever profile gets a real page is kept
+# for everything else that target is asked for, because switching fingerprints mid-session is itself
+# a signal and a challenge cookie is bound to the client that earned it.
+#
+# Order is by measured pass rate. 13 of the 16 sites never refused any profile, so on most targets
+# only the first is ever sent.
+PROFILES = ("safari17_0", "safari18_0", "firefox144", "chrome131", "chrome142")
+IMPERSONATE = PROFILES[0]
+
+
+def set_client(profile=None):
+    """Pin one impersonation profile, or None to go back to rotating through PROFILES."""
+    global IMPERSONATE, _PINNED
+    _PINNED = bool(profile)
+    IMPERSONATE = profile or PROFILES[0]
+
+
+_PINNED = False
+
+
+def set_proxy(url=None, ca=None):
+    """Route every request this module makes through `url`, trusting `ca` for its TLS."""
+    global PROXY, PROXY_CA
+    PROXY = url or None
+    PROXY_CA = ca or None
+
+
+# WHO SAID NO. A refused document used to be read as a page with no scripts in it, and the summary
+# then explained that a server-rendered site can legitimately have no API, which is the wrong story
+# for a 403. These are each vendor's own markers on its own block or challenge page. A marker only
+# counts on a response that is an error or is the size of an interstitial, so a real app that merely
+# loads one of these vendors' scripts is not mistaken for a block.
+_BLOCK = (
+    ("Cloudflare challenge", ("_cf_chl_opt", "challenge-platform", "<title>Just a moment")),
+    ("Cloudflare block", ("cf-error-details", "Attention Required! | Cloudflare")),
+    ("Akamai", ("errors.edgesuite.net", "Reference&#32;&#35;")),
+    ("DataDome", ("geo.captcha-delivery.com", "datadome")),
+    ("PerimeterX", ("px-captcha", "_pxAppId")),
+    ("Imperva", ("_Incapsula_Resource", "Incapsula incident ID")),
+    ("AWS WAF", ("awswaf", "aws-waf-token")),
+    ("Vercel", ("Vercel Security Checkpoint",)),
+)
+
+
+def blocked_by(status, html):
+    """The vendor that refused the request, or None when this looks like a real response."""
+    body = html or ""
+    looks_refused = (status is not None and status >= 400) or len(body) < 12000
+    if not looks_refused:
+        return None
+    for vendor, markers in _BLOCK:
+        if any(m in body for m in markers):
+            return vendor
+    if status in (401, 403, 429, 503) and len(body) < 4000:
+        return f"HTTP {status}"
+    return None
+
+
 # A response is read up to this and no further. The size of a body is the target's choice, and one
 # URL is enough: pointed at a generator, an uncapped read took 1,032 MB of RSS and wrote 524 MB into
 # the corpus directory before anything looked at it. The largest real chunk measured across the
@@ -75,7 +155,12 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
         # Any transport failure — DNS, TLS, connection reset, timeout — is a normal outcome when
         # pointing at the open internet, not a reason to abort the run with a traceback.
         try:
-            r = rq.get(url, impersonate="chrome", timeout=timeout, stream=True)
+            kw = {}
+            if PROXY:
+                kw["proxies"] = {"http": PROXY, "https": PROXY}
+                if PROXY_CA:
+                    kw["verify"] = PROXY_CA
+            r = rq.get(url, impersonate=IMPERSONATE, timeout=timeout, stream=True, **kw)
             try:
                 buf, n = [], 0
                 for part in r.iter_content():
@@ -102,8 +187,15 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
         import urllib.error
         import urllib.request
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        opener = urllib.request.urlopen
+        if PROXY:
+            import ssl
+            ctx = ssl.create_default_context(cafile=PROXY_CA) if PROXY_CA else None
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({"http": PROXY, "https": PROXY}),
+                urllib.request.HTTPSHandler(context=ctx)).open
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as fh:
+            with opener(req, timeout=timeout) as fh:
                 body = fh.read(max_bytes).decode("utf-8", "replace")
                 final = fh.geturl() or url
                 return (fh.status, body, final) if with_url else (fh.status, body)
@@ -361,7 +453,8 @@ def _name(url):
     return hashlib.sha1(url.encode()).hexdigest()[:20] + ".js"
 
 
-def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_private=False):
+def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_private=False,
+            report=None):
     os.makedirs(outdir, exist_ok=True)
     # The user named this one, so it is fetched whatever it resolves to. Every URL after it was named
     # by the target — see `host_is_private` — and is refused if it points into private space, unless
@@ -377,9 +470,38 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_pri
             return False
         return True
 
+    global IMPERSONATE
     status, html = http_get(url, timeout)
+    vendor = blocked_by(status, html)
+    tried = [IMPERSONATE]
+    if vendor and not _PINNED:
+        first = (status, html, vendor)
+        for prof in PROFILES:
+            if prof in tried:
+                continue
+            IMPERSONATE = prof
+            tried.append(prof)
+            status, html = http_get(url, timeout)
+            vendor = blocked_by(status, html)
+            if not vendor:
+                break
+        if vendor:
+            # Every profile refused. Report the FIRST refusal, which is what the default client got,
+            # rather than whichever happened to be tried last.
+            status, html, vendor = first
+            IMPERSONATE = PROFILES[0]
+    if report is not None:
+        report.update(status=status, bytes=len(html or ""), blocked=vendor, scripts_by_host={},
+                      profile=IMPERSONATE, tried=tried)
     if not html:
         print(f"  ! {url} returned {status} with no body", file=sys.stderr)
+        return 0
+    if vendor:
+        # Saved anyway, because the page is evidence of what refused us. But nothing it references is
+        # fetched: a challenge page's scripts are the challenge, not the application.
+        hname = hashlib.sha1(url.encode()).hexdigest()[:20] + ".html"
+        os.makedirs(outdir, exist_ok=True)
+        open(os.path.join(outdir, hname), "w", errors="replace").write(html)
         return 0
     p = _Scripts()
     p.feed(html)

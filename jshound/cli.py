@@ -71,6 +71,23 @@ def _targets(a):
     return out
 
 
+def _hosts_fetched(bodies):
+    """{host: distinct URLs saved}, from the origin map the fetcher wrote."""
+    import json as _json
+    from collections import Counter
+    from urllib.parse import urlsplit
+    seen, c = set(), Counter()
+    try:
+        for ln in open(os.path.join(bodies, "_origin.jsonl")):
+            u = (_json.loads(ln).get("u") or "")
+            if u and u not in seen:
+                seen.add(u)
+                c[urlsplit(u).netloc] += 1
+    except (OSError, ValueError):
+        pass
+    return c
+
+
 def cmd_map(a):
     """Fetch and read an application, in one command.
 
@@ -78,11 +95,19 @@ def cmd_map(a):
     together before seeing a single endpoint was a bad first thirty seconds. This is the default:
     `jshound app.example.com` collects the JavaScript and prints the requests.
 
+    ONE LINE PER TARGET, and the status code is on it. This printed twelve lines of analysis log per
+    target and never the one fact a user checks first. tesla.com answered 403 Access Denied, and the
+    summary explained that a server-rendered page can legitimately have no API, which is the wrong
+    story for a refusal. The log is still there with `-v`; warnings are always shown.
+
     Each target gets its own corpus under `.jshound/<host>`, kept rather than discarded, because
     collecting it is the slow part and every other command in here reads a directory of it.
     """
+    import contextlib
+    import io
     from urllib.parse import urlsplit
 
+    from . import fetch as _fetch
     from .analyze import analyze as run
     from .fetch import collect
 
@@ -94,54 +119,74 @@ def cmd_map(a):
         print("map: --bodies names one directory, so it cannot hold several targets. Drop it and "
               "each goes to .jshound/<host>.", file=sys.stderr)
         return 1
+    _fetch.set_proxy(a.proxy or os.environ.get("JSHOUND_PROXY"), a.proxy_ca)
+    _fetch.set_client(a.client)
 
     worst, all_records = 0, []
+    width = max(len(urlsplit(t).netloc) for t in targets)
     for target in targets:
         host = urlsplit(target).hostname or target
         bodies = a.bodies or os.path.join(".jshound", host)
-        if len(targets) > 1:
-            print(f"\n==> {host}", file=sys.stderr)
+        label = urlsplit(target).netloc.ljust(width)
+        log = io.StringIO()
+        quiet = contextlib.nullcontext() if a.verbose else contextlib.redirect_stderr(log)
 
-        saved = collect(target, bodies, with_chunks=not a.no_chunks, max_chunks=a.max_chunks,
-                        timeout=a.timeout, allow_private=a.allow_private)
+        rep = {}
+        with quiet:
+            saved = collect(target, bodies, with_chunks=not a.no_chunks, max_chunks=a.max_chunks,
+                            timeout=a.timeout, allow_private=a.allow_private, report=rep)
+        status = rep.get("status")
+        code = str(status) if status is not None else "---"
+
+        if rep.get("blocked"):
+            tried = rep.get("tried") or []
+            print(f"{label}  {code}  blocked by {rep['blocked']}"
+                  + (f", tried {len(tried)} client profiles" if len(tried) > 1 else ""),
+                  file=sys.stderr)
+            print(f"{' ' * width}       A browser gets past this where an HTTP client cannot. Load "
+                  f"the page, export a HAR, then `jshound from-har session.har`.", file=sys.stderr)
+            worst = 1
+            continue
         if not saved:
-            # A target that served nothing is not a target with no API, and this is the one place
-            # the distinction is cheap to make: we know whether anything came back.
-            print(f"  collected no JavaScript from {target}. Either the document was unreachable, "
-                  f"or the app builds its script tags at runtime, which fetching cannot follow. "
-                  f"Drive a browser, export the session, and read that: "
-                  f"`jshound from-har session.har -o {bodies}`.", file=sys.stderr)
+            why = "unreachable" if status is None else f"no scripts in a {rep.get('bytes', 0)} byte page"
+            print(f"{label}  {code}  {why}", file=sys.stderr)
             worst = 1
             continue
 
         # NOT `a.host or host`. Passing the target's own hostname makes `analyze` filter to records
         # served BY that host, and a build's assets usually are not: supabase.com/dashboard serves
         # 209 of its 217 files from frontend-assets.supabase.com, so filtering to the document host
-        # threw away 59 of 224 endpoints, all of them the app's own code. Attribution still happens
-        # per record, so each one carries the host that served it; what changes is that none are
-        # dropped. `--host` is there for the case where you do want one host out of a shared corpus.
-        records, paths = run(bodies, a.host, None)
+        # threw away 59 of 224 endpoints, all of them the app's own code.
+        with quiet:
+            records, paths = run(bodies, a.host, None)
         requests = [r for r in records if (r.get("_kind") or "endpoint") in ("endpoint", "route")]
-        # Endpoints first, because that is the number the reader came for. The record count is every
-        # kind the extractor emits, most of which is the working-out rather than the answer.
-        print(f"{len(paths)} scripts -> {len(requests)} endpoints ({len(records)} records)",
-              file=sys.stderr)
 
-        # NOTHING ON STDOUT IS THE WORST OUTPUT THIS COMMAND HAS. tesla.com is a server-rendered
-        # marketing page: 3 scripts, no requests in them, and an empty table reads as a tool that
-        # broke. Say which of the two happened, and what to run next.
+        hosts = _hosts_fetched(bodies)
+        own = hosts.pop(urlsplit(target).netloc, 0)
+        where = f"{sum(hosts.values()) + own} files"
+        if hosts:
+            top = ", ".join(f"{n} from {h}" for h, n in hosts.most_common(2))
+            where += f" ({top})"
+        prof = rep.get("profile")
+        note = f"  [as {prof}]" if prof and prof != _fetch.PROFILES[0] and not a.client else ""
+        print(f"{label}  {code}  {where}  ->  {len(requests)} endpoints{note}", file=sys.stderr)
+
+        # Warnings are the part of the log a user must not miss, so they survive quiet mode.
+        for ln in log.getvalue().splitlines():
+            if ln.lstrip().startswith(("!", "!!")):
+                print(f"{' ' * width}       {ln.strip()}", file=sys.stderr)
         if not requests:
-            print(f"  no requests recovered from {len(paths)} script(s). That is a real answer for a "
-                  f"server-rendered page, or one whose API calls sit behind a login. It is the wrong "
-                  f"answer if the app builds its script tags at runtime. "
-                  f"`jshound fingerprint {bodies}` says which kind of app this is.", file=sys.stderr)
-
-        print(f"  kept in {bodies}, so `jshound analyze {bodies}` re-reads it without fetching "
-              f"again", file=sys.stderr)
+            # A real 200 with scripts in it and nothing recovered. That is a real answer for a
+            # server-rendered page or an app whose calls sit behind a login, and the wrong answer
+            # if the app builds its script tags at runtime.
+            print(f"{' ' * width}       no requests in the scripts this page loads. If the app "
+                  f"builds its script tags at runtime, a HAR from a browser will see more.",
+                  file=sys.stderr)
         all_records.extend(records)
 
     if not all_records:
         return worst or 1
+    print(file=sys.stderr)
     data, text = _format(all_records, a.format, a.title or urlsplit(targets[0]).hostname,
                          getattr(a, 'include_unresolved', False))
     _emit(data, a.out, text)
@@ -369,6 +414,13 @@ def build_parser():
     s.add_argument("--include-unresolved", action="store_true",
                    help="in `-f urls`, also list endpoints whose base did not resolve, "
                         "with the slot left visible")
+    s.add_argument("-v", "--verbose", action="store_true",
+                   help="print the fetch and analysis log, not just one line per target")
+    s.add_argument("--proxy", help="route every request through this proxy URL "
+                                   "(or set JSHOUND_PROXY)")
+    s.add_argument("--proxy-ca", help="CA certificate for a proxy that intercepts TLS")
+    s.add_argument("--client", help="pin one browser profile instead of rotating on a block, "
+                                    "e.g. safari17_0, firefox144, chrome142")
     s.set_defaults(fn=cmd_map)
 
     s = sub.add_parser("analyze", help="directory of saved JS/HTML -> contracts (no network)")
@@ -471,7 +523,12 @@ def main(argv=None):
     # argparse error is a bad first thirty seconds.
     if argv and argv[0] not in parser._jshound_commands and not argv[0].startswith("-"):
         argv = ["map"] + argv
-    elif not argv and not sys.stdin.isatty():
+    elif not argv and sys.stdin.isatty():
+        # `jshound` alone at a terminal printed "error: the following arguments are required: cmd",
+        # which is a bad first thing to see. Show what it does instead.
+        parser.print_help()
+        return 0
+    elif not argv:
         # `cat scope.txt | jshound`. With no argv at all the subparser is required and argparse
         # errors out before the line above can do anything, so a piped list needs its own case.
         argv = ["map"]
