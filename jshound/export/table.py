@@ -111,8 +111,13 @@ def build(records, with_origin=False):
         # `ljust`, not `pad`: `wm` already clears the longest verb, and pad's two-space floor pushed
         # DELETE one column further right than every other row.
         line = method.ljust(wm) + (pad(shown, wp) if (body or ctype) else shown)
-        if body:
-            line += pad(body, wb) if ctype else body
+        # The content type keeps its own column even when there is no body. Letting it slide left
+        # into the empty body column put `application/json` under the bodies on the rows above it,
+        # which reads as a body until you look twice.
+        if ctype:
+            line += pad(body, wb)
+        elif body:
+            line += body
         out.append((line + ctype).rstrip())
     return "\n".join(out)
 

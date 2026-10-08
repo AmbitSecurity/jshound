@@ -2,18 +2,7 @@
 
 Recover a web app's API from the JavaScript it ships. Method, path, body fields, content type, headers.
 
-```console
-$ jshound supabase.com/dashboard
-155 scripts -> 224 endpoints (2242 records)
-
-POST   /platform/auth/{ref}/magiclink                  {"email":"state:email"}
-POST   /platform/projects/{ref}/db-password            {"password":"input:t"}
-POST   /passkeys/authentication/verify                 {"challenge_id":"state:challengeId","credential":"state:cred,...}  application/json?
-POST   /v2/projects/{ref}/advisors/run                 {"data":{"type":"string","attributes":{"lints":"computed:map"}}}
-DELETE /api/integrations/stripe-sync                   {"projectRef":"input:e","startTime":"input:t"}  application/json
-DELETE /v1/projects/{param_n}/vanity-subdomain
-...
-```
+![jshound mapping supabase.com/dashboard: 155 scripts in, 224 endpoints out, with the body contract on each](docs/demo.svg)
 
 100 POST, 82 GET, 18 DELETE, 13 PATCH, 8 PUT and 3 HEAD, with a body contract on 53 of them.
 Measured 2026-10-07.

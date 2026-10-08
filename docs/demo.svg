@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1262" height="496" viewBox="0 0 1262 496" font-family="ui-monospace, SFMono-Regular, &#x27;SF Mono&#x27;, Menlo, Consolas, &#x27;DejaVu Sans Mono&#x27;, monospace" font-size="14.5">
+<rect width="1262" height="496" rx="10" fill="#16181d"/>
+<path d="M0 10a10 10 0 0 1 10-10h1242a10 10 0 0 1 10 10v26H0z" fill="#1f222a"/>
+<circle cx="22" cy="18" r="6" fill="#ff5f56"/>
+<circle cx="41" cy="18" r="6" fill="#ffbd2e"/>
+<circle cx="60" cy="18" r="6" fill="#27c93f"/>
+<text x="26.0" y="62" fill="#565f89" xml:space="preserve" textLength="8.7" lengthAdjust="spacingAndGlyphs">$</text>
+<text x="43.4" y="62" fill="#ffffff" xml:space="preserve" textLength="261.0" lengthAdjust="spacingAndGlyphs">jshound supabase.com/dashboard</text>
+<text x="26.0" y="85" fill="#7aa2f7" xml:space="preserve" textLength="374.1" lengthAdjust="spacingAndGlyphs">155 scripts -&gt; 224 endpoints (2242 records)</text>
+<text x="26.0" y="131" fill="#9ece6a" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">GET</text>
+<text x="86.9" y="131" fill="#c0caf5" xml:space="preserve" textLength="200.1" lengthAdjust="spacingAndGlyphs">/admin/custom-providers</text>
+<text x="26.0" y="154" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="154" fill="#c0caf5" xml:space="preserve" textLength="191.4" lengthAdjust="spacingAndGlyphs">/admin/users/{param_e}</text>
+<text x="504.5" y="154" fill="#7dcfff" xml:space="preserve" textLength="278.4" lengthAdjust="spacingAndGlyphs">{&quot;should_soft_delete&quot;:&quot;input:t&quot;}</text>
+<text x="835.1" y="154" fill="#6b7394" xml:space="preserve" textLength="147.9" lengthAdjust="spacingAndGlyphs">application/json?</text>
+<text x="26.0" y="177" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="177" fill="#c0caf5" xml:space="preserve" textLength="217.5" lengthAdjust="spacingAndGlyphs">/api/ai/feedback/classify</text>
+<text x="504.5" y="177" fill="#7dcfff" xml:space="preserve" textLength="174.0" lengthAdjust="spacingAndGlyphs">{&quot;prompt&quot;:&quot;input:e&quot;}</text>
+<text x="835.1" y="177" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="200" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="200" fill="#c0caf5" xml:space="preserve" textLength="182.7" lengthAdjust="spacingAndGlyphs">/api/ai/feedback/rate</text>
+<text x="504.5" y="200" fill="#7dcfff" xml:space="preserve" textLength="565.5" lengthAdjust="spacingAndGlyphs">{&quot;rating&quot;:&quot;input:e&quot;,&quot;messages&quot;:&quot;input:t&quot;,&quot;messageId&quot;:&quot;input:,...}</text>
+<text x="1087.4" y="200" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="223" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="223" fill="#c0caf5" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">/api/ai/sql/cron-v2</text>
+<text x="504.5" y="223" fill="#7dcfff" xml:space="preserve" textLength="174.0" lengthAdjust="spacingAndGlyphs">{&quot;prompt&quot;:&quot;input:e&quot;}</text>
+<text x="835.1" y="223" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="246" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="246" fill="#c0caf5" xml:space="preserve" textLength="174.0" lengthAdjust="spacingAndGlyphs">/api/ai/sql/title-v2</text>
+<text x="504.5" y="246" fill="#7dcfff" xml:space="preserve" textLength="147.9" lengthAdjust="spacingAndGlyphs">{&quot;sql&quot;:&quot;input:e&quot;}</text>
+<text x="835.1" y="246" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="269" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="269" fill="#c0caf5" xml:space="preserve" textLength="243.6" lengthAdjust="spacingAndGlyphs">/api/generate-attachment-url</text>
+<text x="504.5" y="269" fill="#7dcfff" xml:space="preserve" textLength="365.4" lengthAdjust="spacingAndGlyphs">{&quot;filenames&quot;:&quot;input:a&quot;,&quot;bucket&quot;:&quot;input:e&quot;}</text>
+<text x="26.0" y="292" fill="#f7768e" xml:space="preserve" textLength="52.2" lengthAdjust="spacingAndGlyphs">DELETE</text>
+<text x="86.9" y="292" fill="#c0caf5" xml:space="preserve" textLength="252.3" lengthAdjust="spacingAndGlyphs">/api/integrations/stripe-sync</text>
+<text x="504.5" y="292" fill="#7dcfff" xml:space="preserve" textLength="400.2" lengthAdjust="spacingAndGlyphs">{&quot;projectRef&quot;:&quot;input:e&quot;,&quot;startTime&quot;:&quot;input:t&quot;}</text>
+<text x="922.1" y="292" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="315" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="315" fill="#c0caf5" xml:space="preserve" textLength="252.3" lengthAdjust="spacingAndGlyphs">/api/integrations/stripe-sync</text>
+<text x="504.5" y="315" fill="#7dcfff" xml:space="preserve" textLength="565.5" lengthAdjust="spacingAndGlyphs">{&quot;projectRef&quot;:&quot;input:e&quot;,&quot;stripeSecretKey&quot;:&quot;input:t&quot;,&quot;startTi,...}</text>
+<text x="1087.4" y="315" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="338" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="338" fill="#c0caf5" xml:space="preserve" textLength="234.9" lengthAdjust="spacingAndGlyphs">/docs/api/search/embeddings</text>
+<text x="504.5" y="338" fill="#7dcfff" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">{&quot;query&quot;:&quot;input:e&quot;}</text>
+<text x="835.1" y="338" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="361" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="361" fill="#c0caf5" xml:space="preserve" textLength="174.0" lengthAdjust="spacingAndGlyphs">/docs/api/search/fts</text>
+<text x="504.5" y="361" fill="#7dcfff" xml:space="preserve" textLength="217.5" lengthAdjust="spacingAndGlyphs">{&quot;query&quot;:&quot;computed:trim&quot;}</text>
+<text x="835.1" y="361" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="384" fill="#7dcfff" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">HEAD</text>
+<text x="86.9" y="384" fill="#c0caf5" xml:space="preserve" textLength="174.0" lengthAdjust="spacingAndGlyphs">/namespaces/{param1}</text>
+<text x="26.0" y="407" fill="#bb9af7" xml:space="preserve" textLength="43.5" lengthAdjust="spacingAndGlyphs">PATCH</text>
+<text x="86.9" y="407" fill="#c0caf5" xml:space="preserve" textLength="191.4" lengthAdjust="spacingAndGlyphs">/v1/branches/{param_n}</text>
+<text x="835.1" y="407" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="430" fill="#bb9af7" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">PUT</text>
+<text x="86.9" y="430" fill="#c0caf5" xml:space="preserve" textLength="504.6" lengthAdjust="spacingAndGlyphs">/v1/projects/{param_n}/config/auth/sso/providers/{param_e}</text>
+<text x="939.5" y="430" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="26.0" y="453" fill="#565f89" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">...</text>
+</svg>
