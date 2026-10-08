@@ -122,6 +122,32 @@ def cmd_map(a):
     _fetch.set_proxy(a.proxy or os.environ.get("JSHOUND_PROXY"), a.proxy_ca)
     _fetch.set_client(a.client)
 
+    # THE REQUESTS, AS THEY HAPPEN: status, then URL. What a person checks first is what was asked
+    # for and what came back, and the analysis log that used to fill this space answered neither.
+    # Written to the REAL stderr, held from before the quiet capture below, or quiet would swallow it.
+    import threading
+    real_err = sys.stderr
+    lock = threading.Lock()
+    tty = real_err.isatty()
+
+    def colour(code):
+        if not tty:
+            return f"{code}"
+        c = "31" if code == "ERR" else {"2": "32", "3": "36", "4": "33", "5": "31"}.get(code[0], "0")
+        return f"\033[{c}m{code}\033[0m"
+
+    def on_request(url, status, nbytes):
+        if a.quiet:
+            return
+        code = str(status) if status is not None else "ERR"
+        size = (f"{nbytes / 1048576:.1f}M" if nbytes >= 1048576 else
+                f"{nbytes // 1024}K" if nbytes >= 1024 else f"{nbytes}B") if nbytes else ""
+        with lock:
+            real_err.write(f"  {colour(code):>3}  {size:>6}  {url}\n")
+            real_err.flush()
+
+    _fetch.ON_REQUEST = on_request
+
     worst, all_records = 0, []
     width = max(len(urlsplit(t).netloc) for t in targets)
     for target in targets:
@@ -170,6 +196,15 @@ def cmd_map(a):
         prof = rep.get("profile")
         note = f"  [as {prof}]" if prof and prof != _fetch.PROFILES[0] and not a.client else ""
         print(f"{label}  {code}  {where}  ->  {len(requests)} endpoints{note}", file=sys.stderr)
+        # A CAP THAT IS HIT IS A HOLE IN THE MAP, so it gets a line of its own. At the old 400,
+        # claude.ai stopped at 43% of the chunks it declares and nothing on screen said so.
+        if rep.get("chunks_capped"):
+            print(f"{' ' * width}       ! stopped at --max-chunks {a.max_chunks}: "
+                  f"{rep.get('chunks_fetched', 0)} of {rep.get('chunks_declared', 0)} declared chunks "
+                  f"fetched. Raise it to read the rest.", file=sys.stderr)
+        elif rep.get("chunks_unreachable"):
+            print(f"{' ' * width}       {rep['chunks_unreachable']} declared chunk(s) could not be "
+                  f"fetched", file=sys.stderr)
 
         # Warnings are the part of the log a user must not miss, so they survive quiet mode.
         for ln in log.getvalue().splitlines():
@@ -182,8 +217,17 @@ def cmd_map(a):
             print(f"{' ' * width}       no requests in the scripts this page loads. If the app "
                   f"builds its script tags at runtime, a HAR from a browser will see more.",
                   file=sys.stderr)
+        # KEPT, not just printed. The table scrolls away and the records are what every other command
+        # and every downstream tool reads, so both are written beside the corpus they came from.
+        from .export import table as _table
+        with open(os.path.join(bodies, "endpoints.txt"), "w") as fh:
+            fh.write(_table.build(records) + "\n")
+        with open(os.path.join(bodies, "records.json"), "w") as fh:
+            json.dump(records, fh, indent=1)
+        print(f"{' ' * width}       -> {os.path.join(bodies, 'endpoints.txt')}", file=sys.stderr)
         all_records.extend(records)
 
+    _fetch.ON_REQUEST = None
     if not all_records:
         return worst or 1
     print(file=sys.stderr)
@@ -408,14 +452,16 @@ def build_parser():
     s.add_argument("--title", help="title for the OpenAPI/HAR document")
     s.add_argument("--no-chunks", action="store_true",
                    help="do not follow the lazy chunks the bundles declare")
-    s.add_argument("--max-chunks", type=int, default=400)
+    s.add_argument("--max-chunks", type=int, default=5000)
     s.add_argument("--timeout", type=int, default=30)
     s.add_argument("--allow-private", action="store_true", help=PRIVATE_HELP)
     s.add_argument("--include-unresolved", action="store_true",
                    help="in `-f urls`, also list endpoints whose base did not resolve, "
                         "with the slot left visible")
     s.add_argument("-v", "--verbose", action="store_true",
-                   help="print the fetch and analysis log, not just one line per target")
+                   help="also print the analysis log")
+    s.add_argument("-q", "--quiet", action="store_true",
+                   help="do not print each request as it is made")
     s.add_argument("--proxy", help="route every request through this proxy URL "
                                    "(or set JSHOUND_PROXY)")
     s.add_argument("--proxy-ca", help="CA certificate for a proxy that intercepts TLS")
@@ -471,7 +517,7 @@ def build_parser():
     s.add_argument("url")
     s.add_argument("-o", "--out", default="./bodies")
     s.add_argument("--no-chunks", action="store_true")
-    s.add_argument("--max-chunks", type=int, default=400)
+    s.add_argument("--max-chunks", type=int, default=5000)
     s.add_argument("--allow-private", action="store_true", help=PRIVATE_HELP)
     s.set_defaults(fn=cmd_fetch)
 

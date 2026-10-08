@@ -87,6 +87,18 @@ def set_client(profile=None):
 
 _PINNED = False
 
+# EVERY REQUEST, AS IT HAPPENS. Called with (url, status, nbytes) after each GET this module makes, so a
+# caller can show what was fetched without this module deciding how. Set by the CLI; None means silent.
+ON_REQUEST = None
+
+
+def _report(url, status, nbytes):
+    if ON_REQUEST is not None:
+        try:
+            ON_REQUEST(url, status, nbytes)
+        except Exception:                                  # noqa: BLE001
+            pass                                           # a display hook must never stop a fetch
+
 
 def set_proxy(url=None, ca=None):
     """Route every request this module makes through `url`, trusting `ca` for its TLS."""
@@ -175,6 +187,7 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
                 except LookupError:
                     body = raw.decode("utf-8", "replace")
                 final = str(getattr(r, "url", "") or url)
+                _report(url, r.status_code, len(raw))
                 return (r.status_code, body, final) if with_url else (r.status_code, body)
             finally:
                 try:
@@ -182,6 +195,7 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
                 except Exception:                          # noqa: BLE001
                     pass
         except Exception:                                  # noqa: BLE001
+            _report(url, None, 0)
             return (None, "", url) if with_url else (None, "")
     if True:
         import urllib.error
@@ -196,12 +210,16 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
                 urllib.request.HTTPSHandler(context=ctx)).open
         try:
             with opener(req, timeout=timeout) as fh:
-                body = fh.read(max_bytes).decode("utf-8", "replace")
+                raw = fh.read(max_bytes)
+                body = raw.decode("utf-8", "replace")
                 final = fh.geturl() or url
+                _report(url, fh.status, len(raw))
                 return (fh.status, body, final) if with_url else (fh.status, body)
         except urllib.error.HTTPError as e:
+            _report(url, e.code, 0)
             return (e.code, "", url) if with_url else (e.code, "")
         except Exception:                                   # noqa: BLE001
+            _report(url, None, 0)
             return (None, "", url) if with_url else (None, "")
 
 
@@ -453,7 +471,22 @@ def _name(url):
     return hashlib.sha1(url.encode()).hexdigest()[:20] + ".js"
 
 
-def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_private=False,
+# HOW MANY LAZY CHUNKS TO FETCH, AND HOW MANY AT ONCE.
+#
+# 400 was set when the largest app measured declared about 700 chunks. claude.ai declares about
+# 2,000, and at 400 jshound read 43% of it, which is why `PerformAction`, the endpoint that sends a
+# chat message, was not in the output: it sits in a chunk that was never downloaded. The measured
+# table has Notion at 2,457 and Loom at 2,348, so the cap now clears the largest app measured with
+# room. It is still a cap, and hitting it is reported rather than passed in silence.
+#
+# Eight at a time: these are static files, almost always off a CDN, and fetching them one at a time
+# made a 2,000-chunk app take minutes. pentest's own chase runs lower because a self-hosted target is
+# not a CDN; a target that pushes back can be slowed with --max-chunks or pinned with --client.
+MAX_CHUNKS = 5000
+CHUNK_WORKERS = 8
+
+
+def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, allow_private=False,
             report=None):
     os.makedirs(outdir, exist_ok=True)
     # The user named this one, so it is fetched whatever it resolves to. Every URL after it was named
@@ -602,6 +635,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_pri
     # wins. The counts of declared / fetched / unreachable are reported, because "declared 694,
     # fetched 681, 13 gone" is the difference between enumeration working and enumeration lying.
     declared, fetched_ok, unreachable, already, rounds = set(), 0, 0, 0, 0
+    capped = False
     if with_chunks and seen:
         from . import chunk_map
         page_base = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
@@ -629,39 +663,52 @@ def collect(url, outdir, with_chunks=True, max_chunks=400, timeout=30, allow_pri
                     if key not in candidates:
                         candidates[key] = cands
             frontier = []
+            # Decide this round's work in one thread, fetch it in several, apply it in one. The
+            # fetch is the only slow part, and it is the only part that touches nothing shared.
+            work = []
             for key, cands in sorted(candidates.items()):
-                if fetched_ok >= max_chunks:
-                    break
                 if key in declared:
                     continue
+                if fetched_ok + len(work) >= max_chunks:
+                    capped = True
+                    break
                 declared.add(key)
-                got = False
-                for cu in cands:
-                    if cu in seen:
-                        got = True
-                        already += 1          # already pulled in by an earlier pass
-                        break
-                    seen.add(cu)
-                    if not in_scope(cu):
-                        continue
+                if any(cu in seen for cu in cands):
+                    already += 1              # already pulled in by an earlier pass
+                    continue
+                todo = [cu for cu in cands if in_scope(cu)]
+                seen.update(cands)
+                work.append(todo)
+
+            def fetch_one(todo):
+                for cu in todo:
                     st, body = http_get(cu, timeout)
-                    if st != 200 or not body or not is_javascript(body):
-                        continue      # an SPA catch-all is a 404 wearing a 200
+                    if st == 200 and body and is_javascript(body):
+                        return cu, body
+                return None                   # an SPA catch-all is a 404 wearing a 200
+
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(CHUNK_WORKERS) as ex:
+                for got in ex.map(fetch_one, work):
+                    if not got:
+                        unreachable += 1
+                        continue
+                    cu, body = got
                     n = _name(cu)
                     open(os.path.join(outdir, n), "w", errors="replace").write(body)
                     rows.append({"f": n, "u": cu, "d": url})
                     saved += 1
                     how["chunk-table"] += 1
                     fetched_ok += 1
-                    frontier.append(cu)      # a chunk can declare chunks: keep going
-                    got = True
-                    break
-                if not got:
-                    unreachable += 1
+                    frontier.append(cu)       # a chunk can declare chunks: keep going
         if declared:
             # Every declared chunk is accounted for, because an unexplained remainder is exactly
             # where a quiet failure hides: 142 declared and 20 fetched reads like a 86% miss until
             # you are told the other 119 were already in hand.
+            if report is not None:
+                report.update(chunks_declared=len(declared) + (len(candidates) if capped else 0),
+                              chunks_fetched=fetched_ok, chunks_unreachable=unreachable,
+                              chunks_capped=capped)
             print(f"  chunks: {len(declared)} declared over {rounds} round(s), "
                   f"{fetched_ok} fetched, {already} already had, {unreachable} unreachable"
                   + (f", capped at --max-chunks {max_chunks}"
@@ -690,7 +737,7 @@ def main(argv=None):
     ap.add_argument("url")
     ap.add_argument("-o", "--out", default="./bodies")
     ap.add_argument("--no-chunks", action="store_true")
-    ap.add_argument("--max-chunks", type=int, default=400)
+    ap.add_argument("--max-chunks", type=int, default=MAX_CHUNKS)
     ap.add_argument("--allow-private", action="store_true",
                     help="allow URLs the target names in private address space (loopback, RFC1918, link-local); on by default when the target itself is private")
     a = ap.parse_args(argv)

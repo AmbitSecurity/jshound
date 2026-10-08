@@ -221,6 +221,12 @@ const traverse = require("@babel/traverse").default;
 const fs = require("fs");
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "request"]);
+// CLIENT HELPERS THAT ALWAYS ISSUE ONE VERB. Stainless-generated SDKs (Anthropic, OpenAI, Cloudflare)
+// page every list endpoint through `this._client.getAPIList(path, PageClass, opts)`, which is a GET
+// with no `.get` anywhere in sight. Those were the last method-less records in claude.ai's bundled
+// Anthropic SDK: every one of the 27 `getAPIList` calls in that file. An alias is only honoured where a
+// real HTTP-client method would be, so the receiver gate below still applies.
+const VERB_ALIASES = { getAPIList: "get" };
 // method-bearing member calls on a client: client.post(url, body) / api.get(url)
 const PATHY = /^(https?:\/\/|\/|\.\/|\.\.\/)/; // looks like a URL or path
 // A DATE FORMAT IS NOT A PATH. moment/dayjs ship a locale table —
@@ -761,6 +767,13 @@ function strFromNode(node, scope, depth, paramNames) {
     case "TSAsExpression":
     case "TSNonNullExpression":
       return strFromNode(node.expression || node.argument, scope, depth + 1, paramNames);
+    case "TaggedTemplateExpression":
+      // `this._client.post(path\`/v1/files/${id}\`)`. Stainless-generated SDKs, which is the
+      // Anthropic, OpenAI and Cloudflare ones among others, build EVERY resource URL with a `path` tag
+      // that only URL-encodes the interpolations. The URL's shape is the quasi; the tag is escaping.
+      // This fell to `default` and rendered as `{taggedtemplate}`, so the call site was discarded and
+      // only a method-less route constant survived: 136 records with no verb in one claude.ai file.
+      return strFromNode(node.quasi, scope, depth + 1, paramNames);
     case "ConditionalExpression": {
       // a?b:c — take the consequent template but flag dynamic (both branches are real endpoints; caller can note)
       const c = strFromNode(node.consequent, scope, depth + 1, paramNames);
@@ -4151,45 +4164,68 @@ function mergeRecord(prev, f) {
 const _VERB_TAG = /^(get|post|put|patch|delete|del|head|options|query|mutate)$/i;
 const _PATHY_TMPL = (t) => /^\//.test(t) || /^(https?|wss?):\/\//.test(t);
 
-function _slotFor(e, map, depth) {
+function _slotFor(e, map, depth, scope) {
   if (!e) return "{EXPR}";
   if (e.type === "StringLiteral") return "{" + e.value + "}";
   if (e.type === "TemplateLiteral" && e.expressions.length === 0)
     return "{" + (e.quasis[0].value.cooked ?? e.quasis[0].value.raw ?? "") + "}";
   if (e.type === "TemplateLiteral" || e.type === "TaggedTemplateExpression")
-    return _renderTagged(e, map, depth + 1);
+    return _renderTagged(e, map, depth + 1, scope);
   if (e.type === "Identifier")
-    return map.has(e.name) ? _renderTagged(map.get(e.name), map, depth + 1) : "{" + e.name + "}";
+    return _slotForIdentifier(e, map, depth, scope);
   if (e.type === "MemberExpression" && e.property && e.property.name) return "{" + e.property.name + "}";
   return "{EXPR}";
 }
 
-function _renderTagged(node, map, depth = 0) {
+function _renderTagged(node, map, depth = 0, scope = null) {
   if (!node || depth > 8) return "{EXPR}";
   const q = node.type === "TaggedTemplateExpression" ? node.quasi : node;
   if (!q || !q.quasis) return "{EXPR}";
   let out = "";
   for (let i = 0; i < q.quasis.length; i++) {
     out += q.quasis[i].value.cooked ?? q.quasis[i].value.raw ?? "";
-    if (i < q.expressions.length) out += _slotFor(q.expressions[i], map, depth);
+    if (i < q.expressions.length) out += _slotFor(q.expressions[i], map, depth, scope);
   }
   return out;
 }
 
-// name -> template node, so `Oc = E`${Ec}/transformations`` can be unfolded through Ec
+// RESOLVE BY BINDING, NEVER BY NAME.
+//
+// This map was keyed by the variable's NAME, file-wide, and a slot was filled with `map.get(name)`.
+// In minified code a one-letter name is reused hundreds of times per file, so on claude.ai the SDK's
+//     create(e, t, n) { return this._client.post(Kb`/v1/deployments/${e}/archive`, ...) }
+// had its `${e}` filled from an unrelated `let e = \`hook_${this.nextCallbackId++}\`` in a hook
+// registry elsewhere in the same 1.4 MB file, and 66 SDK routes came out as `/v1/.../hook_{EXPR}`.
+// That is a fabricated path segment, which is worse than an honest slot.
+//
+// So the key is Babel's Binding object, which IS the variable rather than its spelling, and a slot is
+// only filled when the identifier at the use site resolves to that same binding.
+function _slotForIdentifier(e, map, depth, scope) {
+  const b = scope && scope.getBinding ? scope.getBinding(e.name) : null;
+  // A parameter's value comes from the caller. Nothing inside this file defines it, so there is no
+  // template to unfold, only a name to keep.
+  if (!b || b.kind === "param") return "{" + e.name + "}";
+  const hit = map.get(b);
+  return hit ? _renderTagged(hit.node, map, depth + 1, hit.scope) : "{" + e.name + "}";
+}
+
+// binding -> {template node, the scope it was written in}, so `Oc = E\`${Ec}/transformations\`` can be
+// unfolded through Ec, resolving Ec where Oc was defined rather than where Oc is used.
 function collectTemplateVars(ast) {
   const map = new Map();
-  const take = (name, rhs) => {
+  const take = (p, name, rhs) => {
     if (!name || !rhs) return;
-    if (rhs.type === "TaggedTemplateExpression" && rhs.tag && rhs.tag.type === "Identifier") map.set(name, rhs);
-    else if (rhs.type === "TemplateLiteral") map.set(name, rhs);
+    const tagged = rhs.type === "TaggedTemplateExpression" && rhs.tag && rhs.tag.type === "Identifier";
+    if (!tagged && rhs.type !== "TemplateLiteral") return;
+    const b = p.scope.getBinding(name);
+    if (b) map.set(b, { node: rhs, scope: p.scope });
   };
   traverse(ast, {
     AssignmentExpression(p) {
-      if (p.node.left.type === "Identifier") take(p.node.left.name, p.node.right);
+      if (p.node.left.type === "Identifier") take(p, p.node.left.name, p.node.right);
     },
     VariableDeclarator(p) {
-      if (p.node.id.type === "Identifier") take(p.node.id.name, p.node.init);
+      if (p.node.id.type === "Identifier") take(p, p.node.id.name, p.node.init);
     },
   });
   return map;
@@ -4537,7 +4573,7 @@ function extract(src) {
       // with an honest UNKNOWN method beats dropping it. On that dashboard this shape holds ~200 of the
       // ~250 real paths; the verb-tagged form holds the rest.
       if (tag.type === "Identifier") {
-        const t = _renderTagged(n, TMPLVARS);
+        const t = _renderTagged(n, TMPLVARS, 0, path.scope);
         if (!_PATHY_TMPL(t)) return;
         const prop = path.parent && path.parent.type === "ObjectProperty" ? path.parent.key : null;
         push({
@@ -4549,7 +4585,7 @@ function extract(src) {
       if (tag.type !== "MemberExpression" || tag.computed) return;
       const verb = tag.property && tag.property.name;
       if (!verb || !_VERB_TAG.test(verb)) return;
-      const tmpl = _renderTagged(n, TMPLVARS);
+      const tmpl = _renderTagged(n, TMPLVARS, 0, path.scope);
       // styled.div`…`, chalk.red`…` and friends also tag off a member; requiring a request-shaped result is
       // what separates a route DSL from every other tagged template in the file.
       if (!_PATHY_TMPL(tmpl)) return;
@@ -4678,7 +4714,8 @@ function extract(src) {
           return;
         }
       }
-      const nm = calleeName(c);
+      const _nm = calleeName(c);
+      const nm = _nm && _nm.prop && VERB_ALIASES[_nm.prop] ? { ..._nm, prop: VERB_ALIASES[_nm.prop] } : _nm;
       // XMLHttpRequest .open(method, url)
       if (nm.prop === "open" && n.arguments.length >= 2 && n.arguments[0].type === "StringLiteral") {
         const m = n.arguments[0].value.toUpperCase();
@@ -7346,13 +7383,20 @@ const src = readAll(_files);
   }
   const before = out.length;
   out = out.filter((r) => {
-    if (r._kind !== "path-literal") return true;
+    // A METHOD-LESS ROUTE CONSTANT IS THE SAME KIND OF DUPLICATE. Once tagged templates resolved,
+    // `this._client.post(path\`/v1/x/${id}\`)` came out as POST, and the route-const scan that had
+    // been the only thing keeping that path alive was still emitting it with no verb beside the
+    // real one. Client-side page routes (`_kind: "route"`) are left alone on purpose: a page at
+    // `/settings` and an API endpoint at `/settings` are two different things that share a path.
+    const methodless = !r.method || String(r.method).toUpperCase() === "UNKNOWN";
+    const dupable = r._kind === "path-literal" || (methodless && r.sink === "route-const");
+    if (!dupable) return true;
     const t = String(r.template || r.path || "").replace(/\{[^}]*\}/g, "*");
     return !(t && explained.has(t));
   });
   if (before !== out.length)
-    process.stderr.write(`  ${before - out.length} path literal(s) suppressed: a call site in another ` +
-                         `file already recovered their method\n`);
+    process.stderr.write(`  ${before - out.length} method-less duplicate(s) suppressed: a call site ` +
+                         `already recovered their method\n`);
   // the cross-chunk merge builds records of its own, so the invariants are enforced once more here
   process.stdout.write(JSON.stringify(sanitize(out)));
 } catch (e) {
