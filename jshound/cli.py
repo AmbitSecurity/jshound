@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from . import __version__
 from .fetch import MAX_CHUNKS as _MAX_CHUNKS
@@ -161,10 +162,12 @@ def cmd_map(a):
             rep, code = {}, kind
 
             if kind == "url":
+                t_fetch = time.time()
                 with quiet:
                     saved = _fetch.collect(src, corpus, with_chunks=not a.no_chunks,
                                            max_chunks=a.max_chunks, timeout=a.timeout,
                                            allow_private=a.allow_private, report=rep)
+                rep["fetch_seconds"] = round(time.time() - t_fetch, 1)
                 code = str(rep.get("status")) if rep.get("status") is not None else "ERR"
                 if rep.get("blocked"):
                     # NAME WHAT WAS TRIED. The run that failed on 2026-10-09 had tried five browsers
@@ -195,8 +198,13 @@ def cmd_map(a):
             # NOT filtered to the target's own host: a build's assets usually are not on it, and on
             # supabase.com/dashboard that filter threw away 59 of 224 endpoints, all of them the app's
             # own code on its own CDN. Each record still carries the host that served it.
+            t_analyse = time.time()
             with quiet:
                 records, paths = run(corpus, a.host, None)
+            rep["analyse_seconds"] = round(time.time() - t_analyse, 1)
+            if a.verbose:
+                print(f"{pad}time: fetch {rep.get('fetch_seconds', 0)}s, analysis "
+                      f"{rep['analyse_seconds']}s", file=sys.stderr)
             # NOTHING READABLE IS NOT AN EMPTY API. A folder with no JavaScript and no pages in it
             # would otherwise produce a valid, importable, EMPTY openapi.json, which reads as "this app
             # has no endpoints" to whatever imports it. Say so and write nothing.

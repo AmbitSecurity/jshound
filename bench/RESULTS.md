@@ -8,13 +8,15 @@ our opinion.
 ## Reproduce it
 
 ```bash
-jshound fetch https://play.grafana.org/ -o ./bodies --max-chunks 150
+jshound https://play.grafana.org/ -o ./grafana --max-chunks 150
 curl -sO https://raw.githubusercontent.com/grafana/grafana/main/public/api-merged.json
 
-jshound analyze ./bodies --host play.grafana.org -o records.json
-python3 bench/truth.py api-merged.json --tool jshound=records.json
-python3 bench/run.py ./bodies --host play.grafana.org,grafana-assets.grafana.net
+python3 bench/truth.py api-merged.json --tool jshound=grafana/openapi.json
+python3 bench/run.py grafana/js --host play.grafana.org,grafana-assets.grafana.net
 ```
+
+The table below was measured with `--max-chunks 150`, and so are the other two tools' numbers,
+on the same files. Leave the flag off to read the whole app.
 
 Corpus when this was run: 163 scripts, ~23 MB, including 150 of the 694 lazy chunks the runtime
 declares. Grafana ships continuously, so your numbers will differ. The method is the claim, not
@@ -28,6 +30,13 @@ The change's own effect was isolated by scoring the same corpus before and after
 reported, every other column identical**, so the two records it removes are not endpoints the spec
 knows about, and no quality column moved. They were `preferences/theme` (a command-palette action id)
 and `starred/{min}` (`x = new Map(); x.get(...)`).
+
+**Re-measured 2026-10-09 on the whole app**, 761 files with every chunk the runtime declares,
+against the same spec: `reported 1092 / hits 184 / precision 26% / recall 89% / verb 100% /
+undocumented 108`. Reading five times as many files found no more of the documented API, so the 22
+spec paths still missing are not in the frontend at all; it found 108 undocumented paths against the
+table's 69.
+Precision falls because every undocumented endpoint counts against it, see below.
 
 ## Against Grafana's own OpenAPI document
 

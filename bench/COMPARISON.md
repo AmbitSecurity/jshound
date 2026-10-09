@@ -4,9 +4,9 @@ Every number here comes from `examples/demo-app/app.4f2a9c1e.js`, a 5-line synth
 committed to this repo. No corpus to download, no target to agree about, nothing to take on trust.
 
 ```bash
-jshound analyze examples/demo-app --host demo-app.test -f urls
-jshound chunks   examples/demo-app/app.4f2a9c1e.js -q
-jsluice  urls      examples/demo-app/app.4f2a9c1e.js
+jshound examples/demo-app
+python3 -c 'import jshound; print("\n".join(jshound.chunk_urls(open("examples/demo-app/app.4f2a9c1e.js").read())))'
+jsluice urls examples/demo-app/app.4f2a9c1e.js
 python3 linkfinder.py -i examples/demo-app/app.4f2a9c1e.js -o cli
 ```
 
@@ -25,18 +25,20 @@ runtime that builds three lazy-chunk URLs from id maps. Three of the six carry a
 
 ## What each one actually prints
 
-**jshound**: six endpoints, every verb, plus the chunk URLs:
+**jshound**: six endpoints, every verb, the three bodies, plus the chunk URLs. The three whose base
+the bundle sets at runtime keep the code's name for it, `{baseUrl}`, rather than a guessed host:
 
 ```
-DELETE  /v1/sessions/current
-GET     /api/feature-flags
-GET     /v1/users/{param_o}/profile
-POST    /t/events
-POST    /v1/media
-POST    /v1/subscribe
-    static/chunks/settings.a1b2c3d4.js
-    static/chunks/billing.e5f6a7b8.js
-    static/chunks/admin.c9d0e1f2.js
+GET    https://demo-app.test/api/feature-flags
+POST   https://demo-app.test/t/events                                  {"sid":"?","evt":"?"}
+DELETE https://demo-app.test/v1/sessions/current
+POST   {baseUrl}/v1/media                         multipart/form-data  {"file":"file-upload"}
+POST   {baseUrl}/v1/subscribe                     application/json     {"email":"computed:trim","pageUri":"state:href"}
+GET    {baseUrl}/v1/users/{param_o}/profile
+
+static/chunks/settings.a1b2c3d4.js
+static/chunks/billing.e5f6a7b8.js
+static/chunks/admin.c9d0e1f2.js
 ```
 
 **jsluice** is a real tool and it earns credit here. It understands `XMLHttpRequest.open`,
@@ -73,7 +75,8 @@ https://api.demo-app.test
 ## Route tables the framework declares
 
 A separate mechanism, and worth stating where it does and does not buy anything. Next, Nuxt and
-SvelteKit each ship their route table; `jshound manifest` reads it.
+SvelteKit each ship their route table, and jshound's library reads it (`jshound.nextmanifest`,
+`jshound.sveltekitmanifest`); the numbers below come from that reader.
 
 **It buys nothing on Next's `_buildManifest.js`.** That file is a plain object literal of quoted
 paths, so a regex extractor reads it perfectly: handed the same Supabase manifest, LinkFinder returns

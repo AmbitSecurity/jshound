@@ -56,6 +56,9 @@ def parse(log):
     d = re.search(r"\d+ script\(s\) -> \S+\s+\[(.+?)\]", log)
     if d:
         row["found_by"] = {k: int(v) for v, k in re.findall(r"(\d+) ([\w-]+)", d.group(1))}
+    t = re.search(r"time: fetch ([\d.]+)s, analysis ([\d.]+)s", log)
+    if t:
+        row.update(fetch_seconds=float(t.group(1)), analyse_seconds=float(t.group(2)))
     u = re.search(r"! (\d+) file\(s\) could not be scanned", log)
     row["unscanned"] = int(u.group(1)) if u else 0
     row["capped"] = bool(re.search(r"! stopped at \d+ chunks", log))
