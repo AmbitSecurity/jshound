@@ -156,6 +156,58 @@ def blocked_by(status, html):
     return None
 
 
+# ONE SESSION PER BROWSER PROFILE, the way a browser keeps its connections.
+#
+# Every request used to be a fresh client: a new DNS lookup, a new TCP and TLS handshake, no
+# cookies. That is slow, and it is not what a browser looks like, since a browser loading a page
+# and its scripts reuses one connection and sends back the cookies it was given. A curl_cffi
+# Session shared across threads keeps a connection handle per thread, so the chunk fetches reuse
+# connections, DNS answers and TLS sessions, and carry cookies like `__cf_bm`.
+#
+# AND NO IPv6 LOOKUP WHERE THERE IS NO IPv6. On a network without an IPv6 route, curl still asks
+# DNS for an IPv6 address, and a resolver that never answers that question for a domain without
+# one (Vercel's, for a start) makes every single request wait 10 seconds for it: svelte.dev took
+# 258 seconds for 25 files, and 0.06s a request once the lookup was skipped. Chrome makes the same
+# check before it asks for IPv6 at all, so this is a browser's behaviour, not a workaround.
+_SESSIONS = {}
+_SESSIONS_LOCK = __import__("threading").Lock()
+_V6 = []
+
+
+def ipv6_reachable():
+    """Whether this machine has a route to the IPv6 internet. Asked once; sends no packets."""
+    if not _V6:
+        import socket
+        ok = False
+        try:
+            s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            try:
+                s.connect(("2001:4860:4860::8888", 53))   # a route lookup, nothing is sent
+                ok = True
+            finally:
+                s.close()
+        except (OSError, AttributeError):
+            ok = False
+        _V6.append(ok)
+    return _V6[0]
+
+
+def _session(profile, max_bytes=None):
+    """The shared session for one profile. With `max_bytes`, curl itself stops a larger download."""
+    key = (profile, max_bytes)
+    with _SESSIONS_LOCK:
+        if key not in _SESSIONS:
+            from curl_cffi import requests as rq
+            from curl_cffi.const import CurlIpResolve, CurlOpt
+            opts = {}
+            if max_bytes:
+                opts[CurlOpt.MAXFILESIZE_LARGE] = max_bytes
+            if not ipv6_reachable():
+                opts[CurlOpt.IPRESOLVE] = CurlIpResolve.V4
+            _SESSIONS[key] = rq.Session(impersonate=profile, curl_options=opts or None)
+        return _SESSIONS[key]
+
+
 # A response is read up to this and no further. The size of a body is the target's choice, and one
 # URL is enough: pointed at a generator, an uncapped read took 1,032 MB of RSS and wrote 524 MB into
 # the corpus directory before anything looked at it. The largest real chunk measured across the
@@ -190,28 +242,39 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
                 kw["proxies"] = {"http": PROXY, "https": PROXY}
                 if PROXY_CA:
                     kw["verify"] = PROXY_CA
-            r = rq.get(url, impersonate=IMPERSONATE, timeout=timeout, stream=True, **kw)
+            # A plain read, so the connection goes back to the session for the next request; curl
+            # stops it at `max_bytes` (error 63). Only then is it read again as a stream, keeping the
+            # first `max_bytes`: a bundle cut off mid-file still parses to something, and dropping
+            # it would lose the whole target to one oversized file. A streamed read never reuses its
+            # connection, which is why it is the exception and not the rule.
             try:
-                buf, n = [], 0
-                for part in r.iter_content():
-                    buf.append(part)
-                    n += len(part)
-                    if n >= max_bytes:
-                        break
-                raw = b"".join(buf)[:max_bytes]
-                enc = getattr(r, "encoding", None) or "utf-8"
+                r = _session(IMPERSONATE, max_bytes).get(url, timeout=timeout, **kw)
+                raw = r.content
+            except Exception as e:                         # noqa: BLE001
+                if getattr(e, "code", None) != 63:
+                    raise
+                r = _session(IMPERSONATE).get(url, timeout=timeout, stream=True, **kw)
                 try:
-                    body = raw.decode(enc, "replace")
-                except LookupError:
-                    body = raw.decode("utf-8", "replace")
-                final = str(getattr(r, "url", "") or url)
-                _report(url, r.status_code, len(raw))
-                return (r.status_code, body, final) if with_url else (r.status_code, body)
-            finally:
-                try:
-                    r.close()
-                except Exception:                          # noqa: BLE001
-                    pass
+                    buf, n = [], 0
+                    for part in r.iter_content():
+                        buf.append(part)
+                        n += len(part)
+                        if n >= max_bytes:
+                            break
+                    raw = b"".join(buf)[:max_bytes]
+                finally:
+                    try:
+                        r.close()
+                    except Exception:                      # noqa: BLE001
+                        pass
+            enc = getattr(r, "encoding", None) or "utf-8"
+            try:
+                body = raw.decode(enc, "replace")
+            except LookupError:
+                body = raw.decode("utf-8", "replace")
+            final = str(getattr(r, "url", "") or url)
+            _report(url, r.status_code, len(raw))
+            return (r.status_code, body, final) if with_url else (r.status_code, body)
         except Exception:                                  # noqa: BLE001
             _report(url, None, 0)
             return (None, "", url) if with_url else (None, "")
