@@ -1,0 +1,33 @@
+name: Missed or wrong request
+description: jshound missed a request the app makes, or got one wrong
+labels: ["extraction"]
+body:
+  - type: input
+    id: target
+    attributes:
+      label: Site
+      description: The URL you ran jshound against. Public sites only.
+      placeholder: https://app.example.com
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: The request
+      description: What the app sends (from the browser's network tab), and what jshound printed for it, if anything.
+      placeholder: |
+        Expected: POST https://api.example.com/v1/items  {"name": ..., "tags": [...]}
+        jshound:  POST {baseUrl}/v1/items  (no body)
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Where it is in the JavaScript
+      description: The file and a few lines around the call, if you found it. This is the most useful part.
+      render: js
+  - type: input
+    id: version
+    attributes:
+      label: jshound version
+      placeholder: "jshound --version"
