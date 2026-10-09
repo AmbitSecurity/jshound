@@ -189,8 +189,9 @@ rejected 848 real modules on GitLab.
 - **It does not log in.** Code that only loads for a signed in user is not in what an anonymous
   browser downloads, so its requests are not found.
 - **It can be blocked.** A WAF that challenges the first request is reported as `blocked by <vendor>`.
-  jshound rotates through several browser TLS profiles before giving up, and `--proxy` helps with
-  rate limits and IP bans but not with a challenge.
+  jshound imitates the newest Chrome, Firefox and Safari its curl_cffi knows, in that order, so keep
+  curl_cffi current: a year-old browser gets challenged where a current one gets through.
+  `--proxy` helps with rate limits and IP bans but not with a challenge.
 - **An app that builds its script tags at runtime** hides those scripts from a fetch, and their
   requests are missing.
 

@@ -166,13 +166,22 @@ def cmd_map(a):
                                            allow_private=a.allow_private, report=rep)
                 code = str(rep.get("status")) if rep.get("status") is not None else "ERR"
                 if rep.get("blocked"):
-                    tried = rep.get("tried") or []
-                    print(f"{label}  {code}  blocked by {rep['blocked']}"
-                          + (f" (tried {len(tried)} client profiles)" if len(tried) > 1 else ""),
+                    # NAME WHAT WAS TRIED. The run that failed on 2026-10-09 had tried five browsers
+                    # a year out of date and said only "tried 5 client profiles", which hid the one
+                    # thing a reader could fix: a newer curl_cffi imitates newer browsers.
+                    tried = ", ".join(rep.get("tried") or []) or "?"
+                    try:
+                        import curl_cffi
+                        ver = f"curl_cffi {curl_cffi.__version__}"
+                    except Exception:                      # noqa: BLE001
+                        ver = "no curl_cffi installed"
+                    print(f"{label}  {code}  blocked by {rep['blocked']}", file=sys.stderr)
+                    print(f"{pad}tried {tried}" + (", pinned with --client" if a.client else
+                          f" ({ver}). A newer curl_cffi imitates newer browsers, which get refused "
+                          f"less: pip install -U curl_cffi"), file=sys.stderr)
+                    print(f"{pad}A refusal also moves with the IP's reputation. --proxy changes the "
+                          f"IP, which helps with rate limits and bans but not with a challenge.",
                           file=sys.stderr)
-                    print(f"{pad}This is decided per request and moves over time, so a later run may "
-                          f"get through. --proxy changes the IP, which helps with rate limits and "
-                          f"bans but not with a challenge.", file=sys.stderr)
                     worst = 1
                     continue
                 if not saved:

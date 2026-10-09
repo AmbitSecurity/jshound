@@ -1,9 +1,10 @@
 """Telling a refusal from a page, and getting past one where an HTTP client can.
 
-From one VPN exit, sixteen sites and six client profiles: the old default (`impersonate="chrome"`,
-Chrome 142) was refused by claude.ai, lovable.dev and tesla.com and got 0 endpoints from each.
-Safari 17 got into all sixteen, and lovable.dev went from 0 endpoints to 966. A residential proxy
-changed nothing at all, which is how we know it was the client and not the IP.
+On 2026-10-08, from one VPN exit, the old default (`impersonate="chrome"`, then Chrome 142) was refused
+by claude.ai, lovable.dev and tesla.com, and Safari 17 got into all sixteen sites measured. A day later
+the same IP had every one of those profiles challenged by claude.ai, while curl_cffi's newest Chrome
+(150) got the real page 11 times in 12. What gets through moves, and a current browser version is
+what held up, so the profiles are curl_cffi's newest rather than a list written down here.
 """
 import os
 import sys
@@ -53,8 +54,25 @@ def test_a_real_app_that_loads_a_vendors_script_is_not_a_refusal():
                                                      "</script></body>")) is None
 
 
-def test_the_default_profile_is_not_the_one_measured_worst():
-    assert F.PROFILES[0] != "chrome142" and "chrome" not in F.PROFILES[0]
+def test_the_profiles_are_curl_cffis_newest_chrome_firefox_and_safari():
+    """Not a list in this file: a written-down list is how jshound ended up trying only browsers a
+    year out of date, and every one of them was challenged."""
+    import pytest
+    imp = pytest.importorskip("curl_cffi.requests.impersonate")
+    assert F.PROFILES == (imp.DEFAULT_CHROME, imp.DEFAULT_FIREFOX, imp.DEFAULT_SAFARI)
+
+
+def test_a_block_names_the_profiles_it_tried(tmp_path, monkeypatch, capsys):
+    """The run that failed on 2026-10-09 said "tried 5 client profiles". Naming them is what shows
+    they are out of date, and the line says what brings newer ones."""
+    from jshound import cli
+    _wire(monkeypatch, refused_by=set(F.PROFILES))
+    a = cli.build_parser().parse_args(["https://app.test/", "-o", str(tmp_path / "out"), "-q"])
+    assert a.fn(a) == 1
+    err = capsys.readouterr().err
+    assert "blocked by Cloudflare challenge" in err
+    assert "tried " + ", ".join(F.PROFILES) in err
+    assert "pip install -U curl_cffi" in err
 
 
 def _wire(monkeypatch, refused_by):

@@ -60,21 +60,35 @@ PROXY_CA = None
 
 # WHICH BROWSER TO LOOK LIKE, and what to try when that one is refused.
 #
-# `impersonate="chrome"` was the default, and it was the WORST choice measured. Sixteen sites from one
-# VPN exit, six profiles each: Chrome 142 got past 13, Safari 17 got past all 16. The likely reason is
-# that the default target is what most automated traffic sends, so it is what bot defences have
-# learned to score down.
+# A CURRENT ONE. On 2026-10-09, from one datacenter IP, claude.ai served curl_cffi's Chrome 150 the
+# real page 11 times in 12 and challenged its Chrome 142 all 9 times (on two curl_cffi releases),
+# and a real Chrome 154 got the real page both times it was tried. The list this replaced, Safari 17
+# and 18, Firefox 144, Chrome 131 and 142, was a year out of date by then, and every profile in it
+# was challenged. Two likely reasons, both of which get worse with age: the
+# browsers people run update every four weeks, so an old version is rare in real traffic, and an
+# old curl_cffi default is what a year of bots has been sending.
 #
-# No single profile is safe to hardcode, though, and that is measured too: across two runs ten
-# minutes apart, Chrome 131 and Firefox both got into claude.ai and lovable.dev in the first and were
-# challenged in the second. A refusal is partly a reputation score that moves. So the document is
-# retried down this list when it comes back refused, and whichever profile gets a real page is kept
-# for everything else that target is asked for, because switching fingerprints mid-session is itself
-# a signal and a challenge cookie is bound to the client that earned it.
+# So the list is not written down here. It is curl_cffi's own newest Chrome, Firefox and Safari,
+# which its maintainers move forward each release, and `pip install -U curl_cffi` is the update.
 #
-# Order is by measured pass rate. 13 of the 16 sites never refused any profile, so on most targets
-# only the first is ever sent.
-PROFILES = ("safari17_0", "safari18_0", "firefox144", "chrome131", "chrome142")
+# No single profile is safe to rely on either. On 2026-10-08 Safari 17 got into all sixteen of a set
+# of sites while Chrome 142 got into thirteen, and across two runs ten minutes apart Chrome 131 and
+# Firefox both got into claude.ai and then were challenged: a refusal is partly a reputation score
+# that moves. So the document is retried down this list when it comes back refused, and whichever
+# profile gets a real page is kept for everything else that target is asked for, because switching
+# fingerprints mid-session is itself a signal and a challenge cookie is bound to the client that
+# earned it.
+def _newest_profiles():
+    """curl_cffi's newest Chrome, Firefox and Safari, in that order."""
+    try:
+        from curl_cffi.requests import impersonate as _imp
+    except Exception:                                      # noqa: BLE001  (absent: urllib is used)
+        return ("chrome", "firefox", "safari")
+    got = (getattr(_imp, n, None) for n in ("DEFAULT_CHROME", "DEFAULT_FIREFOX", "DEFAULT_SAFARI"))
+    return tuple(dict.fromkeys(p for p in got if p)) or ("chrome", "firefox", "safari")
+
+
+PROFILES = _newest_profiles()
 IMPERSONATE = PROFILES[0]
 
 

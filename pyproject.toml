@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jshound"
 version = "0.1.0"
-description = "Recover a SPA's API from its JavaScript bundle — full requests, not just URLs."
+description = "Recover a SPA's API from its JavaScript bundle: full requests, not just URLs."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -25,7 +25,9 @@ Source = "https://github.com/AmbitSecurity/jshound"
 Issues = "https://github.com/AmbitSecurity/jshound/issues"
 
 [project.optional-dependencies]
-fetch = ["curl_cffi>=0.6"]
+# 0.16.3's Chrome 150 got into claude.ai 11 times in 12 on 2026-10-09, where 0.14's Chrome 142 was
+# challenged every time. See the profile notes in fetch.py.
+fetch = ["curl_cffi>=0.16.3"]
 
 [project.scripts]
 jshound = "jshound.cli:main"
