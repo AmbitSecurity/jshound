@@ -174,3 +174,39 @@ def test_an_opaque_body_is_not_a_bodyless_request():
     bodyless = doc["paths"]["/rotate"]["post"]
     assert "schema" not in bodyless.get("requestBody", {}).get("content", {}).get(
         "application/json", {})
+
+
+def test_an_operation_whose_base_is_set_at_runtime_gets_a_server_that_resolves_nowhere():
+    """Under the document's servers, `${this.baseUrl}/v1/x` would import into a proxy as a request
+    to the page's host, which can be out of scope. Its own server says the base is unknown, and the
+    reserved default sends nothing anywhere until someone fills it in."""
+    from jshound.export import openapi as oa
+    recs = [
+        {"_kind": "endpoint", "method": "POST", "template": "{baseUrl}/v1/subscribe", "sink": "fetch",
+         "_page": "https://app.example.com/", "_file": "/home/someone/corpus/app.js"},
+        {"_kind": "endpoint", "method": "GET", "template": "/v1/flags", "sink": "fetch",
+         "_page": "https://app.example.com/", "_file": "/home/someone/corpus/app.js"},
+        {"_kind": "endpoint", "method": "POST", "template": "/platform/x", "sink": "opts-sink",
+         "_page": "https://app.example.com/"},
+    ]
+    doc = oa.build(recs)
+    assert doc["servers"] == [{"url": "https://app.example.com"}]
+    sub = doc["paths"]["/v1/subscribe"]["post"]
+    assert sub["servers"][0]["url"] == "{baseUrl}"
+    assert sub["servers"][0]["variables"]["baseUrl"]["default"] == "https://base.invalid"
+    assert "servers" not in doc["paths"]["/v1/flags"]["get"]
+    assert doc["paths"]["/platform/x"]["post"]["servers"][0]["url"] == "{base}"
+    # and the file is named, not located: the path is the machine of whoever ran it
+    assert sub["x-jshound"]["file"] == "app.js"
+
+
+def test_a_slot_in_a_server_host_is_declared_and_left_invalid():
+    """`https://{projectRef}.supabase.co` is a wildcard name: any guessed value would resolve,
+    possibly to another customer's project. Empty, the host is invalid and nothing is sent."""
+    from jshound.export import openapi as oa
+    doc = oa.build([{"_kind": "endpoint", "method": "GET", "sink": "fetch",
+                     "template": "https://{projectRef}.supabase.co/functions/v1/x",
+                     "_page": "https://supabase.com/dashboard"}])
+    srv = doc["servers"][0]
+    assert srv["url"] == "https://{projectRef}.supabase.co"
+    assert srv["variables"]["projectRef"]["default"] == ""

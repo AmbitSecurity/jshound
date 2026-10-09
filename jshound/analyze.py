@@ -374,7 +374,7 @@ def config_values(d):
             elif isinstance(v, dict):
                 flatten(v, depth + 1)
             elif isinstance(v, list):
-                for it in v[:20]:
+                for it in v[:1000]:
                     flatten(it, depth + 1)
 
     for root, _, names in _corpus_walk(d):

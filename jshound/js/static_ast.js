@@ -537,7 +537,7 @@ function strFromNode(node, scope, depth, paramNames) {
               }
             }
           }
-          return { s: "{call:" + (generateSrc(it.callee) || "?").slice(0, 24) + "}", dyn: true };
+          return { s: "{call:" + _clip(generateSrc(it.callee) || "?", 64) + "}", dyn: true };
         }
       }
       // unresolved: preserve a MEANINGFUL name as the slot label (survives when it's real, e.g. sourcemap 'orgId').
@@ -1554,7 +1554,7 @@ function responseFromCallback(node, scope, depth = 0) {
   } else if (p0.type === "Identifier") {
     collectMemberAccesses(fn.body, p0.name, fields, 0);
   }
-  return fields.size ? [...fields].slice(0, 40) : null;
+  return fields.size ? [...fields].slice(0, 1000) : null;
 }
 
 // pull an options object's method + body key-names, given the AST node of the 2nd arg (or axios single-config)
@@ -1816,11 +1816,18 @@ function isWrapperOpts(node) {
 // classify a body field's VALUE by its source, read straight off the AST (not name-guessing): a literal is a known
 // constant, crypto.randomUUID()/Date/Intl are client-generated, a fn param is user-input, an enum-var yields its
 // value-set, a member access is app state. This is what makes a request CONSTRUCTIBLE, you know how to fill each field.
+// A label is cut only when it is absurd, and then visibly: "…" says there was more. Values were cut
+// at 20 characters before, so `application/x-www-form-urlencoded` printed as a different string.
+function _clip(str, n) {
+  str = String(str);
+  return str.length > n ? str.slice(0, n) + "\u2026" : str;
+}
+
 function classifyValue(v, scope, depth = 0) {
   if (!v || depth > 4) return "?";
   switch (v.type) {
-    case "StringLiteral": return "const:" + String(v.value).slice(0, 20);
-    case "NumericLiteral": case "BooleanLiteral": case "BigIntLiteral": return "const";
+    case "StringLiteral": return "const:" + _clip(String(v.value), 200);
+    case "NumericLiteral": case "BooleanLiteral": case "BigIntLiteral": return "const:" + String(v.value);
     case "NullLiteral": return "const:null";
     case "ArrayExpression": {
       // `items: [{sku, qty}]` used to render as the string "array", which throws away the element shape,
@@ -1861,19 +1868,19 @@ function classifyValue(v, scope, depth = 0) {
       if (/DateTimeFormat|resolvedOptions|timeZone|locale|language|navigator/i.test(nm)) return "client-gen:locale";
       if (/random/i.test(nm)) return "client-gen:random";
       if (/stringify/i.test(nm)) return "json";
-      return "computed:" + nm.slice(0, 16);
+      return "computed:" + _clip(nm, 64);
     }
     case "Identifier": {
       const b = scope && scope.getBinding && scope.getBinding(v.name);
       if (b) {
-        if (b.kind === "param") return "input:" + v.name.slice(0, 16);      // user-supplied argument
+        if (b.kind === "param") return "input:" + _clip(v.name, 64);        // user-supplied argument
         const ev = enumValues(b);
         if (ev.length >= 1 && ev.length <= 8) return "enum:" + ev.join("|");
         const init = b.path.node && b.path.node.init;
-        if (init && init.type === "StringLiteral") return "const:" + init.value.slice(0, 20);
+        if (init && init.type === "StringLiteral") return "const:" + _clip(init.value, 200);
         if (init) return classifyValue(init, b.scope, depth + 1);
       }
-      return "var:" + v.name.slice(0, 12);
+      return "var:" + _clip(v.name, 64);
     }
     case "MemberExpression": case "OptionalMemberExpression":
       return "state:" + ((v.property && v.property.name) || "?");
@@ -1993,7 +2000,7 @@ function _paramFieldReads(node, scope) {
         if (f && !out.includes(String(f))) out.push(String(f));
       },
     });
-    return out.length ? out.slice(0, 24) : null;
+    return out.length ? out.slice(0, 1000) : null;
   } catch { return null; }
 }
 
@@ -3607,7 +3614,7 @@ function headerNamesOf(node, scope) {
       }
     }
   } catch {}
-  return out.length ? out.slice(0, 24) : null;
+  return out.length ? out.slice(0, 1000) : null;
 }
 
 // `(0, mod.NameToJSON)` / `mod.NameToJSON` / `NameToJSON` -> "NameToJSON". Bundlers wrap a namespace member
@@ -3731,7 +3738,7 @@ function _handleCallBody(path) {
       if (++used >= 4) break;
     }
     const out = [...new Set(keys)];
-    return out.length ? out.slice(0, 40) : null;
+    return out.length ? out.slice(0, 1000) : null;
   } catch { return null; }
 }
 
@@ -3826,7 +3833,7 @@ function _mutationCallBody(path, paramName) {
       }
     }
     const out = [...new Set(keys)];
-    return out.length ? out.slice(0, 40) : null;
+    return out.length ? out.slice(0, 1000) : null;
   } catch { return null; }
 }
 
@@ -3889,7 +3896,7 @@ function _queryFromUrlArg(node, scope) {
       } else fromIdent(node);
     }
   } catch {}
-  return out.length ? out.slice(0, 30) : null;
+  return out.length ? out.slice(0, 1000) : null;
 }
 
 function collectEndpointTables(ast) {
@@ -4545,7 +4552,7 @@ function extract(src) {
     }
     if (curPath && !o.response_keys) {
       const rk = responseAtCallSite(curPath);
-      if (rk && rk.length) { o.response_keys = rk.slice(0, 40); o.response_from = "call-site"; }
+      if (rk && rk.length) { o.response_keys = rk.slice(0, 1000); o.response_from = "call-site"; }
     }
     found.push(o);
   };
@@ -5017,7 +5024,7 @@ function extract(src) {
         for (const k of Object.keys(viaIndex)) if (!CONFIG_KEYS.has(k.toLowerCase())) clean[k] = viaIndex[k];
         if (Object.keys(clean).length) {
           rec.body_shape = clean;
-          rec.body_keys = Object.keys(clean).slice(0, 40);
+          rec.body_keys = Object.keys(clean).slice(0, 1000);
           _bpResolved++;
         }
       }
@@ -5032,7 +5039,7 @@ function extract(src) {
         if (!/^(\{|input:)/.test(kk) && !CONFIG_KEYS.has(kk.toLowerCase())) keys.add(kk); } } catch {}
     }
     if (keys.size && keys.size <= 12) {
-      rec.body_keys = [...keys].slice(0, 40); _bpResolved++;          // >12 = collision grab-bag
+      rec.body_keys = [...keys].slice(0, 1000); _bpResolved++;          // >12 = collision grab-bag
       // AND THE SHAPE, not just the names. This pass wrote body_keys only, and body_keys is not what
       // anything downstream reads: ingest fills `req_body` from body_shape, the store's map prints
       // body_shape, and the bench measures it. So an endpoint whose body WAS recovered here still
@@ -5086,7 +5093,7 @@ function extract(src) {
   };
   let _published = 0;
   for (const [nm, calls] of callsByName) {
-    if (_published >= 400) break;
+    if (_published >= 20000) break;
     if (nm.length < 4) continue;
     // BY ARGUMENT INDEX. The wrapper records WHICH parameter is the body (`_bpIdx`); "the first object-ish
     // argument" answers a different question, and for `f(payload, opts)` called as `f(x, {retries:3})` it would
@@ -5106,7 +5113,7 @@ function extract(src) {
     const args = {};
     for (const [i, set] of byIdx) if (set.size <= 24) args[i] = [...set];
     if (Object.keys(args).length) {
-      found.push({ _kind: "callargs", _evidence: true, name: nm, fields: [...flat].slice(0, 24), args });
+      found.push({ _kind: "callargs", _evidence: true, name: nm, fields: [...flat].slice(0, 1000), args });
       _published++;
     }
   }
@@ -5121,9 +5128,9 @@ function extract(src) {
   for (const [fnNode, recs] of byFn) {
     const rs = RESP.get(fnNode);
     if (!rs || !rs.fields.size) continue;
-    const fields = [...rs.fields].slice(0, 40);
+    const fields = [...rs.fields].slice(0, 1000);
     if (recs.length === 1) {
-      recs[0].response_keys = [...new Set([...(recs[0].response_keys || []), ...fields])].slice(0, 40);
+      recs[0].response_keys = [...new Set([...(recs[0].response_keys || []), ...fields])].slice(0, 1000);
     } else if (recs.length <= 4) {
       // A function with several sinks makes the .json() ambiguous, we cannot say WHICH call returned those
       // fields, so this was dropped entirely, which is why response coverage sat near zero. Dropping is not
@@ -5602,7 +5609,7 @@ function sanitize(records) {
       // `${base}//${path}` concatenation: collapse repeated slashes but never touch the scheme's "://"
       t = t.replace(/([^:])\/{2,}/g, "$1/");
       t = _normSlots(t);
-      if (t.length > 300) t = t.slice(0, 300);
+      if (t.length > 8192) t = t.slice(0, 8192);           // only a generated blob is this long
       if (!t) continue;                                  // empty template: a config default, not an endpoint
       if (/^\{[^}]*\}$/.test(t)) {
         // Nothing but a slot. For a REST path that is unusable, there is no endpoint to speak of. But a

@@ -13,6 +13,7 @@ replays it without substituting a value will request a literal `{param1}`. Dropp
 to make the spec look cleaner would be the one edit that makes this output dangerous.
 """
 import json
+import os
 import re
 from collections import defaultdict
 
@@ -89,6 +90,44 @@ def _operation_id(rec, method, path, used):
     return name
 
 
+def _unknown_base(where):
+    """A server for an operation whose base URL the bundle does not contain.
+
+    `api.post("/platform/...")` and `${this.baseUrl}/v1/...` are requests to a host the code decides
+    at runtime. Under the document's servers they would read as requests to the page's host, and a
+    proxy importing this would send them there: on supabase that is supabase.com for calls that go
+    to the API host, which can be a host out of scope. So the base is a variable, named after the
+    code's own name for it where it has one, and its default is a reserved name that resolves
+    nowhere (RFC 2606), so nothing is sent anywhere until someone fills it in.
+    """
+    m = re.match(r"^\{([^}]+)\}", where or "")
+    name = re.sub(r"[^A-Za-z0-9_]", "_", m.group(1)).strip("_") if m else ""
+    name = name or "base"
+    note = (f"Not in the bundle: the code sets this base at runtime"
+            + (f", as {m.group(1)}" if m else ", in the client that sends this request")
+            + ". Replace it with the real host. The default resolves nowhere, so nothing is sent by "
+            "accident.")
+    return [{"url": "{" + name + "}",
+             "variables": {name: {"default": "https://base.invalid", "description": note}}}]
+
+
+def _server(url):
+    """A document server. A slot in the host (`https://{projectRef}.supabase.co`) is declared as a
+    variable whose default is empty, which leaves the hostname invalid until it is filled in. Under
+    a wildcard DNS name any made-up default would resolve, quite possibly to someone else's project."""
+    slots = re.findall(r"\{([^}]+)\}", url)
+    if not slots:
+        return {"url": url}
+    variables = {}
+    for raw in slots:
+        name = re.sub(r"[^A-Za-z0-9_]", "_", raw).strip("_") or "slot"
+        url = url.replace("{" + raw + "}", "{" + name + "}")
+        variables[name] = {"default": "", "description": (
+            f"Not in the bundle ({raw}). Fill it in before sending; left empty, the host is invalid "
+            "and nothing is sent.")}
+    return {"url": url, "variables": variables}
+
+
 def build(records, title="Recovered API", version="0.0.0"):
     zod_by_name = {r["name"]: r.get("zod_fields") or []
                    for r in records if r.get("_kind") == "zod" and r.get("name")}
@@ -110,11 +149,17 @@ def build(records, title="Recovered API", version="0.0.0"):
             continue
 
         # The server is where the request goes, as the table resolves it, never the host that served
-        # the file: supabase's bundle comes off a CDN that answers no API call.
+        # the file: supabase's bundle comes off a CDN that answers no API call. A request whose base
+        # the code only sets at runtime gets a server of its own instead of the document's, see
+        # `_unknown_base`, or importing this into a proxy would aim it at the wrong host.
         from .requests import _url
-        origin, _ = split_origin(_url(rec))
+        where = _url(rec)
+        origin, _ = split_origin(where)
+        op_servers = None
         if origin and "://" in origin:
             servers[origin] = True
+        else:
+            op_servers = _unknown_base(where)
 
         path, params, resolved = normalize(tmpl)
         if looks_like_source_file(path):
@@ -180,7 +225,13 @@ def build(records, title="Recovered API", version="0.0.0"):
                                            "the list is incomplete.")
                 op["requestBody"] = body
 
-        prov = {k[1:]: rec[k] for k in ("_page", "_file", "_host") if rec.get(k)}
+        if op_servers:
+            op["servers"] = op_servers
+        # The file by its name only. The full path is the path on the machine that ran this, which
+        # is that person's username and folder layout in a document made to be shared.
+        prov = {k[1:]: rec[k] for k in ("_page", "_host") if rec.get(k)}
+        if rec.get("_file"):
+            prov["file"] = os.path.basename(str(rec["_file"]))
         prov.update({k: rec[k] for k in ("sink", "dynamic", "body_partial", "body_encoding_basis")
                      if rec.get(k) is not None})
         prov["path_fully_resolved"] = resolved
@@ -204,7 +255,7 @@ def build(records, title="Recovered API", version="0.0.0"):
                 "x-jshound.path_fully_resolved is false contain placeholders that must be "
                 f"substituted before replay ({unresolved} of them)."),
         },
-        "servers": [{"url": u} for u in sorted(servers)] or [{"url": "/"}],
+        "servers": [_server(u) for u in sorted(servers)] or [{"url": "/"}],
         "paths": {p: ops[p] for p in sorted(ops)},
     }
     if headers_seen:

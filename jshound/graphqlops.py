@@ -111,7 +111,7 @@ def extract(source, origin=None):
         seen.add(key)
         variables = [{"name": v, "type": t.strip(), "required": t.strip().endswith("!")}
                      for v, t in _VAR.findall(sig)]
-        selection = _top_level_fields(body)[:12]
+        selection = _top_level_fields(body)[:1000]
         # A document that asks the server for nothing is not a document.
         if not selection:
             continue
