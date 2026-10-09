@@ -859,7 +859,9 @@ function _shapeFromCallers(binding, paramName, depth) {
         if (args.length > 12) break;
       }
     }
+    let byName = false;
     if (!args.length && fnPath.hub && fnPath.hub.file && fnPath.hub.file.path) {
+      byName = true;
       fnPath.hub.file.path.traverse({
         CallExpression(cp) {
           if (args.length > 12) { cp.stop(); return; }
@@ -884,7 +886,11 @@ function _shapeFromCallers(binding, paramName, depth) {
         got++;
       }
     }
-    if (got) return out;
+    // Matched by NAME, the union is only as good as the name is rare. Clerk's static `attempt(e)`
+    // matched every `*.attempt(...)` in its file, a retry helper's `{initialDelay, factor, jitter}`
+    // among them, and 84 keys became the body of POST /me/biometric_credentials/attempt. Past 12 keys
+    // it is a collision, the same line the corpus-wide index holds below.
+    if (got) return (byName && Object.keys(out).length > 12) ? null : out;
     // Nothing in this file. Ask the corpus-wide index, the caller is usually in another chunk. The
     // index is keyed by NAME, so a common one gathers every same-named call in the bundle: Clerk's
     // `attempt` came back with 84 keys from a retry helper and others (`initialDelay`, `jitter`,
@@ -2320,9 +2326,10 @@ function bodyKeys(node, scope, depth = 0) {
         const obj = _returnedObjectOf(nm, scope, depth);
         if (obj) {
           const keys = [];
+          const objScope = _RET_SCOPE.get(obj) || scope;          // the function's, see _RET_SCOPE
           for (const pr of obj.properties) {
             if ((pr.type === "ObjectProperty" || pr.type === "ObjectMethod") && pr.key) keys.push(pr.key.name ?? pr.key.value);
-            else if (pr.type === "SpreadElement") { const sk = bodyKeys(pr.argument, scope, depth + 1); if (sk) keys.push(...sk); }
+            else if (pr.type === "SpreadElement") { const sk = bodyKeys(pr.argument, objScope, depth + 1); if (sk) keys.push(...sk); }
           }
           if (keys.length) return [...new Set(keys)];
         }
@@ -3690,12 +3697,21 @@ function _calleeIdent(c) {
   return null;
 }
 // the ObjectExpression a locally-defined function returns, if it returns one plainly
+// The scope each returned object literal belongs to, which is the FUNCTION's, not the caller's. A
+// returned `{...i, publicKeyJwk}` must resolve `i` where the function declares it: resolved at the call
+// site, Clerk's `i` was the webpack module wrapper's own parameter, and every `i.x` read in a whole
+// module, 83 names, became the body of POST /me/biometric_credentials/attempt.
+const _RET_SCOPE = new WeakMap();
 function _returnedObjectOf(name, scope, depth) {
   try {
     const b = scope && scope.getBinding && scope.getBinding(name);
     if (!b || !b.path || !b.path.node) return null;
     const n = b.path.node;
     let fn = n.type === "FunctionDeclaration" ? n : n.init;
+    let fnScope = null;
+    try {
+      fnScope = n.type === "FunctionDeclaration" ? b.path.scope : (b.path.get("init") || {}).scope;
+    } catch { fnScope = null; }
     if (fn && fn.type === "CallExpression" && fn.arguments && fn.arguments.length === 0) return null;
     if (!fn || !/Function/.test(fn.type)) return null;
     let ret = fn.body;
@@ -3707,7 +3723,11 @@ function _returnedObjectOf(name, scope, depth) {
       const inner = _calleeIdent(ret.callee);
       if (inner && inner !== name) return _returnedObjectOf(inner, b.scope || scope, depth + 1);
     }
-    return ret && ret.type === "ObjectExpression" ? ret : null;
+    if (ret && ret.type === "ObjectExpression") {
+      if (fnScope) _RET_SCOPE.set(ret, fnScope);
+      return ret;
+    }
+    return null;
   } catch { return null; }
 }
 // Every locally-defined function that plainly returns an object literal, published so another chunk's call site

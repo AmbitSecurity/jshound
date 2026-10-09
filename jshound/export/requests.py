@@ -50,9 +50,16 @@ def requests_only(records):
         elif kind == "relay" and r.get("op"):
             variables = {v.get("name"): v.get("type") for v in (r.get("variables") or [])
                          if isinstance(v, dict) and v.get("name")}
+            key = (r["op"], r.get("opkind"))
+            if key in have:
+                # One operation called from five places is one request: supabase's ErrorCodeQuery was
+                # listed five times. The first keeps its place; a later one can only add an endpoint.
+                if not have[key].get("template") or have[key]["template"] == "{graphql}":
+                    have[key]["template"] = r.get("uri") or r.get("template") or have[key]["template"]
+                continue
             req = _graphql_request(r["op"], r.get("opkind"), variables, r,
                                    uri=r.get("uri") or r.get("template"))
-            have[(r["op"], r.get("opkind"))] = req
+            have[key] = req
             out.append(req)
         elif kind == "gql-operation" and r.get("operation"):
             key = (r["operation"], r.get("operation_type"))

@@ -77,6 +77,17 @@ def entry_of(corpus):
     return {"page_bytes": len(html), "first_script": srcs[0][-80:] if srcs else None}
 
 
+def output_of(dest):
+    """What the run wrote, counted the way a reader would: bodies, GraphQL operations, full URLs."""
+    try:
+        lines = [json.loads(ln) for ln in open(os.path.join(dest, "requests.jsonl"))]
+    except (OSError, ValueError):
+        return {}
+    return {"with_body": sum(1 for x in lines if x.get("body")),
+            "graphql": sum(1 for x in lines if x.get("graphql")),
+            "full_url": sum(1 for x in lines if str(x.get("url") or "").startswith("http"))}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("targets")
@@ -109,7 +120,7 @@ def main():
         secs = round(time.time() - t0, 1)
         open(os.path.join(dest, "run.log"), "w").write(log)
         row = {"name": name, "url": url, "rc": rc, "seconds": secs, **parse(log),
-               "entry": entry_of(os.path.join(dest, "js"))}
+               "entry": entry_of(os.path.join(dest, "js")), **output_of(dest)}
         rows.append(row)
         with open(out_path, "a") as fh:
             fh.write(json.dumps(row) + "\n")

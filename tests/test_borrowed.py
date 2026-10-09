@@ -45,3 +45,23 @@ def test_a_property_assigned_at_runtime_borrows_nothing():
     assert r.returncode == 0, r.stderr[-900:]
     got = {str(x.get("template")) for x in json.loads(r.stdout) if x.get("sink")}
     assert "{prefix}/namespaces" in got, got
+
+
+def test_a_helpers_returned_object_resolves_in_the_helpers_own_scope(tmp_path):
+    """Clerk: `body: rl(e)` where `function rl(e){let{publicKeyJwk:t,...i}=e;return{...i,publicKeyJwk:t}}`,
+    all inside a webpack module wrapper whose own parameter is also `i`. Resolved at the call site,
+    `...i` was the wrapper's `i`, and every `i.x` read in the module became the body: 84 names."""
+    (tmp_path / "a.js").write_text(
+        '(function(e, t, i){\n'
+        '  i.alpha; i.beta; i.gamma; i.delta; i.epsilon;\n'
+        '  function rl(e){ let {publicKeyJwk: t, ...i} = e; return {...i, publicKeyJwk: t}; }\n'
+        '  class rc { static async attempt(e){ return fetch("/me/biometric_credentials/attempt",'
+        ' {method: "POST", body: JSON.stringify(rl(e))}); } }\n'
+        '  window.rc = rc;\n'
+        '})({}, {}, {});\n')
+    import jshound
+    recs = [r for r in jshound.analyze(str(tmp_path))
+            if r.get("template") == "/me/biometric_credentials/attempt"]
+    assert recs, "the endpoint was not found"
+    keys = set(recs[0].get("body_keys") or [])
+    assert not keys & {"alpha", "beta", "gamma", "delta", "epsilon"}, keys

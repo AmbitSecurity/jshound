@@ -183,3 +183,10 @@ def test_graphql_operations_the_scanner_finds_are_requests():
     examples = op["requestBody"]["content"]["application/json"]["examples"]
     assert set(examples) == {"query.Me", "mutation.DeleteProject"}
     assert examples["mutation.DeleteProject"]["value"]["variables"] == {"id": "<String!>"}
+
+
+def test_one_graphql_operation_called_from_several_places_is_one_request():
+    """supabase's ErrorCodeQuery is called from five places; the summary said 351 and the table 347."""
+    from jshound.export.requests import requests_only
+    recs = [{"_kind": "relay", "op": "ErrorCodeQuery", "opkind": "query", "variables": []} for _ in range(5)]
+    assert len(requests_only(recs)) == 1
