@@ -126,30 +126,37 @@ def set_proxy(url=None, ca=None):
 # for a 403. These are each vendor's own markers on its own block or challenge page. A marker only
 # counts on a response that is an error or is the size of an interstitial, so a real app that merely
 # loads one of these vendors' scripts is not mistaken for a block.
+# Each vendor's markers in two kinds. STRONG ones appear only on a refusal or challenge page, so they
+# count whatever the status. WEAK ones are the vendor's ordinary script tag or variable, which sits on
+# real pages too: Cloudflare injects `/cdn-cgi/challenge-platform/scripts/...` into normal pages, and
+# demo.home-assistant.io, a 6.5 KB SPA shell carrying that script, was reported as "blocked by
+# Cloudflare challenge" and not read at all. A weak marker counts only on a refusal status, which
+# includes the 202 AWS WAF answers a challenge with.
 _BLOCK = (
-    ("Cloudflare challenge", ("_cf_chl_opt", "challenge-platform", "<title>Just a moment")),
-    ("Cloudflare block", ("cf-error-details", "Attention Required! | Cloudflare")),
-    # The challenge answers 200, which is why it needs its own markers: tesla.com served this 2.5 KB
-    # page to a client that got past the 403s, and the two obfuscated sensor scripts on it were read
-    # as the application and reported as "no requests" rather than as the refusal they are.
-    ("Akamai challenge", ("sec-if-cpt-container",)),
-    ("Akamai", ("errors.edgesuite.net", "Reference&#32;&#35;")),
-    ("DataDome", ("geo.captcha-delivery.com", "datadome")),
-    ("PerimeterX", ("px-captcha", "_pxAppId")),
-    ("Imperva", ("_Incapsula_Resource", "Incapsula incident ID")),
-    ("AWS WAF", ("awswaf", "aws-waf-token")),
-    ("Vercel", ("Vercel Security Checkpoint",)),
+    ("Cloudflare challenge", ("_cf_chl_opt", "<title>Just a moment", "challenge-platform/h/"),
+     ("challenge-platform",)),
+    ("Cloudflare block", ("cf-error-details", "Attention Required! | Cloudflare"), ()),
+    # The challenge answers 200, so the status says nothing and none of the Akamai denial markers are
+    # on it: tesla.com served this 2.5 KB page to the one profile that got past the 403s, and its two
+    # obfuscated sensor scripts were read as the application.
+    ("Akamai challenge", ("sec-if-cpt-container",), ()),
+    ("Akamai", ("errors.edgesuite.net", "Reference&#32;&#35;"), ()),
+    ("DataDome", ("geo.captcha-delivery.com",), ("datadome",)),
+    ("PerimeterX", ("px-captcha",), ("_pxAppId",)),
+    ("Imperva", ("Incapsula incident ID",), ("_Incapsula_Resource",)),
+    ("AWS WAF", (), ("awswaf", "aws-waf-token")),
+    ("Vercel", ("Vercel Security Checkpoint",), ()),
 )
-
 
 def blocked_by(status, html):
     """The vendor that refused the request, or None when this looks like a real response."""
     body = html or ""
-    looks_refused = (status is not None and status >= 400) or len(body) < 12000
-    if not looks_refused:
+    refused = status is not None and (status >= 400 or status == 202)
+    # A full-size page with a 2xx is the application, whatever scripts it carries.
+    if not refused and len(body) >= 12000:
         return None
-    for vendor, markers in _BLOCK:
-        if any(m in body for m in markers):
+    for vendor, strong, weak in _BLOCK:
+        if any(m in body for m in strong) or (refused and any(m in body for m in weak)):
             return vendor
     if status in (401, 403, 429, 503) and len(body) < 4000:
         return f"HTTP {status}"
@@ -710,6 +717,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
     # fetched, unreachable and unscannable are all counted, because "declared 694, fetched 681, 13
     # gone" is the difference between enumeration working and enumeration lying.
     declared, fetched_ok, unreachable, already, rounds = set(), 0, 0, 0, 0
+    spec_tried = 0
     unscanned = set()
     capped = False
     candidates = {}
@@ -735,10 +743,18 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
                     unscanned.add(fp)
                     continue
                 pub = res.get("publicPath") or ""
-                for c in (res.get("chunks") or []):
-                    cands = chunk_candidates(u, c, pub, page_base)
-                    if cands and cands[0] not in candidates:
-                        candidates[cands[0]] = (cands, "chunk-table")
+                # TWO LISTS, TWO CONFIDENCES. `chunks` is what the bundler's own runtime builds.
+                # `speculative` is what chunkmap found by scanning the text when the structured pass
+                # came up short, which is the only way a Next.js `_buildManifest.js` is read: its
+                # route table is wrapped in a function, and on www.loom.com its 66 page bundles were
+                # all speculative, so none of the site's other pages was fetched. Both are fetched,
+                # structured first, and a speculative URL that is not there is the net catching
+                # nothing, not a hole in the map.
+                for kind in ("chunks", "speculative"):
+                    for c in (res.get(kind) or []):
+                        cands = chunk_candidates(u, c, pub, page_base)
+                        if cands and cands[0] not in candidates:
+                            candidates[cands[0]] = (cands, "chunk-table" if kind == "chunks" else "speculative")
             by_path = {fp: u for u, fp in files}
             failed = []
             for fp, specs in js_imports(sorted(by_path), failed=failed).items():
@@ -755,13 +771,16 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
             # Decide this round's work in one thread, fetch it in several, apply it in one. The
             # fetch is the only slow part, and it is the only part that touches nothing shared.
             work = []
-            for key, (cands, kind) in sorted(candidates.items()):
+            # Structured before speculative, so a cap, if one is ever hit, cuts the guesses first.
+            for key, (cands, kind) in sorted(candidates.items(), key=lambda kv: (kv[1][1] == "speculative", kv[0])):
                 if key in declared:
                     continue
                 if fetched_ok + len(work) >= max_chunks:
                     capped = True
                     break
                 declared.add(key)
+                if kind == "speculative":
+                    spec_tried += 1
                 if any(cu in seen for cu in cands):
                     already += 1              # already pulled in by an earlier pass
                     continue
@@ -775,14 +794,14 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
                     st, body = http_get(cu, timeout)
                     if st == 200 and body and is_javascript(body):
                         return cu, body, kind
-                return None                   # an SPA catch-all is a 404 wearing a 200
+                return None, None, kind       # an SPA catch-all is a 404 wearing a 200
 
             with ThreadPoolExecutor(CHUNK_WORKERS) as ex:
-                for got in ex.map(fetch_one, work):
-                    if not got:
-                        unreachable += 1
+                for cu, body, kind in ex.map(fetch_one, work):
+                    if cu is None:
+                        if kind != "speculative":
+                            unreachable += 1
                         continue
-                    cu, body, kind = got
                     n = _name(cu)
                     open(os.path.join(outdir, n), "w", errors="replace").write(body)
                     rows.append({"f": n, "u": cu, "d": url})
@@ -795,11 +814,13 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
             # where a quiet failure hides: 142 declared and 20 fetched reads like a 86% miss until
             # you are told the other 119 were already in hand.
             if report is not None:
-                report.update(chunks_declared=len(declared) + (len(candidates) if capped else 0),
+                report.update(chunks_declared=len(declared) - spec_tried + (len(candidates) if capped else 0),
                               chunks_fetched=fetched_ok, chunks_unreachable=unreachable,
-                              chunks_capped=capped)
-            print(f"  chunks and imports: {len(declared)} declared over {rounds} round(s), "
-                  f"{fetched_ok} fetched, {already} already had, {unreachable} unreachable"
+                              chunks_capped=capped, speculative_tried=spec_tried,
+                              speculative_found=how.get("speculative", 0))
+            print(f"  chunks and imports: {len(declared) - spec_tried} declared over {rounds} round(s), "
+                  f"{fetched_ok} fetched, {already} already had, {unreachable} unreachable; "
+                  f"{how.get('speculative', 0)} of {spec_tried} found by scanning the text"
                   + (f", capped at --max-chunks {max_chunks}"
                      if fetched_ok >= max_chunks else ""), file=sys.stderr)
         # A file that could not be scanned is a hole of unknown size: whatever it declares is missing,

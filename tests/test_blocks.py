@@ -43,6 +43,23 @@ def test_an_akamai_challenge_is_a_refusal_even_with_a_200():
     assert F.blocked_by(200, AKAMAI_CHALLENGE) == "Akamai challenge"
 
 
+def test_a_small_spa_shell_carrying_a_vendors_ordinary_script_is_not_a_refusal():
+    """demo.home-assistant.io is a 6.5 KB shell, and Cloudflare injects its detection script into it.
+    That script is on ordinary pages, so on its own it says nothing about being refused, and
+    reading it as a challenge threw the whole app away. Same for DataDome's and HUMAN's tags."""
+    shell = ('<!DOCTYPE html><html><head><title>Home Assistant Demo</title></head><body>'
+             '<home-assistant></home-assistant><script src="/frontend_latest/app.js"></script>'
+             '<script>(function(){var a=document.createElement("script");'
+             'a.src="/cdn-cgi/challenge-platform/scripts/precursor/main.js";'
+             'document.head.appendChild(a);})();</script></body></html>')
+    assert F.blocked_by(200, shell) is None
+    assert F.blocked_by(200, shell.replace("precursor/main.js", "x.js") +
+                        '<script src="https://js.datadome.co/tags.js"></script>') is None
+    assert F.blocked_by(200, shell + "<script>window._pxAppId='PX1';</script>") is None
+    # ...while the same script on a refusal still names who refused
+    assert F.blocked_by(403, shell) == "Cloudflare challenge"
+
+
 def test_a_real_page_is_not_a_refusal():
     assert F.blocked_by(200, REAL) is None
 

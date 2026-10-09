@@ -65,3 +65,21 @@ def test_the_readmes_offline_block_is_the_real_output(tmp_path):
     assert table, "printed nothing"
     assert "$ jshound examples/demo-app\n" + table + "\n```" in readme, \
         f"README's offline block is stale:\n{table}"
+
+
+def test_the_examples_page_shows_real_output(tmp_path):
+    """examples/README.md pastes three outputs. Each is regenerated here and must be on the page."""
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    page = open(os.path.join(root, "examples", "README.md"), encoding="utf-8").read()
+    r = subprocess.run([sys.executable, "-m", "jshound.cli", "examples/demo-app",
+                        "-o", str(tmp_path / "out"), "-q"], capture_output=True, text=True, cwd=root)
+    assert r.returncode == 0, r.stderr[-800:]
+    table = r.stdout.rstrip("\n")
+    assert "$ jshound examples/demo-app\n" + table + "\n```" in page, f"table is stale:\n{table}"
+    urls = (tmp_path / "out" / "urls.txt").read_text().rstrip("\n")
+    assert "$ cat .jshound/demo-app/urls.txt\n" + urls + "\n```" in page, f"urls.txt is stale:\n{urls}"
+    import jshound
+    chunks = "\n".join(jshound.chunk_urls(open(os.path.join(root, "examples", "demo-app", "app.4f2a9c1e.js")).read()))
+    assert chunks + "\n```" in page, f"chunk URLs are stale:\n{chunks}"

@@ -48,10 +48,11 @@ def parse(log):
         e = re.search(r"->\s+(\d+) endpoints", rest)
         row["endpoints"] = int(e.group(1)) if e else 0
     c = re.search(r"chunks and imports: (\d+) declared over (\d+) round\(s\), (\d+) fetched, "
-                  r"(\d+) already had, (\d+) unreachable", log)
+                  r"(\d+) already had, (\d+) unreachable(?:; (\d+) of (\d+) found by scanning)?", log)
     if c:
         row.update(declared=int(c.group(1)), rounds=int(c.group(2)), fetched=int(c.group(3)),
-                   already=int(c.group(4)), unreachable=int(c.group(5)))
+                   already=int(c.group(4)), unreachable=int(c.group(5)),
+                   spec_found=int(c.group(6) or 0), spec_tried=int(c.group(7) or 0))
     d = re.search(r"\d+ script\(s\) -> \S+\s+\[(.+?)\]", log)
     if d:
         row["found_by"] = {k: int(v) for v, k in re.findall(r"(\d+) ([\w-]+)", d.group(1))}
