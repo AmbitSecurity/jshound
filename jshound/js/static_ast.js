@@ -1451,6 +1451,20 @@ function headerInfo(node, scope, depth = 0) {
     }
   }
   if (n.type === "CallExpression") {                        // headers: buildHeaders(ctx)
+    // A merging helper is HANDED the headers: `headers: Y([{"anthropic-beta": b}, opts?.headers])`.
+    // Read them from what it is given before guessing from what it returns. Stainless's buildHeaders
+    // returns {values, nulls}, its own bookkeeping, and that was reported as two header names.
+    const given = [];
+    for (const a of n.arguments || []) {
+      if (a && a.type === "ObjectExpression") given.push(a);
+      else if (a && a.type === "ArrayExpression")
+        for (const el of a.elements || []) if (el && el.type === "ObjectExpression") given.push(el);
+    }
+    if (given.length) {
+      const merged = {};
+      for (const o of given) Object.assign(merged, headerInfo(o, scope, depth + 1) || {});
+      if (Object.keys(merged).length) return merged;
+    }
     const c = n.callee;
     const name = c && (c.name || (c.property && c.property.name));
     if (name && scope && scope.getBinding) {
@@ -2440,6 +2454,33 @@ const STRONG_CFG_KEYS = new Set(["withCredentials", "responseType", "validateSta
 // `.delete(url, X)`, `.post(url, X)` and the wrapper's internal sink. Uppy ships
 // `this.post(id + "/preauth/", {params: this.companionKeysParams})`, a genuine body whose single key happens to
 // be an axios config name, so a one-key object needs a STRONG key to count as config; otherwise it is data.
+// Stainless-generated SDKs (Anthropic's, OpenAI's and others) pass an OPTIONS bag where axios takes data:
+//
+//     this._client.post("/v1/deployments?beta=true", {body: r, ...t, headers: Y([...])})
+//
+// Read as data, that reported a body of {"body", "headers"} on claude.ai, the request's own options.
+// It is an options bag when it names `body` or `json` (ky's word), every other named key is a wrapper
+// key, and a spread or another wrapper key sits beside it: `{body: text}` alone is also exactly what a
+// comment API's payload looks like, so it stays a payload. `data` is never unwrapped here, because an
+// axios-style client sends this argument as the JSON itself, `data` key and all.
+// -> {body: node|null} when it is an options bag (body null: options with no body), else null.
+function sdkOptionsBag(node) {
+  if (!node || node.type !== "ObjectExpression" || !node.properties.length) return null;
+  let bodyProp = null, spread = false;
+  const others = [];
+  for (const p of node.properties) {
+    if (p.type === "SpreadElement") { spread = true; continue; }
+    if (p.type !== "ObjectProperty" || !p.key || p.computed) return null;
+    const k = String(p.key.name ?? p.key.value);
+    if ((k === "body" || k === "json") && !bodyProp) bodyProp = p;
+    else others.push(k);
+  }
+  if (!others.every((k) => WRAPPER_FIELDS.has(k) && k !== "data" && k !== "url")) return null;
+  if (bodyProp) return (spread || others.length) ? { body: bodyProp.value } : null;
+  // `{...opts, headers: {...}}` on a POST with no body named: options only, and every named key is one
+  // no payload carries.
+  return (spread && others.length && others.every((k) => CONFIG_ONLY_FIELDS.has(k))) ? { body: null } : null;
+}
 function looksLikeConfigBag(node) {
   if (!node || node.type !== "ObjectExpression" || !node.properties.length) return false;
   const names = [];
@@ -2515,16 +2556,28 @@ function allKeysAreQueryOptions(node) {
   return names.length > 0 && names.every((k) => RQ_OPTION_KEYS.has(k));
 }
 
+// A function can be no part of a payload: JSON.stringify drops it and FormData cannot hold one. So a key
+// whose value is a function is an option, whatever its name, and a wrapper's own option beside the
+// standard ones (claude.ai's `transformVariables`, next to `onMutate`) no longer turns the object into
+// a "body" of callback names.
+function _isFnValue(p) {
+  if (!p) return false;
+  if (p.type === "ObjectMethod") return true;
+  const v = p.value;
+  return !!v && (v.type === "ArrowFunctionExpression" || v.type === "FunctionExpression");
+}
 function looksLikeQueryOptions(node) {
   if (!node || node.type !== "ObjectExpression" || !node.properties.length) return false;
-  const names = [];
+  const names = [], fnKeys = new Set();
   for (const p of node.properties) {
     if (p.type === "SpreadElement") continue;
     if (!p.key || p.computed) return false;
-    names.push(String(p.key.name ?? p.key.value));
+    const k = String(p.key.name ?? p.key.value);
+    names.push(k);
+    if (_isFnValue(p)) fnKeys.add(k);
   }
   if (!names.length) return false;
-  return names.every((k) => RQ_OPTION_KEYS.has(k)) && names.some((k) => RQ_STRONG.has(k));
+  return names.every((k) => RQ_OPTION_KEYS.has(k) || fnKeys.has(k)) && names.some((k) => RQ_STRONG.has(k));
 }
 const NET_SIGNAL = new Set(["method", "body", "json", "queryKey", "mutationKey"]);
 // TanStack Query CACHE operations carry `queryKey` but never touch the network. Treating them as sinks
@@ -4841,12 +4894,13 @@ function extract(src) {
         // keys no request ever carries. Requiring EVERY key to be a config key keeps real payloads intact.
         const a1 = n.arguments[1];
         const a1IsCfg = bodyBearing && looksLikeConfigBag(a1);
-        const dataArg = bodyBearing ? (a1IsCfg ? null : a1) : delArg;
+        const a1Opts = bodyBearing && !a1IsCfg ? sdkOptionsBag(a1) : null;
+        const dataArg = bodyBearing ? (a1IsCfg ? null : (a1Opts ? a1Opts.body : a1)) : delArg;
         // …and once identified as config, USE it as config rather than discarding it. one target ships
         //   fetchWrapper.post(`${base}/api/v1/refresh`, {data:{}, withCredentials:true, headers:{'X-Client-Type':'WEB'}})
         // where `data:{}` is an empty body but the headers and credential mode are real contract, and dropping the
         // whole argument threw them away along with the fabricated keys.
-        const cfgArg = a1IsCfg ? a1 : ((bodyBearing || delArg) ? n.arguments[2] : n.arguments[1]);
+        const cfgArg = (a1IsCfg || a1Opts) ? a1 : ((bodyBearing || delArg) ? n.arguments[2] : n.arguments[1]);
         const bodyNode = dataArg ? bodyKeys(dataArg, path.scope) : null;
         const bodySch = dataArg ? bodySchema(dataArg, path.scope) : null;
         const cfg = cfgArg ? optsInfo(cfgArg, path.scope) : null;

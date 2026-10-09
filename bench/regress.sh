@@ -42,7 +42,9 @@ if [ ! -d "$CORPORA" ]; then
 fi
 
 mkdir -p "$OUT"
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# Which checkout's code to run. Default: this one. Point it at a `git worktree` of an older commit to
+# produce the "before" run without touching your working copy.
+REPO="${JSHOUND_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 n=0
 for d in "$CORPORA"/*/; do
   [ -d "$d" ] || continue
@@ -50,10 +52,28 @@ for d in "$CORPORA"/*/; do
   # A corpus with nothing to read is not a failure, it is an empty corpus; keep going either way.
   # The fetched files are in `js/` under a results folder; an older corpus is the folder itself.
   src="$d"; [ -d "$d/js" ] && src="$d/js"
-  # Every record the library returns, not the requests alone: a change to the working-out that the
-  # requests are built from is still a change.
-  if PYTHONPATH="$REPO" timeout 900 python3 -c 'import json, sys, jshound
-json.dump(jshound.analyze(sys.argv[1]), open(sys.argv[2], "w"))' "$src" "$OUT/${TAG}_${name}.json" >/dev/null 2>&1
+  # Two files per corpus: every record the library returns, because a change in the working-out the
+  # requests are built from is still a change, and the requests exactly as the command writes them,
+  # GraphQL operations included, because that is what a user reads and replays.
+  if (cd "$REPO" && PYTHONPATH="$REPO" timeout 1800 python3 - "$src" "$OUT/${TAG}_${name}" <<'PY'
+import contextlib, io, json, sys
+import jshound
+from jshound.export.requests import to_lines
+src, base = sys.argv[1], sys.argv[2]
+with contextlib.redirect_stderr(io.StringIO()):
+    recs = jshound.analyze(src)
+    try:
+        from jshound.cli import _graphql_operations
+        recs = recs + _graphql_operations(src)
+    except ImportError:
+        pass
+json.dump(recs, open(base + ".json", "w"))
+with open(base + ".requests.jsonl", "w") as fh:
+    for line in to_lines(recs):
+        line.pop("declared_in", None)          # a file name, which says nothing about the request
+        fh.write(json.dumps(line, sort_keys=True) + "\n")
+PY
+  ) >/dev/null 2>&1
   then n=$((n+1)); printf '.'; else printf '!'; fi
 done
-printf '\n%s corpora -> %s/%s_*.json\n' "$n" "$OUT" "$TAG"
+printf '\n%s corpora -> %s/%s_*.json and .requests.jsonl\n' "$n" "$OUT" "$TAG"

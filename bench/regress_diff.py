@@ -41,6 +41,54 @@ def kinds(rs):
     return collections.Counter((r.get("_kind") or "endpoint") for r in rs)
 
 
+def _requests(path):
+    """{(method, url): [line, ...]} from a .requests.jsonl."""
+    out = collections.defaultdict(list)
+    try:
+        for ln in open(path):
+            d = json.loads(ln)
+            out[(d.get("method"), d.get("url"))].append(d)
+    except OSError:
+        pass
+    return out
+
+
+def _field(lines, f):
+    return sorted(json.dumps(x.get(f), sort_keys=True) for x in lines)
+
+
+def request_diff(a_tag, b_tag, names, out):
+    """The output a user reads: requests lost and gained, and what changed in the ones on both sides."""
+    rows = []
+    for n in names:
+        pa, pb = (os.path.join(out, f"{t}_{n}.requests.jsonl") for t in (a_tag, b_tag))
+        if not (os.path.exists(pa) and os.path.exists(pb)):
+            continue
+        A, B = _requests(pa), _requests(pb)
+        both = set(A) & set(B)
+        rows.append((n, A, B, sorted(set(A) - set(B), key=str), sorted(set(B) - set(A), key=str),
+                     {f: [k for k in sorted(both, key=str) if _field(A[k], f) != _field(B[k], f)]
+                      for f in ("body", "headers", "content_type")}))
+    if not rows:
+        return
+    print(f"\n{'REQUESTS':<22}{'before':>8}{'after':>8}{'lost':>6}{'gained':>8}{'body':>6}{'headers':>9}{'ctype':>7}")
+    print("-" * 74)
+    for n, A, B, lost, gained, ch in rows:
+        flag = "  <<<" if lost or gained or any(ch.values()) else ""
+        print(f"{n[:21]:<22}{len(A):>8}{len(B):>8}{len(lost):>6}{len(gained):>8}{len(ch['body']):>6}"
+              f"{len(ch['headers']):>9}{len(ch['content_type']):>7}{flag}")
+    print("-" * 74)
+    for n, A, B, lost, gained, ch in rows:
+        for k in lost[:15]:
+            print(f"  LOST    {n}: {k[0]} {k[1]}")
+        for k in gained[:8]:
+            print(f"  gained  {n}: {k[0]} {k[1]}")
+        for f in ("body", "headers", "content_type"):
+            for k in ch[f][:6]:
+                print(f"  {f:8s}{n}: {k[0]} {k[1][:70]}\n            before {', '.join(_field(A[k], f))[:150]}"
+                      f"\n            after  {', '.join(_field(B[k], f))[:150]}")
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
@@ -88,6 +136,7 @@ def main():
         new_kinds = {k: v for k, v in kb.items() if k not in ka}
         if new_kinds:
             print(f"=== {n}: new record kinds {new_kinds}")
+    request_diff(a_tag, b_tag, names, out)
     return 0
 
 
