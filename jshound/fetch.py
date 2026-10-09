@@ -357,6 +357,7 @@ class _Scripts(HTMLParser):  # noqa: D101, docstring below
     def __init__(self):
         super().__init__()
         self.srcs, self.inline, self._in = [], [], False
+        self.importmaps, self._map = [], False
         self.origin = {}          # url -> how it was declared
 
     def handle_starttag(self, tag, attrs):
@@ -376,14 +377,77 @@ class _Scripts(HTMLParser):  # noqa: D101, docstring below
             self.origin.setdefault(d["src"], "script-src")
         else:
             self._in = True
+            # An import map is JSON the browser resolves imports with, not a script to read.
+            self._map = (d.get("type") or "").strip().lower() == "importmap"
 
     def handle_endtag(self, tag):
         if tag == "script":
-            self._in = False
+            self._in = self._map = False
 
     def handle_data(self, data):
         if self._in and data.strip():
-            self.inline.append(data)
+            (self.importmaps if self._map else self.inline).append(data)
+
+
+class ImportMap:
+    """The page's import maps, applied to a module specifier the way the browser applies them.
+
+    remix.run's page maps each module's source path to its hashed build file,
+    `/assets/app/actions/public/fathom.ts` to `/assets/app/actions/public/fathom.@apt6hu.ts`, and its
+    modules import the source path. Resolved without the map, all 103 of its imports were 404s. The
+    rules are the HTML spec's: a URL-like specifier is resolved against the importing module first; a
+    scope that the importing module's URL starts with is tried before the top-level map, the longest
+    scope first; inside a map an exact key beats the longest matching prefix key (one ending in "/").
+    A bare specifier (`react`) is only resolvable through the map, and None without it.
+    """
+
+    def __init__(self, doc_url, blocks=()):
+        self.imports, self.scopes = {}, {}
+        for raw in blocks or ():
+            try:
+                d = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(d, dict):
+                continue
+            # Several maps merge, and a key already defined keeps its first meaning, as the
+            # multiple-import-maps rule has it, so a later map cannot redirect an earlier import.
+            for k, v in self._normal(d.get("imports"), doc_url).items():
+                self.imports.setdefault(k, v)
+            for scope, m in (d.get("scopes") or {}).items():
+                into = self.scopes.setdefault(urljoin(doc_url, scope), {})
+                for k, v in self._normal(m, doc_url).items():
+                    into.setdefault(k, v)
+
+    @staticmethod
+    def _url_like(spec):
+        return spec.startswith(("/", "./", "../")) or "://" in spec[:12]
+
+    def _normal(self, m, base):
+        out = {}
+        for k, v in (m or {}).items() if isinstance(m, dict) else ():
+            if isinstance(k, str) and isinstance(v, str):
+                out[urljoin(base, k) if self._url_like(k) else k] = urljoin(base, v)
+        return out
+
+    @staticmethod
+    def _match(spec, m):
+        if spec in m:
+            return m[spec]
+        best = max((k for k in m if k.endswith("/") and spec.startswith(k)), key=len, default=None)
+        return m[best] + spec[len(best):] if best else None
+
+    def resolve(self, spec, referrer):
+        """The URL `spec` loads when imported from `referrer`, or None if it cannot be resolved."""
+        norm = urljoin(referrer, spec) if self._url_like(spec) else spec
+        for scope in sorted((sc for sc in self.scopes if referrer.startswith(sc)), key=len, reverse=True):
+            hit = self._match(norm, self.scopes[scope])
+            if hit:
+                return hit
+        hit = self._match(norm, self.imports)
+        if hit:
+            return hit
+        return norm if self._url_like(spec) else None
 
 
 class _Refs(HTMLParser):
@@ -424,7 +488,7 @@ def document_imports(doc_url, html):
     return inline_imports(doc_url, p.inline)
 
 
-def inline_imports(doc_url, sources):
+def inline_imports(doc_url, sources, import_map=None):
     """The same thing, for a caller that has already parsed the document.
 
     Two things keep this cheap on a server-rendered page, which can carry thousands of inline scripts.
@@ -444,12 +508,11 @@ def inline_imports(doc_url, sources):
             with open(fp, "w", errors="replace") as fh:
                 fh.write(src)
             paths.append(fp)
+        imap = import_map or ImportMap(doc_url)
         for specs in js_imports(sorted(paths)).values():
             for spec in specs:
-                if not spec.startswith((".", "/", "http:", "https:", "//")):
-                    continue
-                u = urljoin(doc_url, spec)
-                if u not in seen:
+                u = imap.resolve(spec, doc_url)
+                if u and u not in seen:
                     seen.add(u)
                     out.append(u)
     return out
@@ -679,23 +742,33 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
     # An inline script's dynamic `import()` is a real fetch the browser performs, and on SvelteKit it
     # is the ONLY reference to the entry module, nothing links it as a `src`. Counted under its own
     # discovery path so the breakdown still sums to the total.
-    bootstrap = [u for u in inline_imports(url, p.inline) if u.startswith("http")]
+    imap = ImportMap(url, p.importmaps)
+    bootstrap = [u for u in inline_imports(url, p.inline, imap) if u.startswith("http")]
     todo = [urljoin(url, s) for s in p.srcs] + bootstrap
     from_bootstrap = set(bootstrap)
+    first = []
     for u in todo:
         if u in seen or not u.startswith("http"):
             continue
         seen.add(u)
-        if not in_scope(u):
-            continue
-        st, body = http_get(u, timeout)
+        if in_scope(u):
+            first.append(u)
+    # Fetched in parallel like the chunks, and written in the page's order. One at a time,
+    # remix.run's 112 modulepreloads took 10.7 seconds of a 12.6 second run.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(CHUNK_WORKERS) as ex:
+        got = list(ex.map(lambda u: (u, http_get(u, timeout)), first))
+    declared_as = {}
+    for k in p.origin:
+        declared_as.setdefault(urljoin(url, k), k)
+    for u, (st, body) in got:
         if st != 200 or not body or not is_javascript(body):
             continue
         n = _name(u)
         open(os.path.join(outdir, n), "w", errors="replace").write(body)
         rows.append({"f": n, "u": u, "d": url})
         saved += 1
-        raw = next((k for k in p.origin if urljoin(url, k) == u), None)
+        raw = declared_as.get(u)
         if raw is None and u in from_bootstrap:
             how["inline-import"] += 1
         else:
@@ -760,11 +833,10 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
             for fp, specs in js_imports(sorted(by_path), failed=failed).items():
                 u = by_path.get(fp)
                 for spec in specs:
-                    # A bare or scoped package name is a build-time specifier with no URL to resolve.
-                    if not u or not spec.startswith((".", "/", "http:", "https:", "//")):
-                        continue
-                    tgt = urljoin(u, spec)
-                    if tgt not in candidates:
+                    # Through the page's import map, as the browser resolves it. A bare package name
+                    # the map does not mention was a build-time specifier, with no URL to fetch.
+                    tgt = imap.resolve(spec, u) if u else None
+                    if tgt and tgt.startswith("http") and tgt not in candidates:
                         candidates[tgt] = ([tgt], "es-import")
             unscanned.update(failed)
             frontier = []

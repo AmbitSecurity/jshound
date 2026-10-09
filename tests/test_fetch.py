@@ -123,3 +123,30 @@ def test_a_file_that_cannot_be_scanned_is_counted(tmp_path, monkeypatch):
     rep = {}
     f.collect("https://x.test/", str(tmp_path), with_chunks=True, report=rep)
     assert rep.get("files_unscanned") == 1
+
+
+def test_imports_resolve_through_the_pages_import_map(tmp_path, monkeypatch):
+    """remix.run's modules import source paths (`./fathom.ts`) that only its import map turns into
+    the hashed files it serves. Resolved without the map, all 103 of its imports were 404s."""
+    import jshound.fetch as f
+    page = ('<html><head><script type="importmap">{"imports": {'
+            '"/assets/app/fathom.ts": "/assets/app/fathom.@apt6hu.ts", "lit": "/vendor/lit.@x1y2z3.js"}}'
+            '</script><script type="module" src="/assets/app/entry.@eQkcqZ.ts"></script></head></html>')
+    served = {
+        "https://x.test/": (200, page),
+        "https://x.test/assets/app/entry.@eQkcqZ.ts": (200, 'import "./fathom.ts"; import { html } from "lit";'),
+        "https://x.test/assets/app/fathom.@apt6hu.ts": (200, 'export const t = () => fetch("/api/track");'),
+        "https://x.test/vendor/lit.@x1y2z3.js": (200, "export const html = 1;"),
+    }
+    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, max_bytes=None: (
+        (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
+    monkeypatch.setattr(f, "host_is_private", lambda h: False)
+    rep = {}
+    f.collect("https://x.test/", str(tmp_path), with_chunks=True, report=rep)
+    got = {r["u"] for r in (json.loads(l) for l in open(os.path.join(str(tmp_path), "_origin.jsonl")))}
+    assert "https://x.test/assets/app/fathom.@apt6hu.ts" in got
+    assert "https://x.test/vendor/lit.@x1y2z3.js" in got, "a bare name the map defines is fetched"
+    assert rep.get("chunks_unreachable", 0) == 0
+    # and the map itself is data, not a script to analyse
+    assert not any("importmap" in open(os.path.join(str(tmp_path), n)).read()
+                   for n in os.listdir(str(tmp_path)) if n.startswith("inline_"))
