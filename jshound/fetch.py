@@ -158,7 +158,10 @@ def blocked_by(status, html):
     for vendor, strong, weak in _BLOCK:
         if any(m in body for m in strong) or (refused and any(m in body for m in weak)):
             return vendor
-    if status in (401, 403, 429, 503) and len(body) < 4000:
+    # A refusal status on a page with no script at all is a refusal whatever its size: every single
+    # page app ships scripts. www.reddit.com answers 403 with 190 KB of styled "You've been blocked by
+    # network security" and not one <script>, and was reported as an app with no scripts to read.
+    if status in (401, 403, 429, 503) and (len(body) < 4000 or "<script" not in body.lower()):
         return f"HTTP {status}"
     return None
 

@@ -60,6 +60,14 @@ def test_a_small_spa_shell_carrying_a_vendors_ordinary_script_is_not_a_refusal()
     assert F.blocked_by(403, shell) == "Cloudflare challenge"
 
 
+def test_a_large_refusal_with_no_script_is_still_a_refusal():
+    """reddit.com: 403, 190 KB of styling around "You've been blocked by network security", no script."""
+    page = "<html><head><style>" + "a{b:c}" * 30000 + "</style></head><body>You've been blocked by network security.</body></html>"
+    assert F.blocked_by(403, page) == "HTTP 403"
+    # and a large 403 that does carry the app's scripts is read, not thrown away
+    assert F.blocked_by(403, page.replace("</body>", '<script src="/app.js"></script></body>')) is None
+
+
 def test_a_real_page_is_not_a_refusal():
     assert F.blocked_by(200, REAL) is None
 
