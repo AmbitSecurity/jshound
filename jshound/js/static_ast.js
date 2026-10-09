@@ -885,9 +885,15 @@ function _shapeFromCallers(binding, paramName, depth) {
       }
     }
     if (got) return out;
-    // Nothing in this file. Ask the corpus-wide index, the caller is usually in another chunk.
+    // Nothing in this file. Ask the corpus-wide index, the caller is usually in another chunk. The
+    // index is keyed by NAME, so a common one gathers every same-named call in the bundle: Clerk's
+    // `attempt` came back with 84 keys from a retry helper and others (`initialDelay`, `jitter`,
+    // `constructor`), reported as the body of POST /me/biometric_credentials/attempt. Past 12 keys a
+    // union is a collision, as the other reader of this index already holds, and no body is better
+    // than that one.
     const fromIndex = _CALLARGS.get(name + "|" + idx_);
-    return fromIndex && Object.keys(fromIndex).length ? fromIndex : null;
+    const nIdx = fromIndex ? Object.keys(fromIndex).length : 0;
+    return nIdx && nIdx <= 12 ? fromIndex : null;
   } catch (_) { return null; }
 }
 
@@ -1463,6 +1469,9 @@ function headerInfo(node, scope, depth = 0) {
     if (given.length) {
       const merged = {};
       for (const o of given) Object.assign(merged, headerInfo(o, scope, depth + 1) || {});
+      // `{apikey: k, customHeaders: h}`: the second key holds MORE headers, it is not one. No
+      // header is named "headers", so a key ending in it is a nested bag.
+      for (const k of Object.keys(merged)) if (/headers?$/i.test(k)) delete merged[k];
       if (Object.keys(merged).length) return merged;
     }
     const c = n.callee;

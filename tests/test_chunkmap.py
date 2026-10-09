@@ -42,3 +42,16 @@ def test_a_clean_bundle_rejects_nothing():
     assert len(res["chunks"]) == 3
     assert res["stats"]["notPathLike"] == 0
     assert res["stats"]["idsSeen"] == res["stats"]["idsResolved"] == 3
+
+
+def test_a_chain_of_id_tests_gives_each_id_its_own_url():
+    """discord.com's builder is a chain of 5,400 `"715528"===e?""+e+".5ff9…js":…` tests. Taking the
+    first branch whenever it resolved gave all 5,397 ids chunk 715528's hash: 5,397 URLs that 404,
+    and the real chunks never fetched. The test decides the branch."""
+    import jshound
+    src = ('var T={};T.u=e=>"11"===e?""+e+".aaaaaaaa.js":"22"===e?""+e+".bbbbbbbb.js":'
+           '"33"===e?""+e+".cccccccc.js":""+e+".dddddddd.js";'
+           'T.e("11");T.e("22");T.e("33");T.e("44");')
+    got = set(jshound.chunk_urls(src))
+    assert {"11.aaaaaaaa.js", "22.bbbbbbbb.js", "33.cccccccc.js", "44.dddddddd.js"} <= got, got
+    assert not any(u.startswith("22.aaaaaaaa") or u.startswith("44.aaaaaaaa") for u in got)

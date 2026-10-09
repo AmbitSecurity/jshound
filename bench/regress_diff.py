@@ -47,7 +47,8 @@ def _requests(path):
     try:
         for ln in open(path):
             d = json.loads(ln)
-            out[(d.get("method"), d.get("url"))].append(d)
+            # GraphQL operations all share POST {graphql}; the operation is what tells them apart.
+            out[(d.get("method"), d.get("url"), (d.get("graphql") or {}).get("operation"))].append(d)
     except OSError:
         pass
     return out
@@ -80,9 +81,9 @@ def request_diff(a_tag, b_tag, names, out):
     print("-" * 74)
     for n, A, B, lost, gained, ch in rows:
         for k in lost[:15]:
-            print(f"  LOST    {n}: {k[0]} {k[1]}")
+            print(f"  LOST    {n}: {k[0]} {k[1]}" + (f"  ({k[2]})" if k[2] else ""))
         for k in gained[:8]:
-            print(f"  gained  {n}: {k[0]} {k[1]}")
+            print(f"  gained  {n}: {k[0]} {k[1]}" + (f"  ({k[2]})" if k[2] else ""))
         for f in ("body", "headers", "content_type"):
             for k in ch[f][:6]:
                 print(f"  {f:8s}{n}: {k[0]} {k[1][:70]}\n            before {', '.join(_field(A[k], f))[:150]}"

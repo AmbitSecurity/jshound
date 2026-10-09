@@ -64,6 +64,27 @@ BATCH_BYTES = 6 * 1024 * 1024        # ceiling; the real size is computed per ru
 DETERMINISTIC_BATCHES = 6
 
 
+def _batch_mb(paths):
+    total = 0
+    for p in paths:
+        try:
+            total += os.path.getsize(p)
+        except OSError:
+            pass
+    return total / 1e6
+
+
+def _batch_timeout(paths, per_file):
+    """Seconds a node batch may take: a floor, a little per file, and a minute per megabyte.
+
+    It used to ignore size, 60s plus 30 a file, so discord.com's 12.2 MB main bundle, alone in its
+    batch, had 90 seconds and timed out, taking every request in it along: the app read as 3
+    endpoints. Size is what parsing time follows, so size is what the allowance follows, and only a
+    file built to hang the parser runs into it.
+    """
+    return int(120 + per_file * len(paths) + 60 * _batch_mb(paths))
+
+
 def plan_parallelism(paths):
     """How many workers, and how big a batch, for THIS input on THIS machine.
 
@@ -899,7 +920,7 @@ def _run_index(paths):
     try:
         env = node_env(); env["NODE_PATH"] = NODE_PATH
         r = subprocess.run(["node", AST, "--index-only"] + paths, capture_output=True, env=env,
-                           timeout=60 + 20 * len(paths))
+                           timeout=_batch_timeout(paths, 20))
         return json.loads(r.stdout or b"{}")
     except Exception as e:                                       # noqa: BLE001
         print(f"  ! index pass failed on {len(paths)} files: {str(e)[:120]}", file=sys.stderr)
@@ -935,7 +956,7 @@ def _run(tool, paths):
         if _FILESET_FILE[0]:
             extra += ["--fileset", _FILESET_FILE[0]]
         r = subprocess.run(["node", tool] + paths + extra, capture_output=True, env=env,
-                           timeout=60 + 30 * len(paths))
+                           timeout=_batch_timeout(paths, 30))
         # NOT `and not r.stdout`: the extractor's own top-level catch prints `[]` before
         # exiting non-zero, so a crashed batch always has stdout and was counted as a success.
         why = node_failure(r)
@@ -951,6 +972,13 @@ def _run(tool, paths):
         if os.environ.get("BP_DEBUG") and r.stderr:
             sys.stderr.write(r.stderr.decode(errors="replace"))
         return json.loads(r.stdout or b"[]")
+    except subprocess.TimeoutExpired as e:
+        mb = _batch_mb(paths)
+        print(f"  ! the extractor timed out after {int(e.timeout)}s on {len(paths)} file(s), {mb:.1f} MB; "
+              f"whatever they contain is missing", file=sys.stderr)
+        _AST_FAILED[0] += len(paths)
+        _AST_WHY.add(f"timed out after {int(e.timeout)}s on {mb:.1f} MB")
+        return []
     except Exception as e:
         print(f"  ! extractor error on {len(paths)} files: {str(e)[:160]}", file=sys.stderr)
         _AST_FAILED[0] += len(paths)

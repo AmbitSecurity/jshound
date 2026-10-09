@@ -104,3 +104,21 @@ def test_a_dom_attribute_write_is_not_a_header():
     got = _xh_names()
     assert "x-out-of-boundaries" not in got
     assert "x-chart-id" not in got
+
+
+def test_a_helper_is_read_for_the_headers_it_is_handed_not_a_bag_of_them(tmp_path):
+    """`headers: Y([{"anthropic-beta": b}, opts?.headers])` names its header in what the helper is
+    handed; the helper's return value ({values, nulls} in Stainless's case) names none. And a key
+    holding more headers, `customHeaders`, is not one."""
+    import json as _json
+    import jshound
+    (tmp_path / "a.js").write_text(
+        'function Y(a){return {values: a, nulls: []}}\n'
+        'export function go(b, h, k){ return fetch("/v1/items", {method: "POST", body: JSON.stringify({x: 1}),'
+        ' headers: Y([{"anthropic-beta": b}, h])}); }\n'
+        'export function go2(k, h){ return fetch("/v1/other", {method: "POST", body: JSON.stringify({y: 1}),'
+        ' headers: Y({apikey: k, customHeaders: h})}); }\n')
+    recs = [r for r in jshound.analyze(str(tmp_path)) if r.get("template") in ("/v1/items", "/v1/other")]
+    hdrs = {r["template"]: set((r.get("req_headers") or {}).keys()) for r in recs}
+    assert hdrs.get("/v1/items") == {"anthropic-beta"}, hdrs
+    assert hdrs.get("/v1/other") == {"apikey"}, hdrs

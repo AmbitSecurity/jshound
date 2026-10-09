@@ -115,6 +115,30 @@ function evalFnReturn(fnNode, env, depth) {
   return evalNode(fnNode, env, depth + 1);
 }
 
+const _CMP = new Set(["===", "==", "!==", "!=", "<", ">", "<=", ">="]);
+// `"a"===e ? X : "b"===e ? Y : … : Z` as a table {a: X, b: Y} with Z for everything else. Built once
+// per builder; walking 5,400 tests for each of 9,715 ids is the alternative.
+const _ID_TABLES = new WeakMap();
+function _idTable(node, param) {
+  if (_ID_TABLES.has(node)) return _ID_TABLES.get(node);
+  const map = new Map();
+  let cur = node;
+  while (cur && cur.type === "ConditionalExpression") {
+    const t = cur.test;
+    if (!t || t.type !== "BinaryExpression" || (t.operator !== "===" && t.operator !== "==")) break;
+    const sides = [t.left, t.right];
+    const lit = sides.find((x) => x && (x.type === "StringLiteral" || x.type === "NumericLiteral"));
+    const id = sides.find((x) => x && x.type === "Identifier" && x.name === param);
+    if (!lit || !id) break;
+    const k = String(lit.value);
+    if (!map.has(k)) map.set(k, cur.consequent);       // the first test that matches wins, as in JS
+    cur = cur.alternate;
+  }
+  const res = map.size >= 2 && cur ? { map, rest: cur } : null;
+  _ID_TABLES.set(node, res);
+  return res;
+}
+
 function evalNode(node, env, depth) {
   if (!node || depth > MAX_DEPTH) return undefined;
   switch (node.type) {
@@ -141,12 +165,21 @@ function evalNode(node, env, depth) {
       return out;
     }
     case "BinaryExpression": {
-      if (node.operator !== "+") return undefined;
+      const op = node.operator;
+      if (op !== "+" && !_CMP.has(op)) return undefined;
       const l = evalNode(node.left, env, depth + 1);
       if (l === undefined) return undefined;
       const r = evalNode(node.right, env, depth + 1);
       if (r === undefined) return undefined;
-      return String(l) + String(r);
+      if (op === "+") return String(l) + String(r);
+      // A comparison is a TEST, and a builder's tests decide which URL an id gets. Ids are compared by
+      // value: a build writes `"715528"===e` or `715528===e` depending on how its ids are typed, and
+      // the evaluator carries them as strings.
+      if (op === "===" || op === "==") return String(l) === String(r);
+      if (op === "!==" || op === "!=") return String(l) !== String(r);
+      const a = Number(l), b = Number(r);
+      if (Number.isNaN(a) || Number.isNaN(b)) return undefined;
+      return op === "<" ? a < b : op === ">" ? a > b : op === "<=" ? a <= b : a >= b;
     }
     case "LogicalExpression": {
       const l = evalNode(node.left, env, depth + 1);
@@ -159,11 +192,27 @@ function evalNode(node, env, depth) {
       return undefined;
     }
     case "ConditionalExpression": {
-      // Both branches are real URLs for some id; take whichever resolves, consequent first. The old
-      // evaluator picked whatever the condition happened to evaluate to against a stub, which was
-      // arbitrary in exactly the same way.
-      const c = evalNode(node.consequent, env, depth + 1);
-      return c !== undefined ? c : evalNode(node.alternate, env, depth + 1);
+      // THE TEST DECIDES THE BRANCH. Taking the consequent whenever it resolved gave every id the
+      // first branch's URL: discord.com's builder is a chain of 5,400 `"715528"===e?""+e+".5ff9…js":…`
+      // tests, and all 5,397 ids it resolved got chunk 715528's hash, 5,397 URLs that 404, and the
+      // real chunks were never fetched. So the test is evaluated, an else-chain is walked in a loop
+      // (5,400 deep is far past MAX_DEPTH), and a long chain of id comparisons is compiled once into
+      // a table. Only a test that cannot be evaluated falls back to the first branch that resolves.
+      const tbl = _idTable(node, env.param);
+      if (tbl) {
+        const hit = tbl.map.get(String(env.id));
+        return evalNode(hit !== undefined ? hit : tbl.rest, env, depth + 1);
+      }
+      let cur = node;
+      while (cur && cur.type === "ConditionalExpression") {
+        let t = evalNode(cur.test, env, depth + 1);
+        if (typeof t === "string") t = t !== "";       // JS truthiness, in the evaluator's terms
+        if (t === true) return evalNode(cur.consequent, env, depth + 1);
+        if (t === false) { cur = cur.alternate; continue; }
+        const c = evalNode(cur.consequent, env, depth + 1);
+        return c !== undefined ? c : evalNode(cur.alternate, env, depth + 1);
+      }
+      return evalNode(cur, env, depth + 1);
     }
     case "MemberExpression": {
       const key = node.computed

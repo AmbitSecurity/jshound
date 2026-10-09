@@ -53,3 +53,13 @@ def test_the_reclassification_runs_on_a_real_corpus():
     for rec in json.loads(r.stdout):
         if (rec.get("_kind") or "endpoint") == "endpoint":
             assert rec.get("template"), rec
+
+
+def test_a_big_file_gets_time_in_proportion_to_its_size(tmp_path):
+    """discord.com's 12.2 MB bundle had 90 seconds, the same as any one file, and timed out."""
+    import importlib
+    a = importlib.import_module("jshound.analyze")
+    small, big = tmp_path / "s.js", tmp_path / "b.js"
+    small.write_text("x" * 1000)
+    big.write_text("x" * 12_000_000)
+    assert a._batch_timeout([str(big)], 30) > 600 > a._batch_timeout([str(small)], 30)
