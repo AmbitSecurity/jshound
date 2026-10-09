@@ -8,14 +8,14 @@ import json
 import os
 import subprocess
 import sys
+import _lib  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "borrowed-value")
 
 
 def _templates():
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", FIX],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(FIX)
     assert r.returncode == 0, r.stderr[-900:]
     recs = json.loads(r.stdout)
     assert recs, "analyzed nothing"
@@ -35,3 +35,13 @@ def test_the_named_slot_survives_instead():
     got = _templates()
     assert "/api/datasources/uid/{uid}/health" in got
     assert "/api/datasources/uid/{uid}/lbac/teams" in got
+
+
+def test_a_property_assigned_at_runtime_borrows_nothing():
+    """`this.prefix = t` says the value is decided at runtime. It used to be skipped rather than counted,
+    so the one literal anywhere in the bundle, path-to-regexp's `{prefix: "/"}`, answered for it and
+    supabase's Iceberg client printed `//namespaces`."""
+    r = _lib.analyze(os.path.join(ROOT, "tests", "fixtures", "borrowed-runtime"))
+    assert r.returncode == 0, r.stderr[-900:]
+    got = {str(x.get("template")) for x in json.loads(r.stdout) if x.get("sink")}
+    assert "{prefix}/namespaces" in got, got

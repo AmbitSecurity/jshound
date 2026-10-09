@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import _lib  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -13,9 +14,7 @@ DEMO = os.path.join(ROOT, "examples", "demo-app")
 
 
 def _records():
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", DEMO,
-                        "--host", "demo-app.test"],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(DEMO, "--host", "demo-app.test")
     assert r.returncode == 0, r.stderr[-2000:]
     return json.loads(r.stdout)
 
@@ -38,10 +37,8 @@ def test_cross_module_baseurl_endpoints_are_recovered():
 
 def test_three_lazy_chunk_urls_are_built():
     """None of these strings exists in the bundle; the runtime builds them from two id maps."""
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "chunks",
-                        os.path.join(DEMO, "app.4f2a9c1e.js")],
-                       capture_output=True, text=True, cwd=ROOT)
-    res = json.loads(r.stdout)
+    import jshound
+    res = jshound.chunk_map(open(os.path.join(DEMO, "app.4f2a9c1e.js")).read())
     assert res["stats"]["idsResolved"] == 3 and res["stats"]["idsSeen"] == 3
     assert sorted(res["chunks"]) == sorted([
         "static/chunks/settings.a1b2c3d4.js",
@@ -53,27 +50,18 @@ def test_three_lazy_chunk_urls_are_built():
         assert c not in src, f"{c} is a literal in the bundle — the fixture no longer proves anything"
 
 
-def test_the_readmes_opening_blocks_are_the_real_output():
-    """The first thing anyone sees is three console blocks. They are pasted output, so they rot
-    silently — this pins them to the commands that produce them."""
+def test_the_readmes_offline_block_is_the_real_output(tmp_path):
+    """The README's offline example is pasted output, so it rots silently. This runs the command it
+    shows and checks the table it prints is in the README, line for line."""
     import subprocess
     import sys
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
-
-    def run(*args):
-        r = subprocess.run([sys.executable, "-m", "jshound.cli", *args],
-                           capture_output=True, text=True, cwd=root)
-        assert r.returncode == 0, r.stderr[-800:]
-        return r.stdout.rstrip("\n")
-
-    chunks = run("chunks", "examples/demo-app/app.4f2a9c1e.js", "--quiet")
-    assert chunks in readme, f"README's chunks block is stale:\n{chunks}"
-
-    table = run("analyze", "examples/demo-app", "--host", "demo-app.test", "-f", "table")
-    assert table in readme, f"README's table block is stale:\n{table}"
-
-    # ...and the claim the chunks block is making, which is the whole hook
-    src = open(os.path.join(root, "examples", "demo-app", "app.4f2a9c1e.js"), encoding="utf-8").read()
-    for built in chunks.splitlines():
-        assert built not in src, f"{built} IS in the bundle — the README's premise is wrong"
+    r = subprocess.run([sys.executable, "-m", "jshound.cli", "examples/demo-app",
+                        "-o", str(tmp_path / "out"), "-q"],
+                       capture_output=True, text=True, cwd=root)
+    assert r.returncode == 0, r.stderr[-800:]
+    table = r.stdout.rstrip("\n")
+    assert table, "printed nothing"
+    assert "$ jshound examples/demo-app\n" + table + "\n```" in readme, \
+        f"README's offline block is stale:\n{table}"

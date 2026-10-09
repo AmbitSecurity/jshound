@@ -12,14 +12,14 @@ import json
 import os
 import subprocess
 import sys
+import _lib  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "route-vs-link")
 
 
 def records():
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", FIX, "--host", "app.test"],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(FIX, "--host", "app.test")
     assert r.returncode == 0, r.stderr[-900:]
     return json.loads(r.stdout)
 
@@ -35,8 +35,7 @@ def test_the_tweets_are_demoted_not_deleted():
     """Demoted to a path literal, not dropped: the URL IS in the bundle and a reader may still want
     it. Run WITHOUT `--host`, because with one these are attributed to x.com and filtered out
     entirely — two separate mechanisms, and this asserts the demotion rather than the filter."""
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", FIX],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(FIX)
     assert r.returncode == 0, r.stderr[-900:]
     recs = json.loads(r.stdout)
     lits = [str(x.get("template") or "") for x in recs if x.get("_kind") == "path-literal"]
@@ -56,8 +55,6 @@ def test_a_real_client_side_route_still_resolves():
 
 def test_no_link_out_reaches_the_url_or_table_export():
     for fmt in ("urls", "table"):
-        r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", FIX,
-                            "--host", "app.test", "-f", fmt],
-                           capture_output=True, text=True, cwd=ROOT)
+        r = _lib.analyze(FIX, "--host", "app.test", "-f", fmt)
         assert r.returncode == 0, r.stderr[-600:]
         assert "x.com" not in r.stdout and "twitter.com" not in r.stdout, (fmt, r.stdout)

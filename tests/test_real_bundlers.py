@@ -8,6 +8,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import jshound   # noqa: E402
+import _lib  # noqa: E402
 
 FIX = os.path.join(ROOT, "tests", "fixtures")
 
@@ -17,8 +18,7 @@ def _chunks(path):
 
 
 def _analyze(d):
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", d],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(d)
     assert r.returncode == 0, r.stderr[-1200:]
     return [x for x in json.loads(r.stdout) if (x.get("_kind") or "endpoint") == "endpoint"]
 

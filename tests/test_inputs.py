@@ -18,76 +18,85 @@ A_FILE = os.path.join(ROOT, "examples", "demo-app", "app.4f2a9c1e.js")
 A_DIR = os.path.join(ROOT, "examples", "demo-app")
 
 
-def run(*args):
-    return subprocess.run([sys.executable, "-m", "jshound.cli", *args],
-                          capture_output=True, text=True, cwd=ROOT)
+def _guard(fn, *args):
+    """Call a library entry point that reads a corpus and return what it refused with, or None."""
+    try:
+        fn(*args)
+    except SystemExit as e:
+        return str(e)
+    return None
 
 
 @pytest.fixture
 def records(tmp_path):
-    out = os.path.join(str(tmp_path), "recs.json")
-    r = run("analyze", A_DIR, "--host", "demo-app.test", "-o", out)
-    assert r.returncode == 0, r.stderr[-800:]
-    return out
+    import jshound
+    out = tmp_path / "recs.json"
+    out.write_text(json.dumps(jshound.analyze(A_DIR, host="demo-app.test")))
+    return str(out)
 
 
-@pytest.mark.parametrize("cmd", ["analyze", "graphql", "fingerprint"])
-def test_a_file_where_a_directory_belongs_is_refused(cmd):
-    r = run(cmd, A_FILE)
-    assert r.returncode != 0
-    assert "is a file" in r.stderr or "not a directory" in r.stderr
-    assert "Traceback" not in r.stderr
+def _readers():
+    """Every library function that reads a directory of bodies."""
+    import jshound
+    from jshound.fingerprint import scan as fingerprint
+    from jshound.graphqlops import scan as graphql
+    return {"analyze": jshound.analyze, "graphql": graphql, "fingerprint": fingerprint}
 
 
-@pytest.mark.parametrize("cmd", ["analyze", "graphql", "fingerprint"])
-def test_a_url_where_a_directory_belongs_names_the_fetch_step(cmd):
-    """The easy mistake, because `fetch`, `manifest` and `routes` all DO take a URL."""
-    r = run(cmd, "https://play.grafana.org")
-    assert r.returncode != 0
-    assert "is a URL" in r.stderr and "jshound fetch" in r.stderr
+@pytest.mark.parametrize("name", ["analyze", "graphql", "fingerprint"])
+def test_a_file_where_a_directory_belongs_is_refused(name):
+    why = _guard(_readers()[name], A_FILE)
+    assert why and ("is a file" in why or "not a directory" in why), why
 
 
-@pytest.mark.parametrize("cmd", ["analyze", "graphql", "fingerprint"])
-def test_a_missing_directory_is_refused(cmd):
-    r = run(cmd, "/nope/nothing-here")
-    assert r.returncode != 0
-    assert "no such directory" in r.stderr or "not a directory" in r.stderr
+@pytest.mark.parametrize("name", ["analyze", "graphql", "fingerprint"])
+def test_a_url_where_a_directory_belongs_names_the_fetch_step(name):
+    """The easy mistake, because the command itself takes a URL."""
+    why = _guard(_readers()[name], "https://play.grafana.org")
+    assert why and "is a URL" in why, why
+
+
+@pytest.mark.parametrize("name", ["analyze", "graphql", "fingerprint"])
+def test_a_missing_directory_is_refused(name):
+    why = _guard(_readers()[name], "/nope/nothing-here")
+    assert why and ("no such directory" in why or "not a directory" in why), why
 
 
 def test_precision_will_not_score_against_an_empty_corpus(tmp_path, records):
     """Every endpoint is "not in corpus" when there is no corpus, so this scored 100% invented from
     no evidence at all."""
-    empty = str(tmp_path / "empty")
-    os.makedirs(empty)
-    r = run("precision", empty, records)
-    assert r.returncode != 0
-    assert "0 bytes" in r.stderr and "questionable" not in r.stdout
+    from jshound.precision import check
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    why = _guard(check, str(empty), records)
+    assert why and "0 bytes" in why, why
 
 
 def test_residual_will_not_issue_a_clean_bill_from_an_empty_corpus(tmp_path, records):
     """The inverse, and the more dangerous direction: "0 missed, 0.0%" is the most reassuring line
     this tool can print."""
-    empty = str(tmp_path / "empty")
-    os.makedirs(empty)
-    r = run("residual", empty, records)
-    assert r.returncode != 0
-    assert "0 files" in r.stderr and "NOT extracted" not in r.stdout
+    from jshound.residual import classify
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    why = _guard(classify, str(empty), records)
+    assert why and "0 files" in why, why
 
 
 def test_a_file_where_a_directory_belongs_does_not_score_either(records):
-    for cmd in ("precision", "residual"):
-        r = run(cmd, A_FILE, records)
-        assert r.returncode != 0, cmd
-        assert "is a file" in r.stderr, cmd
+    from jshound.precision import check
+    from jshound.residual import classify
+    for fn in (check, classify):
+        why = _guard(fn, A_FILE, records)
+        assert why and "is a file" in why, fn.__module__
 
 
-def test_a_real_corpus_still_scores(records):
-    r = run("precision", A_DIR, records)
-    assert r.returncode == 0, r.stderr[-500:]
-    assert "endpoints checked" in r.stdout
-    r = run("residual", A_DIR, records)
-    assert r.returncode == 0, r.stderr[-500:]
-    assert "files read" in r.stdout
+def test_a_real_corpus_still_scores(records, capsys):
+    from jshound.precision import check
+    from jshound.residual import classify
+    assert _guard(check, A_DIR, records) is None
+    assert _guard(classify, A_DIR, records) is None
+    out = capsys.readouterr().out
+    assert "endpoints checked" in out and "files read" in out
 
 
 # ---- a helper that could not run is not a corpus without endpoints -----------------------------

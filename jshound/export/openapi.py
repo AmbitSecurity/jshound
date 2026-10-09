@@ -109,12 +109,12 @@ def build(records, title="Recovered API", version="0.0.0"):
         if method not in _METHODS:
             continue
 
-        origin, _ = split_origin(tmpl)
-        host = rec.get("_host")
+        # The server is where the request goes, as the table resolves it, never the host that served
+        # the file: supabase's bundle comes off a CDN that answers no API call.
+        from .requests import _url
+        origin, _ = split_origin(_url(rec))
         if origin and "://" in origin:
             servers[origin] = True
-        elif host:
-            servers[f"https://{host}"] = True
 
         path, params, resolved = normalize(tmpl)
         if looks_like_source_file(path):

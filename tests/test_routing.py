@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import _lib  # noqa: E402
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,8 +20,7 @@ FIX = os.path.join(ROOT, "tests", "fixtures", "routing-evidence")
 def _routing(case):
     d = os.path.join(FIX, case)
     assert os.path.isdir(d), d
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", d],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(d)
     assert r.returncode == 0, r.stderr[-1200:]
     routes = [x for x in json.loads(r.stdout) if x.get("_kind") == "route"]
     assert routes, f"{case}: no routes extracted, so the assertion would be vacuous"
@@ -59,7 +59,6 @@ def test_routes_with_no_router_anywhere_are_not_labelled():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         shutil.copy(os.path.join(FIX, "router-in-another-file", "routes.js"), d)
-        r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", d],
-                           capture_output=True, text=True, cwd=ROOT)
+        r = _lib.analyze(d)
         routes = [x for x in json.loads(r.stdout) if x.get("_kind") == "route"]
         assert routes and all(x.get("routing") is None for x in routes)

@@ -11,6 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from jshound.export import openapi                                  # noqa: E402
 from jshound.export.paths import looks_like_source_file, normalize  # noqa: E402
+import _lib  # noqa: E402
 
 RECS = [
     {"method": "POST", "template": "/api/a", "_host": "h"},
@@ -47,8 +48,7 @@ def test_a_url_less_request_keeps_its_body():
 
 def test_the_reclassification_runs_on_a_real_corpus():
     fx = os.path.join(ROOT, "tests", "fixtures", "new-url-sinks")
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", fx],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(fx)
     assert r.returncode == 0, r.stderr[-1200:]
     for rec in json.loads(r.stdout):
         if (rec.get("_kind") or "endpoint") == "endpoint":

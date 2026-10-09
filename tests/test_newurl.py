@@ -4,14 +4,14 @@ import json
 import os
 import subprocess
 import sys
+import _lib  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "new-url-sinks")
 
 
 def _endpoints():
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", FIX],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(FIX)
     assert r.returncode == 0, r.stderr[-1500:]
     return {(x.get("method"), x.get("template")) for x in json.loads(r.stdout)
             if (x.get("_kind") or "endpoint") == "endpoint"}
@@ -36,8 +36,7 @@ def test_private_class_field_base_still_resolves():
 def _qs(template_fragment):
     import subprocess
     fx = os.path.join(ROOT, "tests", "fixtures", "searchparams")
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", fx],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(fx)
     assert r.returncode == 0, r.stderr[-1200:]
     for x in json.loads(r.stdout):
         if (x.get("_kind") or "endpoint") == "endpoint" and template_fragment in str(x.get("template")):

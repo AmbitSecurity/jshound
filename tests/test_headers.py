@@ -4,14 +4,14 @@ import json
 import os
 import subprocess
 import sys
+import _lib  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "headers")
 
 
 def _by_path():
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", FIX],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(FIX)
     assert r.returncode == 0, r.stderr[-1200:]
     out = {}
     for x in json.loads(r.stdout):
@@ -77,8 +77,7 @@ def _xh_names():
     import sys
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     d = os.path.join(root, "tests", "fixtures", "x-headers")
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", d],
-                       capture_output=True, text=True, cwd=root)
+    r = _lib.analyze(d)
     assert r.returncode == 0, r.stderr[-800:]
     recs = json.loads(r.stdout)
     assert recs, "analyzed nothing"

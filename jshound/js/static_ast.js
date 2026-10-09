@@ -6011,7 +6011,10 @@ function indexPropertyValues(ast, into) {
         // produced `https://auth.example.com/authadmin/realms/...`, a URL missing a separator that 404s.
         // Disagreement means we do not know, and a named slot is the honest answer; the config values are
         // recorded separately so a reader can resolve it deliberately.
-        if (v) _note(into, l.property.name, v);
+        // A runtime value is a candidate too, and it is the one that says "not known statically".
+        // Skipping it let one literal anywhere answer for every object: the Iceberg client's
+        // `this.prefix = t` borrowed `prefix:"/"` from path-to-regexp, and printed `//namespaces`.
+        _note(into, l.property.name, v || _AMBIG);
       } catch {}
     },
     ObjectProperty(p) {

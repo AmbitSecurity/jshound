@@ -8,6 +8,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from jshound.fromhar import convert   # noqa: E402
+import _lib  # noqa: E402
 
 
 def _har(entries):
@@ -107,12 +108,10 @@ def test_a_har_round_trips_into_recovered_endpoints(tmp_path):
 
     bodies = tmp_path / "bodies"
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "from-har", str(har),
-                        "-o", str(bodies)], capture_output=True, text=True, cwd=root)
+    r = _lib.from_har(str(har), str(bodies))
     assert r.returncode == 0, r.stderr[-800:]
 
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", str(bodies)],
-                       capture_output=True, text=True, cwd=root)
+    r = _lib.analyze(str(bodies))
     assert r.returncode == 0, r.stderr[-800:]
     recs = json.loads(r.stdout)
     got = {(x.get("method"), x.get("template")) for x in recs if x.get("sink")}
@@ -175,12 +174,10 @@ def test_a_captured_api_response_round_trips_into_records(tmp_path):
 
     bodies = tmp_path / "bodies"
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "from-har", har,
-                        "-o", str(bodies)], capture_output=True, text=True, cwd=root)
+    r = _lib.from_har(har, str(bodies))
     assert r.returncode == 0, r.stderr[-600:]
     out = tmp_path / "recs.json"
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", str(bodies),
-                        "-o", str(out)], capture_output=True, text=True, cwd=root)
+    r = _lib.analyze(str(bodies), "-o", str(out))
     assert r.returncode == 0, r.stderr[-600:]
     got = {x.get("template") for x in json.loads(out.read_text())}
     assert "/api/v2/users/42/avatar" in got, got
@@ -203,31 +200,30 @@ def test_a_corpus_with_no_javascript_at_all_still_yields_records(tmp_path):
     ])
     bodies = tmp_path / "bodies"
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    subprocess.run([sys.executable, "-m", "jshound.cli", "from-har", har, "-o", str(bodies)],
-                   capture_output=True, text=True, cwd=root, check=True)
+    _lib.from_har(har, str(bodies))
     assert not [f for f in os.listdir(bodies) if f.endswith(".js")], "fixture must have no scripts"
 
     out = tmp_path / "recs.json"
-    subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", str(bodies), "-o", str(out)],
-                   capture_output=True, text=True, cwd=root, check=True)
+    _lib.analyze(str(bodies), "-o", str(out))
     got = {x.get("template") for x in json.loads(out.read_text())}
     assert "/api/v2/users/42/avatar" in got, got
 
 
 def test_a_directory_with_nothing_readable_says_so_instead_of_returning_zero(tmp_path):
-    """Nothing of any kind to read means nothing to do — and SAYING so, with a non-zero exit.
+    """Nothing of any kind to read means nothing to do, and SAYING so with a non-zero exit.
 
-    An empty result here used to be indistinguishable from a host that has no API: `0 scripts -> 0
-    records`, exit 0, and with `-o spec.json` a valid, importable, empty OpenAPI document whose
-    description reassured the reader about the 0 placeholders it contained. Nothing is written now,
-    and the exit code says why.
+    An empty result here used to be indistinguishable from a host that has no API: zero endpoints,
+    exit 0, and a valid, importable, EMPTY openapi.json whose description reassured the reader. Now
+    nothing is written and the exit code says why.
     """
     import subprocess
-    (tmp_path / "notes.txt").write_text("not a body")
-    out = tmp_path / "recs.json"
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.txt").write_text("not a body")
+    out = tmp_path / "results"
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", str(tmp_path), "-o", str(out)],
+    r = subprocess.run([sys.executable, "-m", "jshound.cli", str(corpus), "-o", str(out), "-q"],
                        capture_output=True, text=True, cwd=root)
     assert r.returncode == 1, r.stdout[-500:] + r.stderr[-500:]
     assert "nothing readable" in r.stderr
-    assert not out.exists()      # and no empty spec left behind to be imported into a scanner
+    assert not (out / "openapi.json").exists()   # no empty spec left behind to be imported

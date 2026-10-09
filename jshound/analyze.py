@@ -316,7 +316,7 @@ def inline_scripts(d, tmp=None):
         tmp = tempfile.mkdtemp(prefix="inline-")
     os.makedirs(tmp, exist_ok=True)
     made = []
-    for root, _, names in os.walk(d):
+    for root, _, names in _corpus_walk(d):
         for n in names:
             if not n.endswith((".html", ".htm")):
                 continue
@@ -377,7 +377,7 @@ def config_values(d):
                 for it in v[:20]:
                     flatten(it, depth + 1)
 
-    for root, _, names in os.walk(d):
+    for root, _, names in _corpus_walk(d):
         for n in names:
             if not n.endswith((".html", ".htm")):
                 continue
@@ -500,6 +500,20 @@ def _shape(path):
     return "/".join("*" if _INST.match(seg) else seg for seg in path.split("/"))
 
 
+# FILES THIS TOOL WRITES BESIDE A CORPUS. Read back as input they are not the target's code, and
+# `records.json` in particular was mined as a captured API response: on claude.com 238 records became
+# 240 on a re-run, the tool feeding on its own previous answer and compounding on every one after.
+# `map` keeps its corpus in a `js/` subfolder now so the two never share a directory; this is the
+# backstop for a corpus someone pointed at by hand.
+_OWN_OUTPUT = {"records.json", "openapi.json", "endpoints.txt", "requests.har"}
+
+
+def _corpus_walk(d):
+    """`os.walk`, minus the files jshound wrote itself."""
+    for root, dirs, names in os.walk(d):
+        yield root, dirs, [n for n in names if n not in _OWN_OUTPUT]
+
+
 def json_records(d, origins=None, documents=None):
     """Endpoint references inside captured RESPONSE bodies — JSON and RSC.
 
@@ -525,7 +539,7 @@ def json_records(d, origins=None, documents=None):
     per_host = collections.Counter()
     totals = collections.Counter()
     capped = set()
-    for root, _, names in os.walk(d):
+    for root, _, names in _corpus_walk(d):
         for n in names:
             # .rsc as well as .json. RSC flight payloads are passed to the JS extractor by js_files() and
             # come back with ZERO records — Babel accepts the file and finds nothing in it, which is the
@@ -626,7 +640,7 @@ def doc_state_records(d, origins=None):
     """
     origins = origins or {}
     out, seen = [], set()
-    for root, _, names in os.walk(d):
+    for root, _, names in _corpus_walk(d):
         for n in sorted(names):
             if not n.endswith((".html", ".htm")):
                 continue
@@ -689,7 +703,7 @@ def markup_records(d, origins=None):
     # discarded the real ones. Same fix as the JS records — read the origin map.
     origins = origins or {}
     out, seen = [], set()
-    for root, _, names in os.walk(d):
+    for root, _, names in _corpus_walk(d):
         for n in names:
             if not n.endswith((".html", ".htm")):
                 continue
@@ -772,7 +786,7 @@ def markup_records(d, origins=None):
 
 def js_files(d, with_inline=True):
     out = []
-    for root, _, names in os.walk(d):
+    for root, _, names in _corpus_walk(d):
         for n in names:
             p = os.path.join(root, n)
             # .ts/.tsx are here because a target that ships sourcemaps hands us its ORIGINAL source, and
@@ -837,8 +851,13 @@ def _build_module_index(paths, workers, batches):
                 routing = r
             for k, v in (got.get("exports") or []):
                 exports.setdefault(k, v)
+            # Unanimous across batches as well as within one: a value poisoned in any batch (sent as
+            # null) or disagreeing between two stays poisoned, whichever batch finished first.
             for k, v in (got.get("propvals") or []):
-                propvals.setdefault(k, v)
+                if k not in propvals:
+                    propvals[k] = v
+                elif propvals[k] != v:
+                    propvals[k] = None
             # union rather than first-wins: one wrapper takes several partial bodies across call sites
             for k, v in (got.get("callargs") or []):
                 cur = callargs.setdefault(k, {})
@@ -1082,7 +1101,7 @@ def require_corpus(cmd, path):
 
 def _readable_non_js(d):
     """Is there anything here that a non-JavaScript channel reads — a document, or a captured body?"""
-    for root, _, names in os.walk(d):
+    for root, _, names in _corpus_walk(d):
         for n in names:
             if n.startswith("_"):
                 continue

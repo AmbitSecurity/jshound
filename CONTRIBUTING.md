@@ -5,7 +5,7 @@ The useful contribution here is usually **a fixture, not a patch**.
 Bundlers change, and each one hides endpoints differently. webpack 5 builds chunk URLs at runtime
 while webpack 4 uses a named function; Vite writes them down as literals; Turbopack ships a literal
 array; Module Federation ships no id table at all; Parcel keys its table by object. Every one of
-those was a gap until a fixture proved it, and the README's **What it works on** section records what
+those was a gap until a fixture proved it, and the README's **Bundlers it handles** table records what
 is verified against what.
 
 So the most useful thing you can send is a bundler, or a build configuration, that the README does
@@ -73,9 +73,9 @@ CORPORA=~/.cache/jshound-corpora bench/regress.sh after
 python3 bench/regress_diff.py before after
 ```
 
-Build the corpora with `jshound fetch`, one directory per target, and keep them outside the repo;
-they are megabytes of someone else's JavaScript and they go stale as targets ship, which is why the
-README's measured tables carry the date they were taken.
+Build the corpora with `jshound <target> -o DIR`, one directory per target, and keep them outside the
+repo; they are megabytes of someone else's JavaScript and they go stale as targets ship, so any number
+taken from them needs the date it was taken.
 
 **Read `lost` first, and read the template names rather than the numbers.** Three real results from one
 session, each of which a count would have read backwards:

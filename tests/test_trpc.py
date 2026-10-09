@@ -5,14 +5,14 @@ import json
 import os
 import subprocess
 import sys
+import _lib  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "trpc-vs-rtk")
 
 
 def _trpc():
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", FIX],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(FIX)
     assert r.returncode == 0, r.stderr[-1200:]
     return {x.get("template") for x in json.loads(r.stdout) if x.get("sink") == "trpc"}
 
@@ -33,8 +33,7 @@ def test_rtk_query_hooks_are_not_trpc_endpoints():
 
 def _endpoints(fixture):
     d = os.path.join(ROOT, "tests", "fixtures", fixture)
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", d],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(d)
     assert r.returncode == 0, r.stderr[-1200:]
     return {str(x.get("template")) for x in json.loads(r.stdout)
             if (x.get("_kind") or "endpoint") == "endpoint"}
@@ -69,8 +68,7 @@ def _trpc_in(case):
     reports "0 scripts -> 0 records" and every assertion about an empty result passes vacuously."""
     d = os.path.join(CORR, case)
     assert os.path.isdir(d), d
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", d],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(d)
     assert r.returncode == 0, r.stderr[-1200:]
     recs = json.loads(r.stdout)
     assert recs or case == "no-trpc", f"{case}: analyzed nothing"

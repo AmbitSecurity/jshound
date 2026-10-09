@@ -18,9 +18,9 @@
 # It lives in the repo because it kept being written into /tmp and lost — most recently to a reboot,
 # which took ~100 saved corpora and every baseline with it.
 #
-# CORPORA. This expects directories of saved bodies, one per target, as `jshound fetch` writes them:
+# CORPORA. This expects one directory per target, as `jshound <target> -o DIR` leaves them:
 #
-#     jshound fetch https://play.grafana.org/ -o "$CORPORA/t_grafana" --max-chunks 150
+#     jshound https://play.grafana.org/ -o "$CORPORA/t_grafana" --max-chunks 150 -q
 #
 # Point CORPORA at wherever you keep them. They are deliberately not in the repo: they are megabytes
 # of someone else's JavaScript, they go stale as targets ship, and the README's numbers carry the date
@@ -37,7 +37,7 @@ if [ -z "$TAG" ]; then
 fi
 if [ ! -d "$CORPORA" ]; then
   echo "regress.sh: no corpora at $CORPORA — set CORPORA, or fetch some first:" >&2
-  echo "  jshound fetch https://play.grafana.org/ -o $CORPORA/t_grafana --max-chunks 150" >&2
+  echo "  jshound https://play.grafana.org/ -o $CORPORA/t_grafana --max-chunks 150 -q" >&2
   exit 2
 fi
 
@@ -48,7 +48,12 @@ for d in "$CORPORA"/*/; do
   [ -d "$d" ] || continue
   name="$(basename "$d")"
   # A corpus with nothing to read is not a failure, it is an empty corpus; keep going either way.
-  if timeout 900 python3 -m jshound.cli analyze "$d" -o "$OUT/${TAG}_${name}.json" >/dev/null 2>&1
+  # The fetched files are in `js/` under a results folder; an older corpus is the folder itself.
+  src="$d"; [ -d "$d/js" ] && src="$d/js"
+  # Every record the library returns, not the requests alone: a change to the working-out that the
+  # requests are built from is still a change.
+  if PYTHONPATH="$REPO" timeout 900 python3 -c 'import json, sys, jshound
+json.dump(jshound.analyze(sys.argv[1]), open(sys.argv[2], "w"))' "$src" "$OUT/${TAG}_${name}.json" >/dev/null 2>&1
   then n=$((n+1)); printf '.'; else printf '!'; fi
 done
 printf '\n%s corpora -> %s/%s_*.json\n' "$n" "$OUT" "$TAG"

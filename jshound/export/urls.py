@@ -1,5 +1,7 @@
 """urls.py — one absolute URL per line, for the tools that take a list.
 
+Only the requests whose host is known are listed; the table and requests.jsonl carry the rest.
+
 nuclei, ffuf, httpx, feroxbuster and every `while read` loop ever written want exactly this and
 nothing else. The method and the body cannot survive the format, so this is a projection, not an
 export — reach for OpenAPI or HAR when the consumer can hold more.
@@ -39,8 +41,12 @@ def build(records, include_unresolved=False, with_method=False):
                 continue
             base = origin
         else:
-            base = origin if (origin and "://" in origin) else (
-                f"https://{rec['_host']}" if rec.get("_host") else "")
+            # Where the request goes, resolved the way the table resolves it. Not the host that
+            # served the file, which on supabase is a CDN, and not the page for a path a client
+            # wrapper puts its own base in front of. A path with no known base is not a URL.
+            from .requests import _url
+            o2, _ = split_origin(_url(rec))
+            base = o2 if (o2 and "://" in o2) else ""
         if not base:
             continue
         line = f"{(rec.get('method') or 'GET').upper()} {base}{path}" if with_method else base + path

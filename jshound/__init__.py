@@ -76,6 +76,11 @@ def read_records(path):
             data = doc
     if not isinstance(data, list):
         raise ValueError(f"{path} does not hold a list of records")
+    # Checked on what was PARSED, not on how the file was laid out. An OpenAPI document written on one
+    # line is valid JSON Lines (one line, one object), so the layout test above let it straight
+    # through as a single "record", and nothing downstream could tell.
+    if any(isinstance(r, dict) and ("openapi" in r or "log" in r) for r in data):
+        raise ValueError(f"{path} is an exported document (OpenAPI or HAR), not records")
     return data
 
 

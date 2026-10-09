@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import _lib  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "tests", "fixtures", "axios-base")
@@ -16,8 +17,7 @@ FIX = os.path.join(ROOT, "tests", "fixtures", "axios-base")
 def _paths(case):
     d = os.path.join(FIX, case)
     assert os.path.isdir(d), d
-    r = subprocess.run([sys.executable, "-m", "jshound.cli", "analyze", d],
-                       capture_output=True, text=True, cwd=ROOT)
+    r = _lib.analyze(d)
     assert r.returncode == 0, r.stderr[-1200:]
     recs = json.loads(r.stdout)
     got = {(x.get("method"), x.get("template")) for x in recs if x.get("sink")}
