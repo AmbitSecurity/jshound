@@ -17,9 +17,8 @@ JavaScript a browser would download, and everything after that happens against f
 
 ```bash
 git clone https://github.com/AmbitSecurity/jshound && cd jshound
-npm install
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[fetch]"
+pip install -e .
 ```
 
 Needs Python 3.9 or newer and Node 18 or newer.
@@ -108,7 +107,7 @@ jshound .jshound/supabase.com/js
 | `-o DIR` | where results go (default `.jshound/<host>`) |
 | `-q` | do not print each request as it is made |
 | `-v` | also print the analysis log |
-| `--max-chunks N` | stop after this many lazy chunks (default 5000). Hitting it is printed, with how many were declared |
+| `--max-chunks N` | stop after this many lazy chunks and imports (default 50000). Hitting it is printed, with how many were declared |
 | `--no-chunks` | do not follow lazy chunks |
 | `--proxy URL` | send every request through a proxy (or set `JSHOUND_PROXY`) |
 | `--proxy-ca FILE` | the CA certificate of a proxy that intercepts TLS |

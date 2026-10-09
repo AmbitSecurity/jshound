@@ -56,6 +56,10 @@ pip install -e . pytest openapi-spec-validator && pytest tests -q
 for f in jshound/js/*.js; do node --check "$f"; done
 ```
 
+`jshound/js/babel.js` is generated, so that an installed jshound needs node and nothing else. After
+changing the Babel versions in `package.json`, rebuild it with `npm install && npm run bundle`, and
+update the package list in NOTICE. CI fails when the committed file does not match the lockfile.
+
 ## Benchmarks
 
 Numbers in a PR need the corpus they came from, or they are not numbers. `bench/run.py` buckets

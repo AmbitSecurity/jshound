@@ -1,5 +1,5 @@
 """precision finds endpoints the extractor INVENTED. residual cannot: it measures literals that went
-unclaimed, and a fabrication is a claim with no literal behind it — an extractor can score a perfect
+unclaimed, and a fabrication is a claim with no literal behind it, an extractor can score a perfect
 zero on residual while reporting URLs that do not exist."""
 import json
 import os
@@ -43,7 +43,7 @@ def test_real_paths_are_not_flagged():
 
 def test_a_path_built_from_a_base_still_passes():
     """A client that joins a base and a suffix never writes the join down, so requiring the whole
-    path to appear would flag real endpoints — that version flagged 44% of tldraw's."""
+    path to appear would flag real endpoints, that version flagged 44% of tldraw's."""
     r = _run('const base="https://api.x.test"; fetch(base + "/v2/orders");',
              [{"template": "https://api.x.test/v2/orders", "sink": "fetch"}])
     assert r["questionable"] == 0, r
@@ -52,7 +52,7 @@ def test_a_path_built_from_a_base_still_passes():
 def test_a_path_holding_a_raw_space_is_flagged():
     """The class `not-in-corpus` is blind to. Grafana defines its mixed-datasource sentinel in one
     object literal, `{type: "mixed", uid: "-- Mixed --"}`, and the extractor's property index filled
-    every `${x.uid}` slot with it — 20 addresses like `/datasources/uid/-- Mixed --/health`. EVERY
+    every `${x.uid}` slot with it, 20 addresses like `/datasources/uid/-- Mixed --/health`. EVERY
     fragment of that path is written down somewhere, so the fragment test passes it, and the checker
     reported 4 questionable while 20 fabrications sat in the output. A raw space cannot be in a URL."""
     r = _run('const L={type:"mixed",uid:"-- Mixed --"};fetch("/api/datasources/uid/"+x.uid+"/health");',

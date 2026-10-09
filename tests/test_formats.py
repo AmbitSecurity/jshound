@@ -91,7 +91,7 @@ def test_a_partial_body_is_marked():
 
 
 def test_a_body_is_rendered_as_a_shape_not_a_list_of_names():
-    """A body is a document. `body: email, pageUri` is not one — the records carry the shape, with
+    """A body is a document. `body: email, pageUri` is not one, the records carry the shape, with
     each value saying where that field comes from, so that is what is printed."""
     rows = _table([{"method": "POST", "template": "/v1/subscribe",
                     "body_keys": ["email", "pageUri"],
@@ -120,7 +120,7 @@ def test_an_inferred_encoding_is_marked():
 
 def test_columns_never_collide_however_long_a_row_is():
     """A long path or a long body list is wider than its column, and `f"{s:<{w}}"` does not pad a
-    string that already exceeds the width — so two fields ran together with no separator."""
+    string that already exceeds the width, so two fields ran together with no separator."""
     rows = _table([
         {"method": "POST", "template": "/a", "body_keys": ["x"], "content_type": "application/json"},
         {"method": "POST", "template": "/" + "p" * 90,

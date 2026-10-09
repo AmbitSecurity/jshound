@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nextmanifest.py — read a Next.js app's route table out of the manifest the build itself serves.
+"""nextmanifest.py: read a Next.js app's route table out of the manifest the build itself serves.
 
     nextmanifest.py https://supabase.com/dashboard --json routes.json
 
@@ -11,7 +11,7 @@ application has, spelled as the developers wrote them, with dynamic parameters s
 That is a different kind of result from everything else in this repo. The AST extractor infers endpoints
 from code and can be wrong about one; a manifest route is the build's own declaration of what it routes,
 so the only way it is wrong is if the build is wrong about itself. On Supabase's dashboard it yields 293
-routes — 103 of them `/api/*` — against the 0 that deriving routes from chunk filenames returns there.
+routes, 103 of them `/api/*`, against the 0 that deriving routes from chunk filenames returns there.
 
 Three manifests are read when linked, and all three are READ FROM THE SYNTAX TREE rather than scraped
 (see `js/nextmanifest.js` for why, and `js/literal.js` for why none of them is run):
@@ -21,7 +21,7 @@ Three manifests are read when linked, and all three are READ FROM THE SYNTAX TRE
     _clientMiddlewareManifest.js  the middleware matchers, as `/api/:function*`
 
 THE MANIFEST URL IS NEVER CONSTRUCTED. Guessing `{origin}/_next/static/{buildId}/_buildManifest.js`
-404s on any app with an `assetPrefix` — Supabase serves its studio bundle from
+404s on any app with an `assetPrefix`, Supabase serves its studio bundle from
 `frontend-assets.supabase.com/studio/<hash>/`, and the guessed URL missed all 293 routes. The document
 already contains the correct absolute URL, query string and all, so it is read from there.
 
@@ -65,7 +65,7 @@ def asset_base_of(urls):
     """Where a declared chunk is actually served, taken from the manifest's own URL.
 
     Chunk paths inside the manifest are relative (`static/chunks/x.js`), and on an app with an
-    `assetPrefix` they resolve under the CDN rather than the document origin — Supabase serves its
+    `assetPrefix` they resolve under the CDN rather than the document origin, Supabase serves its
     studio bundle from `frontend-assets.supabase.com/studio/<hash>/_next/`. Everything up to and
     including `/_next/` in the URL the manifest was fetched from IS that base, so it never has to be
     guessed. Returns "" when no URL contains `/_next/`.
@@ -93,7 +93,7 @@ def read(doc_url, timeout=30, workdir=None):
     if not urls:
         # Say which it is. "Expected for an App Router build" is only true of a Next app, and
         # reporting it for a site that was never Next states a fact about the target that is not in
-        # evidence — the same mistake as reporting an endpoint nothing in the bundle supports.
+        # evidence, the same mistake as reporting an endpoint nothing in the bundle supports.
         next_app = any(p in html for p in ("/_next/", "__NEXT_DATA__", "__next_f"))
         return {"available": False, "is_next": next_app,
                 "reason": ("Next app, but links no _buildManifest.js, an App Router build serves none"

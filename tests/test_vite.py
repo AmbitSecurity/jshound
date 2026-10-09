@@ -1,5 +1,5 @@
 """Vite/Rollup chunk discovery. Webpack hides its chunk URLs behind a function this tool evaluates;
-Vite writes them down, so they are literals — definite, not speculative. Both shapes are covered,
+Vite writes them down, so they are literals, definite, not speculative. Both shapes are covered,
 along with the array that must NOT be mistaken for a dependency table."""
 import os
 import sys
@@ -26,7 +26,7 @@ def test_an_ordinary_string_array_is_not_a_dependency_table():
 
 
 def test_unparseable_input_still_returns_the_documented_shape():
-    """This wrote a bare `[]` — the format from before stats existed — so every consumer doing
+    """This wrote a bare `[]`, the format from before stats existed, so every consumer doing
     .get("chunks") crashed on the first unparseable file in a corpus."""
     res = jshound.chunk_map("this is (((not javascript")
     assert isinstance(res, dict)
@@ -64,7 +64,7 @@ def test_one_builder_is_not_counted_twice():
 
 def test_the_jsonp_runtime_is_not_mistaken_for_a_url_builder():
     """webpack 4's chunk-loading runtime is also a one-parameter function that mentions ".js" and
-    indexes by its parameter — and it CONTAINS the real builder, so a nested-aware check promotes
+    indexes by its parameter, and it CONTAINS the real builder, so a nested-aware check promotes
     both. GitLab then reported 2,553 ids seen against 1,272 resolved, reading as a 50% failure when
     half the denominator was never a chunk id."""
     runtime = (
@@ -80,7 +80,7 @@ def test_the_jsonp_runtime_is_not_mistaken_for_a_url_builder():
 
 
 def test_a_zero_argument_function_is_not_a_chunk_builder():
-    """Figma ships `{u: () => i}` and `{u: () => n}` — ordinary object properties that happen to be
+    """Figma ships `{u: () => i}` and `{u: () => n}`, ordinary object properties that happen to be
     named `u`. Both were counted as chunk URL builders, reporting 2 builders and 12 ids against 0
     resolved. A function that was never told which chunk cannot build its URL."""
     res = jshound.chunk_map('var o = {u: () => i, v: 1}; var p = {u: () => n};')

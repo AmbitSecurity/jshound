@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-/* chunkmap.js — enumerate webpack lazy-chunk URLs by evaluating the runtime's own URL builder.
+/* chunkmap.js, enumerate webpack lazy-chunk URLs by evaluating the runtime's own URL builder.
  *
  * Webpack never writes its lazy chunk URLs down. The runtime ships a function
  *     __webpack_require__.u = e => "static/chunks/" + (({94:"pages"})[e] || e) + "." + {94:"a1b2"}[e] + ".js"
  * and calls it with an id at import() time. Nothing in the bundle contains the string
- * "static/chunks/pages.a1b2.js", so no regex and no literal-collecting AST pass will ever find it — yet
+ * "static/chunks/pages.a1b2.js", so no regex and no literal-collecting AST pass will ever find it, yet
  * that is where most of a Next/webpack app's code, and therefore most of its endpoints, actually lives.
  *
  * The reliable move is to stop pattern-matching and just run it: recover the function, harvest every key
@@ -16,13 +16,13 @@
  *     structured,speculative} }
  *
  * `chunks` are built by the runtime's own builder and are what the app would request. `speculative` are
- * chunk-shaped strings recovered by scanning when no builder could be evaluated — a weaker signal, kept
+ * chunk-shaped strings recovered by scanning when no builder could be evaluated, a weaker signal, kept
  * separate so a caller never mistakes one for the other. `stats` is there so "this bundle declares no
  * chunks" stays distinguishable from "it declares 40 and we could only build 12".
  */
-const { parse } = require("@babel/parser");
-const traverse = require("@babel/traverse").default;
-const generate = require("@babel/generator").default;
+const { parse } = require("./babel.js").parser;
+const traverse = require("./babel.js").traverse.default;
+const generate = require("./babel.js").generator.default;
 
 const src = require("fs").readFileSync(0, "utf8");
 
@@ -37,8 +37,8 @@ function parseJs(code) {
 }
 
 const ast = parseJs(src);
-// A FILE THAT WILL NOT PARSE STILL OWES THE CALLER THE DOCUMENTED SHAPE. This wrote "[]" — the
-// output format from before stats existed — so every consumer doing `.get("chunks")` crashed on the
+// A FILE THAT WILL NOT PARSE STILL OWES THE CALLER THE DOCUMENTED SHAPE. This wrote "[]", the
+// output format from before stats existed, so every consumer doing `.get("chunks")` crashed on the
 // first unparseable file in a corpus, which is how one tldraw inline script took down a whole run.
 if (!ast) {
   process.stdout.write(JSON.stringify({
@@ -62,7 +62,7 @@ const siblings = new Map();          // receiver name -> Map(prop -> source)
 // This used to be `new Function("__s", "with(__s){return (" + code + ")}")(scopeFor(recv))`, where
 // `code` was generated from the target's own AST and the result was then CALLED. That is remote code
 // execution on whoever runs this tool, and `with` over a Proxy does not prevent it: the Proxy only
-// intercepts FREE IDENTIFIER lookups, so `process` and `require` resolve to the stub — but a member
+// intercepts FREE IDENTIFIER lookups, so `process` and `require` resolve to the stub, but a member
 // access on a literal never consults the scope at all.
 //
 //     "".constructor.constructor("return process")()      // the real host process, every time
@@ -71,8 +71,8 @@ const siblings = new Map();          // receiver name -> Map(prop -> source)
 // bundle the operator merely pointed the tool at. On a machine doing reconnaissance that environment
 // holds cloud credentials, and the output looked perfectly healthy while it happened.
 //
-// So the builder is INTERPRETED instead. Its accepted shape is already narrow — one parameter, a
-// returned concatenation that indexes object literals by that parameter — and that shape needs only
+// So the builder is INTERPRETED instead. Its accepted shape is already narrow, one parameter, a
+// returned concatenation that indexes object literals by that parameter, and that shape needs only
 // string concatenation, object-literal lookup, and the sibling values (`r.p`, `r.h()`) that live in
 // the same file. Nothing below can call anything the target supplies; an unsupported node returns
 // undefined, the candidate is skipped, and `buildersFailed` counts it exactly as a throw used to.
@@ -186,7 +186,7 @@ function evalNode(node, env, depth) {
         }
         // Any OTHER receiver is stubbed, which is what the evaluator this replaced did and what the
         // webpack-4 fixture's expected output encodes. webpack 4 emits a NAMED builder, so there is
-        // no `__recv` to key on, and its `o.p` resolved through the stub to "" — the publicPath is
+        // no `__recv` to key on, and its `o.p` resolved through the stub to "", the publicPath is
         // reported separately rather than prefixed onto every URL. Matching that keeps the recorded
         // expectations true. `p`/`u`/`miniCssF` were the stub's own keys; anything else stayed
         // undefined, which poisons the concatenation and correctly drops the candidate.
@@ -196,7 +196,7 @@ function evalNode(node, env, depth) {
     }
     case "CallExpression": {
       const c = node.callee;
-      // r.h() — the build hash, which lives two expressions away in the same file
+      // r.h(), the build hash, which lives two expressions away in the same file
       if (c && c.type === "MemberExpression" && c.object.type === "Identifier"
           && env.recv && c.object.name === env.recv) {
         const key = c.computed
@@ -229,7 +229,7 @@ function builderFor(fnNode) {
 }
 
 const builders = [];
-// The same function can be reached twice — webpack 5's `r.u = e => …` is an assignment AND a
+// The same function can be reached twice, webpack 5's `r.u = e => …` is an assignment AND a
 // function, so both visitors see it and its ids were counted once per visitor. The demo fixture
 // went from 3 ids seen to 6 while still producing 3 URLs, which is the kind of stat that quietly
 // stops meaning anything.
@@ -262,9 +262,9 @@ traverse(ast, {
     right.__recv = left.object && left.object.name;        // remember what the builder calls itself on
     pushBuilder(right);
   },
-  // WEBPACK 4 HAS NO `.u`. It emits a named function instead —
+  // WEBPACK 4 HAS NO `.u`. It emits a named function instead,
   //     function jsonpScriptSrc(e){return r.p+""+({...}[e]||e)+"."+{...}[e]+".chunk.js"}
-  // — so a detector keyed on an assignment to `.u` finds nothing at all. GitLab is webpack 4 and
+  //, so a detector keyed on an assignment to `.u` finds nothing at all. GitLab is webpack 4 and
   // reported 0 chunks from a runtime that declares hundreds. Matched on SHAPE rather than on the
   // name, because the name is a webpack-4 implementation detail and the shape is the contract: one
   // parameter, a returned expression that indexes object literals by that parameter, and a string
@@ -284,7 +284,7 @@ traverse(ast, {
     let src;
     try { src = generate(n).code; } catch (_) { return; }
     // A BUILDER IS AS BIG AS THE APP HAS CHUNKS. The first cap here was 20 KB, which rejected
-    // GitLab's at 48 KB — its id maps name hundreds of chunks, several with 90-character names —
+    // GitLab's at 48 KB, its id maps name hundreds of chunks, several with 90-character names,
     // and reported 0 chunks for an app that declares hundreds. The limit exists to bound the cost
     // of generate(), not to describe what a builder looks like.
     if (src.length > 2_000_000) return;
@@ -292,8 +292,8 @@ traverse(ast, {
     // must index something by its own parameter, which is what makes it a per-chunk builder
     if (!new RegExp("\\[\\s*" + param + "\\s*\\]").test(src)) return;
     if (!/\{\s*["'\d]/.test(src)) return;                 // ...and carry at least one id map
-    // A URL BUILDER RETURNS THE URL. Without this, webpack 4's jsonp *runtime* also matched — it is
-    // a one-parameter function that mentions ".js" and indexes by its parameter — and its ids are
+    // A URL BUILDER RETURNS THE URL. Without this, webpack 4's jsonp *runtime* also matched, it is
+    // a one-parameter function that mentions ".js" and indexes by its parameter, and its ids are
     // not chunk ids. GitLab then reported 2,553 ids seen against 1,272 resolved, which reads as a
     // 50% failure when in truth half the denominator was never a chunk id at all.
     let returnsUrl = false;
@@ -302,7 +302,7 @@ traverse(ast, {
         ReturnStatement(q) {
           // ITS OWN return, not a nested function's. GitLab's 55 KB jsonp runtime CONTAINS the
           // 48 KB builder, so a traverse that descends into nested functions sees the inner
-          // return and promotes the wrapper too — which is how 1,281 non-chunk ids got into the
+          // return and promotes the wrapper too, which is how 1,281 non-chunk ids got into the
           // denominator.
           const fp = q.getFunctionParent();
           if (!fp || fp.node !== n) return;
@@ -322,7 +322,7 @@ traverse(ast, {
     if ((k.name || k.value) !== "u") return;
     const v = p.node.value;
     // Same rule here, and this is where it mattered: Figma ships `{u: () => i}` and `{u: () => n}`
-    // — ordinary object properties that happen to be named `u` — and both were counted as chunk URL
+    //, ordinary object properties that happen to be named `u`, and both were counted as chunk URL
     // builders, reporting 2 builders and 12 ids against 0 resolved. A zero-argument function cannot
     // build a URL for a chunk it was never told about.
     if ((v.type === "ArrowFunctionExpression" || v.type === "FunctionExpression") &&
@@ -332,7 +332,7 @@ traverse(ast, {
 
 // PUBLIC PATH. The builder returns a path RELATIVE to __webpack_require__.p, and webpack concatenates the two at
 // runtime. Resolving the result against the runtime file's own directory instead is wrong whenever the chunks are
-// served from somewhere else — which is the norm, because the runtime is usually an inline <script> in the HTML
+// served from somewhere else, which is the norm, because the runtime is usually an inline <script> in the HTML
 // while the chunks sit on a CDN. one partner portal ships its runtime inline on the page and its 718 chunks
 // under `//cdn.example.com/static/<app>/`, so every URL we built pointed at
 // the wrong host and 87% of the app was never fetched. The runtime states the base; read it.
@@ -352,7 +352,7 @@ traverse(ast, {
 const out = new Set();
 // HOW COMPLETE WAS THE STRUCTURED PASS? `ids` below is every chunk id the builder's own maps
 // declare, so the bundle hands us the denominator for free. Resolving 12 of 40 is a MEASURED
-// shortfall, not a suspicion — and it is the case the old `out.size === 0` gate could not see,
+// shortfall, not a suspicion, and it is the case the old `out.size === 0` gate could not see,
 // because 12 is not zero. Partial success silently suppressed the safety net, which is how a
 // chase comes back looking successful with most of the app missing.
 let idsSeen = 0, idsResolved = 0, buildersFailed = 0;
@@ -375,7 +375,7 @@ for (const fnNode of builders) {
     );
   } catch (_) {}
   // IDS FROM THE CALL SITES, when the builder carries no map of its own. A small or
-  // single-hash build emits `n.u = e => e + ".5eb33312.js"` — there is no id table inside it, so
+  // single-hash build emits `n.u = e => e + ".5eb33312.js"`, there is no id table inside it, so
   // harvesting ObjectExpressions finds nothing and the builder is never run. Every lazy import
   // still asks for its chunk by id through `__webpack_require__.e(480)`, so the ids are in the
   // program even when they are not in the builder. Measured on a webpack 5 Module Federation
@@ -429,12 +429,12 @@ for (const fnNode of builders) {
 //   ])))=>i.map(i=>d[i]);
 //
 // Measured before writing this: tldraw ships 63 asset-hash chunk paths and excalidraw 96 dynamic
-// imports, and the webpack-only pass returned 0 structured chunks for both — they fell through to
+// imports, and the webpack-only pass returned 0 structured chunks for both, they fell through to
 // the speculative scanner, which is the weaker signal and says so. Reading the literals moves them
 // where they belong.
 const CHUNKY = /\.m?js(\?|$)/;
 traverse(ast, {
-  // import("./chunk-HASH.js") — the specifier IS the URL, relative to the importing module.
+  // import("./chunk-HASH.js"), the specifier IS the URL, relative to the importing module.
   CallExpression(p) {
     const c = p.node.callee;
     if (!c || c.type !== "Import") return;
@@ -443,11 +443,11 @@ traverse(ast, {
   },
   // Parcel writes its table as an OBJECT, not an array:
   //     Object.assign(o.i ??= {}, { jrWAC: "feature.9e64f881.js" })
-  // Same rule as the array case — every value must be chunk-shaped, which is what stops an
+  // Same rule as the array case, every value must be chunk-shaped, which is what stops an
   // arbitrary object of strings being collected.
   ObjectExpression(p) {
     const props = p.node.properties || [];
-    if (!props.length || props.length > 4000) return;
+    if (!props.length || props.length > 200000) return;
     const vals = [];
     for (const pr of props) {
       if (pr.type !== "ObjectProperty" || pr.computed) return;
@@ -461,7 +461,7 @@ traverse(ast, {
   // element to match is what keeps this from collecting an arbitrary array of strings.
   ArrayExpression(p) {
     const els = p.node.elements || [];
-    if (els.length < 2 || els.length > 4000) return;
+    if (els.length < 2 || els.length > 200000) return;
     const vals = [];
     for (const e of els) {
       if (!e || e.type !== "StringLiteral" || !CHUNKY.test(e.value)) return;
@@ -471,11 +471,11 @@ traverse(ast, {
   },
 });
 
-// TURBOPACK. Next.js 15 defaults to it, and it does not ship a URL-building function at all — it writes the
+// TURBOPACK. Next.js 15 defaults to it, and it does not ship a URL-building function at all, it writes the
 // chunk list out as a literal array:
 //     globalThis.TURBOPACK.push([id, {...}, {otherChunks:["static/chunks/26sgpyaquw5sh.js", ...]}])
-// Recovering `__webpack_require__.u` finds nothing here, so on x.ai we returned zero chunks while jsluice —
-// which does nothing cleverer than collect string literals — found all eight. Read the array.
+// Recovering `__webpack_require__.u` finds nothing here, so on x.ai we returned zero chunks while jsluice,
+// which does nothing cleverer than collect string literals, found all eight. Read the array.
 traverse(ast, {
   MemberExpression(p) {
     const o = p.node.object, pr = p.node.property;
@@ -497,7 +497,7 @@ traverse(ast, {
 });
 
 // LAST-RESORT LITERAL COLLECTION. Everything above anchors on a specific bundler's shape, which is precise
-// where it fires and silent where it does not — and "silent" is the failure mode that costs us a whole app.
+// where it fires and silent where it does not, and "silent" is the failure mode that costs us a whole app.
 // This is the crudest technique in the entire tooling survey and it is the only one that is format-agnostic,
 // so it runs strictly as a safety net: ONLY when the structured passes found nothing at all.
 //
@@ -505,9 +505,9 @@ traverse(ast, {
 // (supabase 377 -> 264 endpoints, 70% slower) because 404s consume the fetch deadline. A net is for catching
 // a fall, not for throwing over everything.
 // It scans the raw TEXT, not the AST. That is not laziness, it is the requirement: x.ai ships its chunk list
-// inside React Server Components flight data —
+// inside React Server Components flight data,
 //     4d:I[549672,["/_next/static/chunks/3f58t6cfa5-9b.js?dpl=...", ...],"IconMark"]
-// — which parses as a SINGLE string literal a thousand characters long. Every path is nested inside one
+//, which parses as a SINGLE string literal a thousand characters long. Every path is nested inside one
 // token, so any AST walk that tests whole string values sees nothing. Walking the text sees all fifteen.
 // THE GATE. Two changes from `out.size === 0`:
 //
@@ -518,18 +518,18 @@ traverse(ast, {
 // The second half is what makes the first half safe. The documented regression (supabase 377 ->
 // 264 endpoints, 70% slower) was caused by speculative URLs competing with real ones for the fetch
 // deadline, not by collecting them. Kept separate, the caller fetches the structured list first and
-// treats a 404 on a speculative URL as the net catching nothing — which is not a hole in the map.
+// treats a 404 on a speculative URL as the net catching nothing, which is not a hole in the map.
 const spec = new Set();
 const shortfall = idsResolved < idsSeen;
 if (out.size === 0 || shortfall) {
   const rx = /(?:^|["'`,\[\s(=])((?:\.{0,2}\/)?(?:[A-Za-z0-9_@.-]+\/)*[A-Za-z0-9_@.-]+\.m?js)(?:\?[^"'`,\]\s)]*)?/g;
   for (const m of src.matchAll(rx)) {
     const s = m[1];
-    if (!s || s.length < 7 || s.length > 300) continue;
+    if (!s || s.length < 7 || s.length > 2048) continue;
     // a chunk path lives in a directory or carries a build hash; bare "index.js" is neither, and matching it
-    // would flood the fetch queue with 404s — which was measured as a net loss (supabase 377 -> 264).
+    // would flood the fetch queue with 404s, which was measured as a net loss (supabase 377 -> 264).
     // A BUILT chunk carries a content hash; a module identifier does not. Requiring one is what separates
-    // `checklist_main.Dnck2r-82sxtd83.digested.js` from `admin/groups/automatic_membership_count.js` —
+    // `checklist_main.Dnck2r-82sxtd83.digested.js` from `admin/groups/automatic_membership_count.js`,
     // the latter is an Ember module path that happens to end in .js, and fetching it produces a confident
     // list of URLs that were never assets. Accepting anything with a slash let 207 of those through.
     const hashy = s.split("/").pop().split(/[.\-_]/)
@@ -549,7 +549,7 @@ for (const u of out) spec.delete(u);
 
 // A DECLARED CHUNK IS A URL PATH, AND MOST STRINGS ARE NOT.
 //
-// Six places add to `out`, so the guard is here, at the one point they all pass through — a filter
+// Six places add to `out`, so the guard is here, at the one point they all pass through, a filter
 // per call site is a filter one future call site will skip. A path component cannot hold whitespace,
 // a quote, a bracket or a brace without being escaped first, so a string carrying any of them was
 // never a chunk URL. Supabase's runtime put the whole Google Tag Manager snippet

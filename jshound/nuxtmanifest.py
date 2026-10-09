@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nuxtmanifest.py — read a Nuxt app's route list out of the app manifest its build serves.
+"""nuxtmanifest.py: read a Nuxt app's route list out of the app manifest its build serves.
 
     nuxtmanifest.py https://nuxt.com --json routes.json
 
@@ -9,7 +9,7 @@ directory, and it is JSON rather than JavaScript, so nothing needs evaluating:
     <base>builds/latest.json          ->  {"id": "1fba331f-...", "timestamp": 1791242423396}
     <base>builds/meta/<id>.json       ->  {"prerendered": [900 routes], "matcher": {...}}
 
-`prerendered` is every route the build rendered ahead of time — 900 of them on nuxt.com — and it is a
+`prerendered` is every route the build rendered ahead of time, 900 of them on nuxt.com, and it is a
 declaration, not an inference, exactly like the Next manifest: the only way it is wrong is if the build
 is wrong about itself. `matcher` holds the route rules (`routeRules` in nuxt.config) keyed by path
 pattern, which is how an app states that `/api/**` is proxied or `/admin/**` is server-only. It is
@@ -21,7 +21,7 @@ separately as `rule_routes` because "the build rendered this" and "the build dec
 this" are different claims, and collapsing them would hide which is which.
 
 THE BASE IS READ FROM THE DOCUMENT. Nuxt's assets directory defaults to `/_nuxt/` but `buildAssetsDir`
-and `app.baseURL` both move it, and an app behind a CDN moves it to another host — the same trap that
+and `app.baseURL` both move it, and an app behind a CDN moves it to another host, the same trap that
 cost 293 routes on Supabase when the Next manifest URL was constructed from the origin. So the base is
 whatever prefix of a URL the document itself references ends at `/_nuxt/`.
 
@@ -29,7 +29,7 @@ LIMIT, MEASURED: `prerendered` lists PRE-RENDERED routes, so a fully server-rend
 prerendering declares an empty list even though it has routes. nuxt.com itself moved that way: it
 served 900 prerendered routes and now serves `"prerendered": []`. That is reported as `available`
 with an empty route list and a line saying the build prerenders nothing, because the manifest WAS
-read and that is what it said — which is a different fact from not being able to read it. An app
+read and that is what it said, which is a different fact from not being able to read it. An app
 built with `experimental.appManifest: false` serves no manifest at all (www.gitlab.com is Nuxt and
 has no readable `latest.json`), and that one does report as unavailable, with the reason.
 """
@@ -59,7 +59,7 @@ def _json(url, timeout):
     """(data, reason, status). `reason` distinguishes the ways this fails, because they mean
     different things about the target: a 401/403 is a WAF between you and a manifest that probably
     exists, a 404 is a build that does not serve one, and valid-status-but-not-JSON is a static host
-    answering a miss with the SPA's index.html — which is why the status code is not trusted alone.
+    answering a miss with the SPA's index.html, which is why the status code is not trusted alone.
     """
     st, body = http_get(url, timeout=timeout)
     if not body:
@@ -111,7 +111,7 @@ def read(doc_url, timeout=30):
             rules.append({"kind": kind, "pattern": pattern, "rule": rule})
     # A route rule's PATTERN is itself a requestable path, and mostly not a prerendered one. On
     # unjs.io 64 of the 66 rules name paths absent from `prerendered`, and each one answers 302 where
-    # an invented path answers 404 — so these are 64 real routes, verified, that the prerendered list
+    # an invented path answers 404, so these are 64 real routes, verified, that the prerendered list
     # alone misses. Kept in their own field: a prerendered route was rendered, a rule pattern was
     # merely declared to match, and the two are not the same claim.
     rule_routes = sorted({r["pattern"] for r in rules

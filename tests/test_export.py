@@ -1,4 +1,4 @@
-"""Exporter tests. These cover the decisions that make an export safe to replay — the places where
+"""Exporter tests. These cover the decisions that make an export safe to replay, the places where
 a tidier-looking output would quietly become a dangerous one."""
 import os
 import sys
@@ -116,7 +116,7 @@ def test_operation_id_prefers_the_clients_own_name():
 
 
 def test_rails_style_colon_params_become_placeholders():
-    """`/api/:version/projects/:id` must not reach a spec with literal colons — `:id` would be
+    """`/api/:version/projects/:id` must not reach a spec with literal colons, `:id` would be
     requested as four characters. A colon only marks a slot when it owns the segment."""
     path, params, _ = normalize("/api/:version/projects/:id/releases/:tag_name")
     assert path == "/api/{version}/projects/{id}/releases/{tag_name}"
@@ -128,7 +128,7 @@ def test_google_style_custom_method_is_not_a_param():
 
 
 def test_operation_ids_are_unique_and_meaningful():
-    """OpenAPI requires globally unique operationIds and Burp's parser enforces it — two operations
+    """OpenAPI requires globally unique operationIds and Burp's parser enforces it, two operations
     named `onClick` is a document that fails to import at all."""
     rec = [{"method": "GET", "template": "/a", "_host": "h", "op": "onClick"},
            {"method": "GET", "template": "/b", "_host": "h", "op": "onClick"},
@@ -161,7 +161,7 @@ def test_normal_paths_are_untouched():
 
 def test_an_opaque_body_is_not_a_bodyless_request():
     """RTK Query writes `body: $.check`, where `check` is a TypeScript type erased at compile time.
-    The field names are genuinely not in the JavaScript, but the fact that a body is sent IS — and
+    The field names are genuinely not in the JavaScript, but the fact that a body is sent IS, and
     `body_keys: null` said both. Measured on Grafana: 485 body-bearing endpoints, 39 resolved, and
     the other 446 indistinguishable from sending nothing."""
     rec = [{"method": "POST", "template": "/checks", "_host": "h", "body_param": "$.check"},

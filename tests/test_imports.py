@@ -3,7 +3,7 @@
 Every case here is a way the regex this replaced was wrong. It read
 `(?:\\bfrom|\\bimport)\\s*\\(?\\s*["']([^"']+\\.m?js)["']`, which both invents specifiers out of text that
 is not code and misses real ones that do not end in `.js`. On the 30 real bundles fetched from
-svelte.dev the two agree exactly — 34 specifiers each — so this is not a behaviour change on ordinary
+svelte.dev the two agree exactly, 34 specifiers each, so this is not a behaviour change on ordinary
 input, it is the removal of two failure modes on unusual input.
 """
 import os
@@ -57,7 +57,7 @@ def test_a_computed_specifier_names_no_file_and_is_not_guessed_at(tmp_path):
 
 
 def test_a_file_that_does_not_parse_does_not_lose_the_others(tmp_path):
-    """One unparseable file in a batch is normal — a CDN can serve an error page with a .js name."""
+    """One unparseable file in a batch is normal, a CDN can serve an error page with a .js name."""
     good = tmp_path / "good.js"
     good.write_text('import x from "./ok.js";')
     bad = tmp_path / "bad.js"

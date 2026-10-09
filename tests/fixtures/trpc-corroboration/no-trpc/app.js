@@ -1,5 +1,5 @@
 // A bundle with RTK Query's generated hooks and no tRPC dependency, client factory or endpoint
-// string anywhere — this is Grafana. The member chains are shape-identical to a tRPC call, so an
+// string anywhere, this is Grafana. The member chains are shape-identical to a tRPC call, so an
 // ungated duck-type manufactures endpoints under a URL that is not in this file at all.
 const api = buildApi({});
 function D() { const [f] = api.endpoints.upsertRuleGroupForNamespace.useMutation(); return f; }

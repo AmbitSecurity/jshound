@@ -1,8 +1,8 @@
 """A zero has to mean "I looked and there was nothing", not "I never looked".
 
 Every command here took a path and, given the wrong KIND of path, reported zero of whatever it
-counts with exit 0. `analyze examples/demo-app/app.4f2a9c1e.js` — the file from the line above it in
-the README's own quickstart — printed `0 scripts -> 0 records` and, with `-o spec.json`, wrote a
+counts with exit 0. `analyze examples/demo-app/app.4f2a9c1e.js`, the file from the line above it in
+the README's own quickstart, printed `0 scripts -> 0 records` and, with `-o spec.json`, wrote a
 valid, importable, empty OpenAPI document. That reads as "this host has no API": a claim about the
 target, manufactured from a typo.
 """
@@ -141,7 +141,7 @@ def test_the_reason_is_the_error_line_not_nodes_version_banner():
 
 def test_chunk_map_raises_when_the_extractor_cannot_run(tmp_path, monkeypatch):
     """A non-editable install puts the JS where no `node_modules` is above it, so Babel cannot load.
-    This returned `{}` with an empty stderr and exit 0 — a bundle that declares no chunks."""
+    This returned `{}` with an empty stderr and exit 0, a bundle that declares no chunks."""
     import shutil
 
     import jshound

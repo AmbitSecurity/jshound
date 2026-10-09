@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""sveltekitmanifest.py — recover a SvelteKit app's route table from its client entry module.
+"""sveltekitmanifest.py: recover a SvelteKit app's route table from its client entry module.
 
     sveltekitmanifest.py https://svelte.dev --json routes.json
 
 SvelteKit routes on the client, so the client has to be told every route, and the entry module ships
-the table as a literal. Unlike Next and Nuxt there is no manifest FILE — the table is inside the
-JavaScript, minified to an export alias (`export { s as dictionary }`) — so it is read by parsing the
+the table as a literal. Unlike Next and Nuxt there is no manifest FILE, the table is inside the
+JavaScript, minified to an export alias (`export { s as dictionary }`), so it is read by parsing the
 module and resolving the alias. See `js/sveltekit.js`; the export name is the only stable handle, which
 is what makes this survive minification.
 
@@ -27,7 +27,7 @@ LIMITS, MEASURED:
     reading the code that calls them, like any other endpoint.
   - `server_loads` is reported raw. It is a list of NODE indices, and mapping them back to routes means
     relying on the sign and nesting in the dictionary's values (`[5]`, `[-12]`, `[-7, [2]]`), which is
-    not a documented contract — so no per-route "runs a server load" claim is made from it.
+    not a documented contract, so no per-route "runs a server load" claim is made from it.
 """
 import argparse
 import json
@@ -51,7 +51,7 @@ def entry_url(doc_url, html):
     the four known trailing segments leaves `base`, which is what routes are relative to.
 
     Inline-script imports are searched as well as tag attributes, because SvelteKit's bootstrap is an
-    inline `import("./_app/immutable/entry/app.X.js")` and nothing links the entry as a `src` — reading
+    inline `import("./_app/immutable/entry/app.X.js")` and nothing links the entry as a `src`, reading
     attributes alone reported sveltesociety.dev, okupter.com, realworld.svelte.dev and sveltelab.dev as
     "not a SvelteKit app" when all four are one.
     """

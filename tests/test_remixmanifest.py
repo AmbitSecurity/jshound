@@ -1,6 +1,6 @@
 """Remix and React Router v7 route manifests.
 
-`__remixManifest` was already a fingerprint marker here — proof the app is Remix — while nothing read
+`__remixManifest` was already a fingerprint marker here, proof the app is Remix, while nothing read
 anything out of it. The part that needed care is that the two versions use DIFFERENT data protocols,
 and guessing wrong produces a 200 that carries nothing.
 """
@@ -40,7 +40,7 @@ def v7():
 def test_an_inlined_manifest_beside_esm_imports_is_read(v2):
     """The fixture carries `import * as route0 from "..."` above the assignment, as Remix ships it.
     Running the script in a vm throws `Cannot use import statement outside a module` before reaching
-    the assignment — the first version of this recovered nothing for that reason, so only the
+    the assignment, the first version of this recovered nothing for that reason, so only the
     assigned expression is evaluated."""
     assert v2["flavour"] == "remix"
     assert v2["version"] == "9c45bfe8"
@@ -83,7 +83,7 @@ def test_a_submission_target_is_flagged(v7):
 
 def test_v2_uses_a_query_carrying_the_route_id(v2):
     """Verified on hydrogen.shop: `?_data=root` answers 200 with `text/remix-deferred`, and an
-    INVENTED id answers 403 — which is what makes the id-from-the-manifest approach safe. A route
+    INVENTED id answers 403, which is what makes the id-from-the-manifest approach safe. A route
     list alone would not do, because the id and the URL path are different strings."""
     got = {(e["template"], e["query"]) for e in v2["data_endpoints"]}
     assert ("/", "_data=root") in got
@@ -92,8 +92,8 @@ def test_v2_uses_a_query_carrying_the_route_id(v2):
 
 def test_v7_uses_a_path_suffix_and_not_the_query(v7):
     """Verified on reactrouter.com: `/home.data` answers 200 with 33,582 bytes and
-    `/invented-route.data` answers 404. On v7, `?_data=root` answers 200 with text/html — the
-    ordinary page — so emitting the v2 form here would look like a hit and carry nothing."""
+    `/invented-route.data` answers 404. On v7, `?_data=root` answers 200 with text/html, the
+    ordinary page, so emitting the v2 form here would look like a hit and carry nothing."""
     got = {e["template"] for e in v7["data_endpoints"]}
     assert "/home.data" in got
     assert "/.data" in got
@@ -107,7 +107,7 @@ def test_only_routes_with_a_loader_get_a_data_endpoint(v2):
 
 def test_pathless_layout_routes_do_not_duplicate_a_data_url(v7):
     """`root` and any pathless layout both resolve to `/`. Routes are kept per id because the id is
-    the provenance, but a data endpoint is a URL — reactrouter.com emitted `/.data` three times
+    the provenance, but a data endpoint is a URL, reactrouter.com emitted `/.data` three times
     before these were deduplicated."""
     urls = [e["template"] for e in v7["data_endpoints"]]
     assert len(urls) == len(set(urls)), urls

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""truth.py — score a tool against the application's OWN published API spec.
+"""truth.py: score a tool against the application's OWN published API spec.
 
     python bench/truth.py grafana-spec.json --tool jshound=bm.json --tool linkfinder=lf.json
 
 Comparing extractors to each other only ever answers "who printed more lines". Several large
-open-source applications publish an OpenAPI/Swagger document describing their real API — Grafana
+open-source applications publish an OpenAPI/Swagger document describing their real API, Grafana
 ships `public/api-merged.json` (207 paths, 314 operations), Gitea ships
-`templates/swagger/v1_json.tmpl` — and a self-hosted instance of one of those turns the comparison
+`templates/swagger/v1_json.tmpl`, and a self-hosted instance of one of those turns the comparison
 into arithmetic:
 
     precision   of what the tool reported, how much is a real endpoint
@@ -14,13 +14,13 @@ into arithmetic:
     undocumented  real-looking API paths the tool found that the spec does NOT contain
 
 A SPEC IS A RULER, NOT A PRIZE. Recovering an endpoint somebody already documented is worth nothing
-to anyone doing reconnaissance — they could read the docs. The spec is here because it is the only
+to anyone doing reconnaissance, they could read the docs. The spec is here because it is the only
 way to prove the output is not invented: that the paths exist and, uniquely, that the VERBS are
 right. No count can establish that, which is why every tool in this category is compared on counts.
 
 So the number to read last is recall and the number to read first is `undocumented`. On Grafana the
 published spec holds 206 paths while the shipped JavaScript yields 248 further `/api/*` paths that
-are in no spec at all — that gap is the product. Recall also carries a caveat worth stating: a spec
+are in no spec at all, that gap is the product. Recall also carries a caveat worth stating: a spec
 covers the whole API while a web client only calls the part it needs, so no tool reading JavaScript
 can reach 100%.
 
@@ -38,7 +38,7 @@ from jshound.export.paths import looks_like_source_file, normalize   # noqa: E40
 
 _PH = re.compile(r"\{[^{}]*\}")
 # Deliberately narrower than the display buckets in classify.py. `/admin` and `/auth` are UI routes
-# at least as often as API ones — Grafana's `/admin/authentication/ldap` is a settings PAGE — and
+# at least as often as API ones, Grafana's `/admin/authentication/ldap` is a settings PAGE, and
 # counting those as undiscovered API surface is how an impressive number stops being true.
 _API_SHAPED = re.compile(r"^/(api|graphql|gql|rest|rpc|_api)\b"
                          r"|^/v\d+/"
@@ -70,7 +70,7 @@ def canon(p, base=""):
 
 # ONLY THE SPEC IS RELATIVE TO basePath. A swagger document lists `/access-control/roles` and declares
 # basePath `/api`; a tool reads `/api/access-control/roles` straight out of the bundle, already
-# absolute. Prefixing both sides turned every non-API path the tool found into a fake API path —
+# absolute. Prefixing both sides turned every non-API path the tool found into a fake API path,
 # `/.git` was scored as `/api/.git` and counted as undocumented surface. Spec side only.
 def canon_tool(p):
     return canon(p, "")
@@ -119,8 +119,8 @@ def load_tool(path, base=""):   # noqa: ARG001 - base intentionally unused; see 
 
 
 def score(spec, tool, base=""):
-    """A client routinely stores the API prefix once and calls the rest relative to it —
-    `backendSrv.get("/access-control/roles")` with `/api` prepended at request time — so the bundle
+    """A client routinely stores the API prefix once and calls the rest relative to it,
+    `backendSrv.get("/access-control/roles")` with `/api` prepended at request time, so the bundle
     holds the unprefixed form while the spec declares the prefixed one. Neither side is wrong, and
     insisting on one spelling scored 114 real matches as misses. A tool path counts as a hit if
     either spelling is declared; `undocumented` requires BOTH to be absent, so the prefix ambiguity
@@ -184,7 +184,7 @@ def main():
               f"{s['recall']:>8.0%}{ma:>9}{s['undocumented']:>14}")
     for name, (_t, s) in rows.items():
         if s["undocumented_sample"]:
-            print(f"\n{name} — API paths in NO spec (sample):")
+            print(f"\n{name}, API paths in NO spec (sample):")
             for p in s["undocumented_sample"][:6]:
                 print(f"    {p}")
 

@@ -2,7 +2,7 @@
 
 The reason this file is mostly about resolution is that the table is reached through a minified export
 alias, and the first version resolved it by searching the module for the local name. Minified modules
-reuse one-letter names in different scopes, so that found whichever declaration came first — on
+reuse one-letter names in different scopes, so that found whichever declaration came first, on
 shadcn-svelte it walked to a Svelte template fragment and reported a route table that was not one.
 Scope-correct resolution is the fix, and a structural check on the result is the backstop.
 """
@@ -57,7 +57,7 @@ def test_an_export_reached_through_a_wrapper_call_still_resolves(out):
 
 def test_a_dictionary_that_resolves_to_a_non_route_object_is_refused():
     """The backstop. If resolution lands somewhere plausible but wrong, the answer is "no route table",
-    not a list of invented routes — a fabricated route costs more here than a missed one."""
+    not a list of invented routes, a fabricated route costs more here than a missed one."""
     out = run("app.wrongobject.js")
     assert out["routes"] == []
     assert out["errors"] and "not a route table" in out["errors"][0]["error"]
@@ -92,7 +92,7 @@ def test_a_constrained_segment_reports_its_matcher(out):
 
 
 def test_node_indices_are_flattened_and_unsigned(out):
-    """Real dictionary values are `[5]`, `[-12]` and `[-7, [2]]` — nested and signed. The sign and
+    """Real dictionary values are `[5]`, `[-12]` and `[-7, [2]]`, nested and signed. The sign and
     nesting are not a documented contract, so the indices are read and nothing is concluded from how
     they were written."""
     by_t = {r["template"]: r["nodes"] for r in out["routes"]}

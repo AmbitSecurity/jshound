@@ -2,7 +2,7 @@
 
 Only the first URL in a run is the user's. Script srcs, `import()` specifiers and every chunk URL
 built out of a bundle's own runtime are named by the TARGET, and a chunk URL starting with `http` was
-fetched verbatim — so a page naming the cloud metadata endpoint as one of its chunks had it read and
+fetched verbatim, so a page naming the cloud metadata endpoint as one of its chunks had it read and
 written into the corpus, from inside whoever's network ran the tool.
 """
 import threading
@@ -19,7 +19,7 @@ DOC = ('<script src="https://app.example.com/main.js"></script>'
 
 @pytest.fixture
 def asked(monkeypatch):
-    """Every URL the fetcher tried, with the network replaced — and the resolver with it, so these
+    """Every URL the fetcher tried, with the network replaced, and the resolver with it, so these
     assert the SCOPE RULE rather than how long an NXDOMAIN takes to come back. What
     `host_is_private` itself classifies is asserted separately, on literal addresses."""
     seen = []

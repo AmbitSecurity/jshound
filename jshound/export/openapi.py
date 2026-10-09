@@ -1,13 +1,13 @@
-"""openapi.py — emit the extracted contracts as an OpenAPI 3.1 document.
+"""openapi.py: emit the extracted contracts as an OpenAPI 3.1 document.
 
 OpenAPI is the natural target because it is the only common format that carries what this tool
 actually recovers. A URL list loses the method; a HAR loses the schema; OpenAPI holds method, path,
-path parameters, query parameters, content type and a typed request body at once — which is the whole
+path parameters, query parameters, content type and a typed request body at once, which is the whole
 output, not a projection of it. Burp's OpenAPI Parser and Caido both ingest it, so the spec is also
 the shortest path from a bundle to a proxy's site map.
 
 PROVENANCE SURVIVES THE EXPORT. Every operation carries `x-jshound`, which records the page that
-loaded the code, the file it came from, the sink that made the call, and — the field that matters —
+loaded the code, the file it came from, the sink that made the call, and, the field that matters,
 whether the path or body was fully resolved. An unresolved path is a SHAPE, and a consumer that
 replays it without substituting a value will request a literal `{param1}`. Dropping that distinction
 to make the spec look cleaner would be the one edit that makes this output dangerous.
@@ -23,7 +23,7 @@ _JSON = "application/json"
 
 
 # JSON Schema's own type vocabulary. Anything else the extractor puts in a value slot is PROVENANCE
-# — `computed:trim`, `state:href`, `file-upload` — which says where the value comes from, not what
+#, `computed:trim`, `state:href`, `file-upload`, which says where the value comes from, not what
 # type it is. Writing those into `type` produces a document that is not valid OpenAPI, and Burp's
 # parser is entitled to reject the whole file over one of them.
 _JSON_TYPES = {"string", "number", "integer", "boolean", "object", "array", "null"}
@@ -68,14 +68,14 @@ def _schema_from(rec, zod_by_name):
 
 
 # An event handler is not an API operation. The enclosing function name is usually the client's own
-# method (`subscribe`, `getUser`) and makes a far better operationId than anything synthesized — but in
+# method (`subscribe`, `getUser`) and makes a far better operationId than anything synthesized, but in
 # component code it is just as often `onClick` or `handleSubmit`, which says nothing and collides.
 _NOT_AN_OP = re.compile(r"^(on[A-Z]|handle[A-Z]|use[A-Z]|render[A-Z]?|componentDid|_)|^(cb|fn|f)$")
 
 
 def _operation_id(rec, method, path, used):
     """A unique, meaningful operationId. OpenAPI requires global uniqueness and Burp's parser enforces
-    it — two operations called `onClick` is a document that fails to import at all."""
+    it, two operations called `onClick` is a document that fails to import at all."""
     name = rec.get("op")
     if not name or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(name)) or _NOT_AN_OP.match(str(name)):
         name = f"{method}_{path}".replace("/", "_").replace("{", "").replace("}", "")
@@ -150,7 +150,7 @@ def build(records, title="Recovered API", version="0.0.0"):
         # REQUEST HEADERS ARE TESTABLE SURFACE and belong in the spec, not only in a note. Grafana
         # sends x-grafana-alerting-datasource-uid and friends on specific operations; a reader
         # importing the document should see them on the operation that sends them. The names come
-        # through whether or not the value resolved — a name with no value is still what you have
+        # through whether or not the value resolved, a name with no value is still what you have
         # to send. content-type is skipped: it is carried by requestBody's media type already.
         rh = rec.get("req_headers")
         hnames = list(rh) if isinstance(rh, (list, tuple, dict)) else []

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""approutes.py — enumerate a Next.js App Router app's routes, and close over its chunks.
+"""approutes.py: enumerate a Next.js App Router app's routes, and close over its chunks.
 
     approutes.py https://app.example.com --out chunks.json [--max-rounds 5]
 
 A Pages-Router/webpack app writes its lazy-chunk URLs into `__webpack_require__.u`, and `chunkmap.js`
-recovers them by evaluating it. An App Router app has no such table — measured, `chunkmap.js` recovers 3
-URLs from a 1,043-file corpus — because Next generates routing from the FILESYSTEM. There is no
+recovers them by evaluating it. An App Router app has no such table, measured, `chunkmap.js` recovers 3
+URLs from a 1,043-file corpus, because Next generates routing from the FILESYSTEM. There is no
 `createBrowserRouter([...])` anywhere in the bundle to find, which is why static route extraction returned
 9 routes for an app that plainly has hundreds.
 
@@ -16,7 +16,7 @@ it from the document: every route, named parameters intact, plus the chunk list 
 are declarations, not inferences, so `nextmanifest.py` is tried first and its routes are reported as
 `declared`. On Supabase's dashboard that is 293 routes and 436 chunks where this file alone found 0.
 
-CHUNK PATHS, when there is not — which is every App Router build, since those serve no manifest. The
+CHUNK PATHS, when there is not, which is every App Router build, since those serve no manifest. The
 route table is still there; it is just spelled in the chunk PATHS:
 
     app/[locale]/(auth-layout)/login/page-b13a8147.js        ->  /login
@@ -33,7 +33,7 @@ the declared one so a zero here is visible rather than averaged away.
 
 That makes enumeration a FIXPOINT rather than a lookup: each page you fetch names the chunks for its own
 subtree, those chunk paths name further routes, and you stop when a round adds nothing. This is what
-closes the gap that link-following leaves — /inbox and /account/settings are not linked from an anonymous
+closes the gap that link-following leaves, /inbox and /account/settings are not linked from an anonymous
 homepage, so a crawler that only follows <a href> can never reach the code behind them.
 """
 import argparse, json, os, re, sys, urllib.parse
@@ -42,7 +42,7 @@ from concurrent.futures import ThreadPoolExecutor
 from jshound.nodeenv import node_env
 
 # Next serves its chunk directory at more than one path. webpack builds put it at
-# `static/chunks/`, Turbopack at `static/immutable/chunks/` — and keying on the literal
+# `static/chunks/`, Turbopack at `static/immutable/chunks/`, and keying on the literal
 # `static/chunks/` found ZERO chunks on every Turbopack target, which is now Next's default.
 # Matched on the `chunks/` directory under a `static/` ancestor instead of on one fixed spelling.
 CHUNK = re.compile(r'static/(?:[A-Za-z0-9_-]+/)*chunks/(?:[A-Za-z0-9%_()\[\].,$~@-]+/)*[A-Za-z0-9%_()\[\].,$~@-]+\.js')
@@ -131,13 +131,13 @@ def main():
         return set()
 
     # THE SEED PROBLEM. Fetching "/" names only the home route's own app chunks, so deriving routes from
-    # chunk paths alone converges immediately at one route — there is nothing to expand from. The seed has
+    # chunk paths alone converges immediately at one route, there is nothing to expand from. The seed has
     # to come from the code, and it does: the chunks the homepage loads contain the app's own path literals
     # (/account/settings, /dashboard/inbox, /dashboard/ledger/payouts). Those are strings the developers
     # wrote, not guesses, and each one visited names a further subtree's chunks.
     #
-    # So the loop alternates two sources — path literals mined from fetched chunks, and routes decoded from
-    # app/ chunk paths — until neither produces anything new.
+    # So the loop alternates two sources, path literals mined from fetched chunks, and routes decoded from
+    # app/ chunk paths, until neither produces anything new.
     ROUTEISH = re.compile(r"^/[a-z0-9][a-z0-9\-_/]{1,60}$", re.I)
     seen_chunk_urls, literal_routes = set(), set()
 
@@ -152,7 +152,7 @@ def main():
         files = []
         def dl(c):
             # `asset_base` comes from the manifest's own URL, so it is right even when the app serves
-            # its bundle from a CDN under an `assetPrefix` — where both origin-relative guesses 404.
+            # its bundle from a CDN under an `assetPrefix`, where both origin-relative guesses 404.
             cands = ([urllib.parse.urljoin(asset_base, c)] if asset_base else []) + [
                 a.base.rstrip("/") + "/_next/" + c, a.base.rstrip("/") + "/" + c]
             for u in cands:

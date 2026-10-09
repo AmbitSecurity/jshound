@@ -2,7 +2,7 @@
 
 The sibling test that promotes a path literal to a client-side route is "the object declaring this
 URL also names the view that renders it". A link table sitting beside a component satisfies it, so a
-testimonial wall of tweets read as routes — 51 of the 53 reported for supabase.com/dashboard were
+testimonial wall of tweets read as routes, 51 of the 53 reported for supabase.com/dashboard were
 `https://x.com/<user>/status/<id>`. This app's router cannot render x.com.
 
 The URL stays in the corpus as a path literal, because it IS in the bundle; what it loses is the
@@ -34,7 +34,7 @@ def test_an_absolute_url_is_never_a_client_side_route():
 def test_the_tweets_are_demoted_not_deleted():
     """Demoted to a path literal, not dropped: the URL IS in the bundle and a reader may still want
     it. Run WITHOUT `--host`, because with one these are attributed to x.com and filtered out
-    entirely — two separate mechanisms, and this asserts the demotion rather than the filter."""
+    entirely, two separate mechanisms, and this asserts the demotion rather than the filter."""
     r = _lib.analyze(FIX)
     assert r.returncode == 0, r.stderr[-900:]
     recs = json.loads(r.stdout)

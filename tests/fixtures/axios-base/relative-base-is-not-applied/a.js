@@ -6,7 +6,7 @@
 // appeared, gluing Grafana's k8s-style resource base onto its legacy REST API, and four correct
 // records were replaced by wrong ones. The base reached those calls because `applyBase` looks a
 // client up by receiver NAME, and a minified name collides across modules. An origin value masks
-// that — a wrong origin is conspicuous — while a relative one yields a real-looking route pointed at
+// that, a wrong origin is conspicuous, while a relative one yields a real-looking route pointed at
 // the wrong API. Attribution by the receiver's BINDING is the fix; until then, origin-only.
 import axios from "axios";
 const client = axios.create({ baseURL: "/api/v2" });

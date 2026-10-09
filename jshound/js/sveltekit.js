@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* sveltekit.js — recover a SvelteKit app's route table from its client entry module.
+/* sveltekit.js, recover a SvelteKit app's route table from its client entry module.
  *
  *     node sveltekit.js app.Dy3uvAgJ.js
  *
@@ -10,7 +10,7 @@
  *     export { s as dictionary, o as server_loads, i as matchers, a as nodes };
  *
  * so the local name is meaningless and only the EXPORT NAME is stable. This resolves the export alias
- * to its local binding and reads the object there, which is why it survives minification — there is no
+ * to its local binding and reads the object there, which is why it survives minification, there is no
  * identifier, path shape or object literal being matched on, just the module's own export contract.
  *
  * Nothing is evaluated: the table is a literal, so parsing it is enough. `server_loads` is an array of
@@ -18,8 +18,8 @@
  * routes run a server `load` is an intersection of the two.
  */
 const fs = require("fs");
-const parser = require("@babel/parser");
-const traverse = require("@babel/traverse").default;
+const parser = require("./babel.js").parser;
+const traverse = require("./babel.js").traverse.default;
 
 /* Route ids are filesystem-shaped, and the mapping to a URL is SvelteKit's own:
  *   (group)                     organisational, contributes no segment
@@ -60,7 +60,7 @@ function matchersOf(id) {
  * hold `[5]`, `[-12]` and `[-7, [2]]`, nesting the layout indices and signing some of them. The sign
  * and the nesting encode something about layouts and error boundaries that is NOT documented as a
  * stable contract, so this reads the indices and deliberately draws no conclusion from how they were
- * written — abs() and a recursive walk give the same node set under every spelling seen. */
+ * written, abs() and a recursive walk give the same node set under every spelling seen. */
 function nodeIndices(node) {
   const out = [];
   (function walk(n) {
@@ -72,12 +72,12 @@ function nodeIndices(node) {
   return [...new Set(out)].sort((a, b) => a - b);
 }
 
-/* THE EXPORT'S BINDING, RESOLVED THROUGH SCOPE — not by searching the module for the name.
+/* THE EXPORT'S BINDING, RESOLVED THROUGH SCOPE, not by searching the module for the name.
  *
  * This is the whole correctness story of this file. A minified module reuses one-letter names in
  * different scopes, so looking up "the declarator called R" finds whichever came first in the file.
  * On shadcn-svelte that walked `dictionary = R` to an unrelated `L`, then to `N`, and landed on a
- * Svelte template fragment — a route table that was not a route table. Babel already knows which
+ * Svelte template fragment, a route table that was not a route table. Babel already knows which
  * declaration an identifier refers to; asking its scope is both shorter and the only answer that is
  * right under minification.
  *
@@ -135,7 +135,7 @@ function resolveExports(ast, wanted) {
 }
 
 /* A route dictionary has route ids for keys. Checked before anything is reported, so a resolution
- * that went somewhere plausible but wrong produces "no dictionary" rather than invented routes —
+ * that went somewhere plausible but wrong produces "no dictionary" rather than invented routes,
  * the asymmetry that matters here is that a fabricated route costs more than a missed one. */
 function looksLikeDictionary(obj) {
   const keys = (obj.properties || []).map(pr =>
@@ -172,7 +172,7 @@ function main() {
     }
 
     // Raw, and reported as such. `server_loads` is a list of NODE indices, and mapping those back to
-    // routes means relying on the dictionary's sign/nesting encoding — which is not a documented
+    // routes means relying on the dictionary's sign/nesting encoding, which is not a documented
     // contract, so no per-route "runs a server load" claim is made from it here.
     for (const n of nodeIndices(found.get("server_loads"))) out.server_load_nodes.push(n);
 

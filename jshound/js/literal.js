@@ -1,4 +1,4 @@
-/* literal.js — read a data literal out of a target's JavaScript without running any of it.
+/* literal.js, read a data literal out of a target's JavaScript without running any of it.
  *
  * A build manifest is data that ships as a program:
  *
@@ -7,7 +7,7 @@
  *     self.__SSG_MANIFEST = new Set(["/blog/[...slug]"]);
  *     window.__remixManifest = {"routes":{"root":{...}},"version":"..."};
  *
- * `JSON.parse` cannot read any of that — it is an assignment, and `new Set(...)` is not JSON — so the
+ * `JSON.parse` cannot read any of that, it is an assignment, and `new Set(...)` is not JSON, so the
  * first version of these readers EVALUATED the file in a `vm` context. That was the wrong tool. A vm
  * context is a separate realm, NOT a sandbox, and two escapes out of it were reproduced against those
  * versions:
@@ -16,23 +16,23 @@
  *      inside the context `self.constructor.constructor` is our `Function` and
  *      `Function("return process")()` returns the real `process`.
  *   2. `Object.create(null)` closes that, but the value handed back is still the target's, so
- *      `{ get routes() { ... } }` runs that getter when our code reads `.routes` — after the timeout,
+ *      `{ get routes() { ... } }` runs that getter when our code reads `.routes`, after the timeout,
  *      on a stack that reaches our frames. `Error.prepareStackTrace` returning the CallSite array then
  *      gives `frames[i].getFunction()`, one of our own functions, and `.constructor("return process")()`
  *      follows from there.
  *
  * So nothing is executed. Babel parses the file, the right-hand side of the assignment is walked as
- * data, and anything that is not data becomes `undefined` rather than a guess — the same discipline
+ * data, and anything that is not data becomes `undefined` rather than a guess, the same discipline
  * `chunkmap.js` uses on `__webpack_require__.u`. A manifest can still be wrong about its own routes,
  * which is what `precision` measures, but reading it cannot run anything here.
  */
-const parser = require("@babel/parser");
-const traverse = require("@babel/traverse").default;
+const parser = require("./babel.js").parser;
+const traverse = require("./babel.js").traverse.default;
 
 const MAX_DEPTH = 24;
 const MAX_ITEMS = 50000;
 
-/* `undefined` means "not data" — the caller drops it rather than recording a guess. A literal `null`
+/* `undefined` means "not data", the caller drops it rather than recording a guess. A literal `null`
  * is distinct and comes back as `null`. */
 function evalLiteral(node, env, depth) {
   if (!node || depth > MAX_DEPTH) return undefined;
@@ -141,7 +141,7 @@ function evalLiteral(node, env, depth) {
 /* Next shrinks a large manifest by hoisting repeated chunk names into the parameters of an
  * immediately-invoked function: `self.__BUILD_MANIFEST = function(a, b) { return {"/": [a, b]} }("x.js",
  * "y.js")`. Binding the arguments to the parameters and reading the returned literal is still not
- * execution — a body containing any statement other than the `return` is refused outright. */
+ * execution, a body containing any statement other than the `return` is refused outright. */
 function callInline(node, env, depth) {
   let fn = node.callee;
   while (fn && fn.type === "ParenthesizedExpression") fn = fn.expression;

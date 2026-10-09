@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""regress_diff.py — diff two tagged `bench/regress.sh` runs record by record.
+"""regress_diff.py: diff two tagged `bench/regress.sh` runs record by record.
 
     python3 bench/regress_diff.py before after
 

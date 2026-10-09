@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""fromhar.py — turn a HAR export into a bodies directory `analyze` can read.
+"""fromhar.py: turn a HAR export into a bodies directory `analyze` can read.
 
     jshound from-har session.har -o ./bodies
 
 The honest answer to every target `fetch` cannot reach. `fetch` does not run JavaScript, so an app
 that injects its own script tags, or sits behind a login, or needs a real browser to get past a WAF,
-gives up almost nothing — Asana ships no `<script src>` at all. Rather than grow a browser inside
+gives up almost nothing, Asana ships no `<script src>` at all. Rather than grow a browser inside
 this tool, take the traffic from whatever already did the work:
 
     Chrome/Firefox DevTools -> Network -> right-click -> Save all as HAR
@@ -30,13 +30,13 @@ _JS = ("javascript", "ecmascript", "text/jsx")
 _HTML = ("text/html", "application/xhtml")
 
 # CAPTURED RESPONSE BODIES, which `analyze`'s `json_records()` exists to mine and had no way of
-# receiving. That function is explicit about its value — "61 paths on one scope and 53 on another that
-# no other channel produced" — and it reads files ending `.json` or `.rsc`. Nothing in this repo wrote
+# receiving. That function is explicit about its value, "61 paths on one scope and 53 on another that
+# no other channel produced", and it reads files ending `.json` or `.rsc`. Nothing in this repo wrote
 # one: the fetcher only saves scripts, and this importer accepted only JS and HTML, so a HAR's API
 # responses were thrown away at the door.
 #
 # That is the wrong thing to drop here of all places. A HAR is how you reach an application behind a
-# login, and a logged-in session's HAR is mostly API responses — the surface that matters most and the
+# login, and a logged-in session's HAR is mostly API responses, the surface that matters most and the
 # only kind this project has no measured numbers for. These are responses RECEIVED, so reading one
 # infers nothing.
 #

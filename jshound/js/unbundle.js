@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-/* unbundle.js — turn a shipped webpack bundle back into a module TREE an agent can read.
+/* unbundle.js, turn a shipped webpack bundle back into a module TREE an agent can read.
  *
  * A bundler splits code and then has to link it again, and it writes that linkage into the output: numeric
  * module ids, an export table (`r.d(exports,{Public:()=>local})`) and imports by id (`var o = r(56502)`). Nothing
- * about that is lossy. What minification destroyed is LOCAL names; what it kept — module boundaries, the import
- * graph, and every exported and property name, because those are the contract — is exactly the structure needed
+ * about that is lossy. What minification destroyed is LOCAL names; what it kept, module boundaries, the import
+ * graph, and every exported and property name, because those are the contract, is exactly the structure needed
  * to navigate the app instead of grepping 26 MB of one line.
  *
  * Recognise the module map by SHAPE (an object whose keys are numeric ids and whose values are functions of
@@ -13,9 +13,9 @@
  *
  *   node js/unbundle.js OUTDIR file.js [file2.js …]
  */
-const { parse } = require("@babel/parser");
-const traverse = require("@babel/traverse").default;
-const generate = require("@babel/generator").default;
+const { parse } = require("./babel.js").parser;
+const traverse = require("./babel.js").traverse.default;
+const generate = require("./babel.js").generator.default;
 const fs = require("fs"), path = require("path");
 
 const outdir = process.argv[2];
@@ -27,15 +27,15 @@ if (!outdir || !inputs.length) { console.error("usage: unbundle.js OUTDIR file.j
 // Two things made this miss almost everything it was pointed at, both measured:
 //
 //   * It demanded EVERY property conform and returned false on the first that did not. A webpack
-//     map holds hundreds of entries and one outlier — a getter, a non-function value, a four-arg
-//     factory — threw the whole registry away. GitLab's 1.4 MB bundle yielded 3 modules.
+//     map holds hundreds of entries and one outlier, a getter, a non-function value, a four-arg
+//     factory, threw the whole registry away. GitLab's 1.4 MB bundle yielded 3 modules.
 //   * It demanded NUMERIC ids. Builds using `moduleIds: "named"`, and anything pnpm-resolved, key
 //     the map by source path instead: Element ships
 //     `"../../node_modules/.pnpm/matrix-js-sdk@43.0.0/.../logger.ts"` and came back with 0 imports
 //     and 0 exports from 2.6 MB.
 //
 // So: a key is an id if it is numeric OR looks like a module path, and the map is a registry when
-// most of it conforms rather than all of it. The proportion is what keeps this honest — an
+// most of it conforms rather than all of it. The proportion is what keeps this honest, an
 // arbitrary object of functions does not reach 80% id-shaped keys, and the floor on count stops a
 // two-property object from qualifying on a coincidence.
 const NUMERIC_ID = /^\d{1,7}$/;
@@ -51,12 +51,12 @@ const PATH_ID = /[\/\\]|\.(js|mjs|cjs|jsx|ts|tsx|vue|svelte)$/i;
 //   deterministic  {"++os": …, "+18S": …, "/23t": …}           4-char opaque hashes
 //
 // GitLab's 1.4 MB bundle is the third kind: 849 entries, every value a function, exactly one key
-// numeric — so a key-format test rejected 848 real modules. Element is the second kind and returned
+// numeric, so a key-format test rejected 848 real modules. Element is the second kind and returned
 // 0 imports and 0 exports from 2.6 MB.
 //
 // What does not vary is the shape: a registry is an object whose values are nearly all small-arity
 // functions, keyed by ids rather than by meaningful names. Uniformly short keys are the tell for the
-// hashed case — a hand-written object of methods has names of varied, meaningful length — and the
+// hashed case, a hand-written object of methods has names of varied, meaningful length, and the
 // floor on property count is what stops a small object of callbacks qualifying by coincidence.
 const isNamedId = (k) => NUMERIC_ID.test(k) || (k.length >= 4 && k.length <= 400 && PATH_ID.test(k));
 
@@ -127,7 +127,7 @@ for (const file of inputs) {
         // An object of numeric keys mapping to functions is NOT enough. Vite ships lookup tables of exactly that
         // shape, and accepting them left `mods` non-empty on a Vite app, so the ESM path never ran and one API
         // produced a 2 MB tree from a 14 MB cache with zero endpoints in it. A webpack module is one whose body
-        // USES the require it was handed — an export table or an import call. Behaviour, not shape.
+        // USES the require it was handed, an export table or an import call. Behaviour, not shape.
         if (rec.exports.length || rec.imports.length) { mods.set(id, rec); packed.add(file); }
       }
       p.skip();
@@ -162,9 +162,9 @@ const nameOf = (code) => {
 
 // ESM FALLBACK. Only webpack packs modules into a numeric-id map; Vite, rolldown and esbuild ship real ES
 // modules, one chunk per file, and the import graph is written as `import{x}from"./other.js"`. For those the
-// unbundling is already done — the work is just to read the graph off the imports and keep the same shape of
+// unbundling is already done, the work is just to read the graph off the imports and keep the same shape of
 // output, so everything downstream (naming, reachability) does not care which bundler built the app.
-// NOT either/or. A cache routinely holds a third-party bundle alongside the app's own chunks — one API ships
+// NOT either/or. A cache routinely holds a third-party bundle alongside the app's own chunks, one API ships
 // Stripe's SDK, which is webpack-built, so `mods` came back non-empty and the ESM path never ran for the Vite
 // chunks that are the actual application. Whether a FILE was packed is a per-file fact, so treat it that way and
 // send everything else through the ESM reader.
@@ -174,7 +174,7 @@ const nameOf = (code) => {
   // (`0042.js`), so the graph has to go through the index recording which URL each file came from.
   const urlToFile = new Map();
   // url -> saved file. Two formats, and the FIRST of them has never existed: `_index.json` is read here
-  // and in specs.py and is written by nothing — 0 of 23 workspaces on disk contain one. Wrapped in a
+  // and in specs.py and is written by nothing, 0 of 23 workspaces on disk contain one. Wrapped in a
   // silent catch, so the capability has simply never worked and never said so. The crawler records the
   // same mapping in `_origin.jsonl` ({f: savedName, u: sourceUrl}), which is the file that actually
   // exists; the same coupling to a filename the writer stopped producing cost the whole extractor its
@@ -231,12 +231,12 @@ for (const [id, m] of mods) {
   const fname = nm ? `${id}.${nm}.js` : `${id}.js`;
   // A MODULE ID CAN CONTAIN A PATH SEPARATOR, in both of the shapes that produce one: `named` ids
   // are source paths (`../../node_modules/.pnpm/…/logger.ts`) and `deterministic` ids are base64,
-  // whose alphabet includes `/` — GitLab ships a module called `0/Qg`. Writing that straight to
+  // whose alphabet includes `/`, GitLab ships a module called `0/Qg`. Writing that straight to
   // disk threw ENOENT and killed the whole run after the modules before it had been written, so the
   // output looked merely small rather than aborted. Create the parent, and keep the structure: for
   // a path-keyed bundle it reconstructs the source tree, which is the point of this tool.
-  // A path id routinely starts outside the build root — `../../node_modules/.pnpm/x@1/src/logger.ts`
-  // is a normal webpack `named` id — and writing it verbatim would place files anywhere on disk the
+  // A path id routinely starts outside the build root, `../../node_modules/.pnpm/x@1/src/logger.ts`
+  // is a normal webpack `named` id, and writing it verbatim would place files anywhere on disk the
   // bundle asked for. Dropping those was the first fix and it was wrong: it silently lost real
   // modules. Flatten the escape instead, so the module is recovered AND stays inside the output.
   const safeName = fname.replace(/^(\.\.[\/\\])+/, "").replace(/(^|[\/\\])\.\.(?=[\/\\]|$)/g, "$1__");
@@ -248,7 +248,7 @@ for (const [id, m] of mods) {
   index.push({ id, file: safeName, name: nm, bytes: m.code.length,
                exports: m.exports, imports: m.imports });
 }
-// who imports whom — the thing that makes the tree navigable
+// who imports whom, the thing that makes the tree navigable
 const importers = {};
 for (const m of index) for (const i of m.imports) (importers[i] ||= []).push(m.id);
 for (const m of index) m.imported_by = importers[m.id] || [];
@@ -261,12 +261,12 @@ const hubs = [...index].sort((a, b) => b.imported_by.length - a.imported_by.leng
 fs.writeFileSync(path.join(outdir, "README.md"), [
   `# recovered module tree`, ``,
   `${index.length} modules, ${named.length} named from their own string constants.`,
-  `Names come from route paths and SCREAMING_SNAKE constants — minification destroys local identifiers but`,
+  `Names come from route paths and SCREAMING_SNAKE constants: minification destroys local identifiers but`,
   `not string literals, and the literals are what carry meaning. Unnamed modules are almost all vendor code.`,
   ``, `## application modules (largest first)`, ``,
-  ...named.slice(0, 60).map((m) => `- \`modules/${m.file}\` — ${m.bytes} bytes, ${m.exports.length} exports, imported by ${m.imported_by.length}`),
+  ...named.slice(0, 60).map((m) => `- \`modules/${m.file}\`: ${m.bytes} bytes, ${m.exports.length} exports, imported by ${m.imported_by.length}`),
   ``, `## most-imported (the shared infrastructure)`, ``,
-  ...hubs.map((m) => `- \`modules/${m.file}\` — imported by ${m.imported_by.length}`),
+  ...hubs.map((m) => `- \`modules/${m.file}\`: imported by ${m.imported_by.length}`),
   ``, `## index.json`, ``,
   `Every module: id, file, name, bytes, exports, imports, imported_by. Follow \`imported_by\` to find`,
   `the callers of an API module; follow \`imports\` to find the client it goes through.`, ``,

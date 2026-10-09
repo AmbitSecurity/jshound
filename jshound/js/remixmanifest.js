@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* remixmanifest.js — evaluate a Remix / React Router framework-mode route manifest.
+/* remixmanifest.js, evaluate a Remix / React Router framework-mode route manifest.
  *
  *     node remixmanifest.js inline0.js inline1.js ...
  *
@@ -9,7 +9,7 @@
  *
  * READ FROM THE AST rather than scraped, for the same reason `nextmanifest.js` reads
  * `_buildManifest.js` that way: brace-counting a minified object is guesswork, while walking the
- * assignment returns the structure the framework itself reads. Nothing in the document is executed —
+ * assignment returns the structure the framework itself reads. Nothing in the document is executed,
  * an earlier version evaluated the right-hand side in a `vm` context, and the escape that cost is
  * written up in `literal.js`.
  *
@@ -19,7 +19,7 @@
  *                  used as a fingerprint marker.
  *   hasLoader      the route answers `<path>?_data=<id>`, Remix's own data protocol. Verified on
  *                  hydrogen.shop: `?_data=root` returns 6,272 bytes of text/remix-deferred and
- *                  `?_data=routes/($locale)._index` returns 10,750, while an INVENTED id returns 403 —
+ *                  `?_data=routes/($locale)._index` returns 10,750, while an INVENTED id returns 403,
  *                  which is what makes this zero-inference. The ids come from the manifest, not a guess.
  *   hasAction      the same path accepts a non-GET submission.
  *   module+imports every chunk that route needs, as absolute URLs.
@@ -32,7 +32,7 @@ const literal = require("./literal.js");
  * Running the whole script is what the first version did and it recovered nothing: Remix ships the
  * assignment inside a `<script type="module">` that also carries ESM `import` statements, so an
  * evaluator throws "Cannot use import statement outside a module" before reaching the assignment.
- * Babel parses the module happily, and the right-hand side is then a self-contained object literal —
+ * Babel parses the module happily, and the right-hand side is then a self-contained object literal,
  * which is data, so it is walked rather than run.
  *
  * `__reactRouterManifest` wins when a document somehow declares both: the two flavours differ in
@@ -138,7 +138,7 @@ function main() {
     //   React Router v7     <path>.data               reactrouter.com: /.data 200 text/x-script
     //                                                 1,834 B, /home.data 200, 33,582 B
     //
-    // On v7, `?_data=root` answers 200 with text/html — the ordinary page. Emitting it would look
+    // On v7, `?_data=root` answers 200 with text/html, the ordinary page. Emitting it would look
     // like a hit and contain no data at all, which is worse than emitting nothing.
     if (r.hasLoader) {
       if (flavour === "react-router-v7") {
@@ -153,7 +153,7 @@ function main() {
   // Several route ids can share one URL: a pathless LAYOUT route contributes no segment, so `root`,
   // `docs` and the splash index route all resolve to `/`. The routes are kept per id, because the id
   // is the provenance and v2's protocol needs it, but a data endpoint is a URL and duplicates of it
-  // are noise — reactrouter.com produced `/.data` three times before this.
+  // are noise, reactrouter.com produced `/.data` three times before this.
   const byTemplate = new Map();
   for (const e of out.data_endpoints) {
     const key = e.query ? `${e.template}?${e.query}` : e.template;

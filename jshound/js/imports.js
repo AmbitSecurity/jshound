@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-/* imports.js — every module specifier a JavaScript source references, by parsing it.
+/* imports.js, every module specifier a JavaScript source references, by parsing it.
  *
  *     node imports.js a.js b.js            # prints {"a.js": ["./chunk.js", ...], ...}
  *
  * Replaces a regex that read `(?:\bfrom|\bimport)\s*\(?\s*["']([^"']+\.m?js)["']`. Measured against
  * that pattern on one file holding every form below, it fails in BOTH directions: it invented
- * `./in-a-comment.js` and `./in-a-string.js` — the word `import` followed by a quoted filename is a
- * match whether or not it is code — and it missed `./side-effect.css` and `./no-extension`, because
+ * `./in-a-comment.js` and `./in-a-string.js`, the word `import` followed by a quoted filename is a
+ * match whether or not it is code, and it missed `./side-effect.css` and `./no-extension`, because
  * the specifier is required to end in `.js`. Parsing has neither problem, and it is how the rest of
  * this repo reads JavaScript.
  *
@@ -15,14 +15,14 @@
  *     import x from "./a.js"           ImportDeclaration
  *     export { y } from "./b.js"       ExportNamedDeclaration with a source
  *     export * from "./c.js"           ExportAllDeclaration
- *     import("./d.js")                 dynamic import — the one SvelteKit's inline bootstrap uses
+ *     import("./d.js")                 dynamic import, the one SvelteKit's inline bootstrap uses
  *
  * Only static string specifiers are reported. `import(someVariable)` names no file that can be read
  * from here, and guessing at one is how a fetcher starts requesting URLs the app never had.
  */
 const fs = require("fs");
-const parser = require("@babel/parser");
-const traverse = require("@babel/traverse").default;
+const parser = require("./babel.js").parser;
+const traverse = require("./babel.js").traverse.default;
 
 function specifiers(src) {
   const out = [];

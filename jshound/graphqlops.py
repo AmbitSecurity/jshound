@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""graphqlops.py — recover the GraphQL operations an app ships.
+"""graphqlops.py: recover the GraphQL operations an app ships.
 
     jshound graphql ./bodies
 
-On a REST app the attack surface is a list of paths. On a GraphQL app there is ONE path — `/graphql`
-— and the surface is the set of operations that can be sent to it. A tool that reports
+On a REST app the attack surface is a list of paths. On a GraphQL app there is ONE path, `/graphql`,
+and the surface is the set of operations that can be sent to it. A tool that reports
 `POST /graphql` and stops has technically found the endpoint and told you nothing: the question is
 which of `DeleteOrganization`, `AdminImpersonate` and `ExportAllUsers` this client knows how to ask
 for, and which arguments each takes.
@@ -12,7 +12,7 @@ for, and which arguments each takes.
 Those documents ship in the bundle as ordinary strings, because the client has to send them. So this
 reads them out: operation type and name, the variables from the signature with their GraphQL types
 (including which are `!` non-null), and the top-level selection. Variable types are the part worth
-having — a mutation taking `$orgId: ID!` is an authorization test waiting to be written, and the
+having, a mutation taking `$orgId: ID!` is an authorization test waiting to be written, and the
 type is right there where minification cannot reach it.
 
 NOT AN AST. GraphQL documents are self-identifying in text and are usually inside template literals
@@ -26,7 +26,7 @@ import os
 import re
 import sys
 
-# `query Name(...)  {`  — the name is required here; see the module docstring on anonymous ops.
+# `query Name(...)  {` , the name is required here; see the module docstring on anonymous ops.
 _OP = re.compile(r"\b(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\([^)]{0,2000}\))?\s*\{")
 _VAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^,$)]+)")
 _FIELD = re.compile(r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)")
@@ -43,7 +43,7 @@ def _match_braces(text, start):
             depth -= 1
             if depth == 0:
                 return i + 1
-        elif c in "\"'":                      # a string inside the document — skip it wholesale
+        elif c in "\"'":                      # a string inside the document, skip it wholesale
             q, i = c, i + 1
             while i < n and text[i] != q:
                 i += 2 if text[i] == "\\" else 1
@@ -58,7 +58,7 @@ _ESCAPED_WS = re.compile(r"\\[nrt]")
 
 
 def _top_level_fields(body):
-    """The selection one level inside the operation — what it actually asks the server for."""
+    """The selection one level inside the operation, what it actually asks the server for."""
     body = _ESCAPED_WS.sub("\n", body)
     out, depth, cur = [], 0, []
     for ch in body:
@@ -82,7 +82,7 @@ def _top_level_fields(body):
 
 
 # JavaScript that reads like GraphQL. `query by(...){...}` is a method named `by` on something
-# called `query`, and `subscription for(...)` is the same shape — both were extracted as operations
+# called `query`, and `subscription for(...)` is the same shape, both were extracted as operations
 # from real bundles before these guards. A GraphQL operation is never a property access and never
 # names itself after a JS keyword.
 _JS_KEYWORD = {"by", "for", "if", "of", "in", "do", "new", "function", "return", "this", "class",

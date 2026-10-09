@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""register_origin.py — tell the analyser where a script came from.
+"""register_origin.py: tell the analyser where a script came from.
 
     register_origin.py <bodies-dir> <file> <url> [<file> <url> ...]
     register_origin.py ./bodies app_index.js https://statics.example.com/app/index.js
@@ -9,8 +9,8 @@ from and the document that loaded it. Analysis reads that map to decide which ho
 to: a relative path in a bundle is a request to the DOCUMENT's host, not to the CDN that served the
 file, and without an origin entry neither is known.
 
-A script fetched by hand — curl, a python one-liner, anything that is not the crawler or
-your crawler — lands in the bodies directory with no entry, and then every endpoint in it is
+A script fetched by hand, curl, a python one-liner, anything that is not the crawler or
+your crawler, lands in the bodies directory with no entry, and then every endpoint in it is
 attributed by the `--host` fallback. That is not a small loss. On one corpus the seven hand-fetched
 `app_*.js` files were unregistered and `app_index.js` alone held 448 of the target's API endpoints: the
 most valuable file in the analysis was the one nothing could place, and a second analysis pass for a

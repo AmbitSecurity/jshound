@@ -1,4 +1,4 @@
-"""table.py — the requests, one per line, for reading rather than for piping.
+"""table.py: the requests, one per line, for reading rather than for piping.
 
 `urls` is a projection: a URL list cannot carry a method or a body, so the two things that make a
 record worth more than a grep hit are dropped on the way out. OpenAPI and HAR carry everything but
@@ -11,7 +11,7 @@ So this is the glance: what the app asks for, with the parts that are known atta
     POST   https://api.example.com/v1/media      multipart/form-data  {"file":"file-upload"}
 
 A marked record stays marked. `{EXPR}` is a slice the analysis could not resolve, a `~` before the
-body means `body_partial` — the named fields are real and the list is incomplete — and a `?`
+body means `body_partial`, the named fields are real and the list is incomplete, and a `?`
 after the content type means the encoding was INFERRED from the other request builders in the file
 rather than read at the call site. An unresolved origin stays written as the placeholder it came from
 rather than being quietly dropped or quietly filled in. Sorting is by path so that related routes sit
@@ -33,12 +33,12 @@ _MEDIA = {
 def _body(rec):
     """The body as a shape, not a list of names.
 
-    `body: email, pageUri` was the old rendering and it is not a body — a body is a document, and the
+    `body: email, pageUri` was the old rendering and it is not a body, a body is a document, and the
     records already hold its shape: `{"email": "computed:trim", "pageUri": "state:href"}`, where each
     value says where the field's value comes from rather than inventing a type the bundle never
     stated. Nested objects nest. So the shape is printed as the JSON it is.
 
-    `body_shape` is preferred over `body_schema` because it survives more cases — a `FormData` upload
+    `body_shape` is preferred over `body_schema` because it survives more cases, a `FormData` upload
     has `{"file": "file-upload"}` as its shape while its schema is the unresolvable `{EXPR}`. When
     neither resolved, the field names alone are still worth printing, as a set rather than as JSON,
     so the two are never confused on sight.

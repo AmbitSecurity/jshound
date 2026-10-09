@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sourcemaps.py — if the target ships its own source, read that instead of the minified copy.
+"""sourcemaps.py: if the target ships its own source, read that instead of the minified copy.
 
     jshound sourcemaps ./bodies --scope app.example.com
     jshound sourcemaps ./bodies --dry-run          report what is available and stop
@@ -9,7 +9,7 @@ does not, and that division stands: this requests only `<url>.map` beside URLs a
 corpus's `_origin.jsonl`, so it reaches no host whose JavaScript you do not already have. `--scope`
 narrows that further to the hosts you name; without it, every recorded host is in scope.
 
-WHAT IT IS WORTH, MEASURED — and the answer moved once Vite became common. The original figure here
+WHAT IT IS WORTH, MEASURED, and the answer moved once Vite became common. The original figure here
 was "0-11% of routes", taken on webpack-era targets. Re-measured:
 
     Excalidraw   57 maps,  699 sources   endpoints  5 ->  8  (+60%), nothing lost
@@ -21,19 +21,19 @@ endpoints: /v1/ai/diagram-to-code/generate-streaming and a Firestore documents p
 the minified bundle. On tldraw it is barely endpoints at all but 37 more runtime-validator schemas,
 which is 37 more request contracts with real field types.
 
-It is still not a route-discovery mechanism to LEAN on — roughly half of targets ship no maps at
+It is still not a route-discovery mechanism to LEAN on, roughly half of targets ship no maps at
 all, and a pipeline that depends on them stops working there. But "0-11%" understated it, and Vite
 ships maps in production by default, which is why it reads differently now than it did.
 
 What they uniquely carry is the two things minification genuinely destroys:
 
-  * TYPES — erased at compile time and recoverable from nowhere else. The original of an API client
+  * TYPES, erased at compile time and recoverable from nowhere else. The original of an API client
     reads `createInquiry(data: ComplianceCheckRequest)` with the interface beside it; the
     shipped copy reads `async e => ...`.
-  * ORIGINAL PARAMETER NAMES — `businessId`, not `e`. Which is what tells an authorization sweep
+  * ORIGINAL PARAMETER NAMES, `businessId`, not `e`. Which is what tells an authorization sweep
     that a slot wants a business id and not an invoice id.
 
-Everything else — routes, verbs, hosts, wire keys — is in the minified bundle, because a key that
+Everything else, routes, verbs, hosts, wire keys, is in the minified bundle, because a key that
 crosses the wire cannot be renamed without breaking the server.
 
 HOW IT DELIVERS THEM. It adds no analysis path. Each original source is written into the bodies
@@ -52,7 +52,7 @@ from .register_origin import register
 SKIP = re.compile(r"(^|/)(node_modules|webpack/runtime|webpack/bootstrap)/")
 
 
-# A `.map` is the largest thing this ever downloads — Grafana's biggest is 38 MB — and it is still
+# A `.map` is the largest thing this ever downloads, Grafana's biggest is 38 MB, and it is still
 # the target that chooses the size, so the read is bounded. Higher than `fetch.MAX_BODY` because a
 # map legitimately dwarfs the bundle it describes; a truncated one fails `json.loads` and is skipped,
 # which is the right outcome for something this far outside the normal range.
@@ -61,7 +61,7 @@ MAX_MAP = 256 * 1024 * 1024
 
 def fetch(url, timeout=40):
     """(status, text). Shares `fetch.http_get`, which is where the transport, the UA and the read cap
-    live — this had its own copy, and that copy was the one place a response was read uncapped."""
+    live, this had its own copy, and that copy was the one place a response was read uncapped."""
     from jshound.fetch import http_get
     return http_get(url, timeout=timeout, max_bytes=MAX_MAP)
 
@@ -150,7 +150,7 @@ def harvest(bodies, hosts=None, dry_run=False, max_sources=4000, workers=8):
             # Registered against the DOCUMENT, so relative paths inside resolve to the app's host.
             # register() takes (filename, url) PAIRS. Appending them flat made it unpack a single
             # string, so every recovered source was written to disk and then NONE of them were
-            # attributed — 699 files on Excalidraw, each one analysed later against the --host
+            # attributed, 699 files on Excalidraw, each one analysed later against the --host
             # fallback instead of the page that loaded it. The files existed, so the failure looked
             # like success until the traceback was read.
             pairs.append((name, doc))

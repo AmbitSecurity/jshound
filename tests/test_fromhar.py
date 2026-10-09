@@ -1,4 +1,4 @@
-"""HAR import is the answer to every target the fetcher cannot reach — an app that injects its own
+"""HAR import is the answer to every target the fetcher cannot reach, an app that injects its own
 script tags, sits behind a login, or needs a real browser. These cover the ways a HAR goes wrong."""
 import base64
 import json
@@ -52,7 +52,7 @@ def test_base64_bodies_are_decoded():
 
 def test_referer_becomes_the_document_so_attribution_is_right():
     """A script served by a CDN belongs, for resolving its relative paths, to the page that loaded
-    it — not to the CDN. The Referer is the only record of that in a HAR."""
+    it, not to the CDN. The Referer is the only record of that in a HAR."""
     har = _har([_entry("https://cdn.test/app.js", "application/javascript", "fetch('/api/a')",
                        referer="https://app.test/dashboard")])
     with tempfile.TemporaryDirectory() as d:
@@ -79,8 +79,8 @@ def test_js_by_extension_when_mime_is_wrong():
 
 def test_a_har_round_trips_into_recovered_endpoints(tmp_path):
     """END TO END, because this is the repo's whole answer for an authenticated app and only the
-    writing half was covered. The README points at HAR import for anything the fetcher cannot reach —
-    behind a login, behind a real browser — so the claim that matters is not "files were written" but
+    writing half was covered. The README points at HAR import for anything the fetcher cannot reach,
+    behind a login, behind a real browser, so the claim that matters is not "files were written" but
     "endpoints came back", including the parts that need cross-file resolution.
 
     Every measured number in the README comes from an anonymous fetch. This test is the one place the
@@ -127,7 +127,7 @@ def test_a_har_round_trips_into_recovered_endpoints(tmp_path):
 def test_captured_json_responses_are_kept():
     """`analyze`'s `json_records()` exists to mine captured API responses and had no way of receiving
     one: the fetcher only writes scripts, and this importer accepted only JS and HTML, so a HAR's API
-    bodies were dropped at the door. That is the wrong thing to drop here of all places — a HAR is how
+    bodies were dropped at the door. That is the wrong thing to drop here of all places, a HAR is how
     you reach an application behind a login, and a logged-in session's HAR is mostly API responses.
 
     `+json` is included because real APIs ship `application/vnd.api+json` and `application/problem+json`.
@@ -160,7 +160,7 @@ def test_a_json_body_is_not_written_as_javascript():
 
 def test_a_captured_api_response_round_trips_into_records(tmp_path):
     """END TO END: the response describes more of the API than the page does, which is the whole
-    reason `json_records()` was written — it claims 61 paths on one scope and 53 on another that no
+    reason `json_records()` was written, it claims 61 paths on one scope and 53 on another that no
     other channel produced. Before this it had no input at all."""
     import subprocess
 
@@ -187,7 +187,7 @@ def test_a_captured_api_response_round_trips_into_records(tmp_path):
 
 def test_a_corpus_with_no_javascript_at_all_still_yields_records(tmp_path):
     """`analyze` returned immediately when `js_files()` was empty, which skipped every channel that
-    does not read JavaScript — forms, captured responses, document state, page config. Two real inputs
+    does not read JavaScript, forms, captured responses, document state, page config. Two real inputs
     hit that: a HAR of an API-heavy session, which is this project's only route to an authenticated
     surface, and a server-rendered page with no bundle. Both reported "0 scripts -> 0 records" while
     holding the surface in plain sight."""

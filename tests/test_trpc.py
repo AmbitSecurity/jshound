@@ -1,5 +1,5 @@
 """tRPC and RTK Query generate the same call shape, and only one of them is a tRPC path. Inventing
-an endpoint is worse than missing one — a missed endpoint costs coverage, an invented one sends
+an endpoint is worse than missing one, a missed endpoint costs coverage, an invented one sends
 somebody at a URL that was never there."""
 import json
 import os
@@ -41,7 +41,7 @@ def _endpoints(fixture):
 
 def test_a_date_format_is_not_a_path():
     """moment's locale table puts "MM/DD/YYYY" behind a key named L, and L.get(...) reached a
-    client-verb sink — Notion produced an endpoint whose URL was a date format."""
+    client-verb sink, Notion produced an endpoint whose URL was a date format."""
     got = _endpoints("date-format-not-a-path")
     assert "MM/DD/YYYY" not in got and "YYYY-MM-DD HH:mm:ss" not in got, got
 
@@ -55,7 +55,7 @@ def test_real_paths_containing_date_tokens_survive():
 # ── CORROBORATION ───────────────────────────────────────────────────────────────────────────────
 # This collector does not READ a URL, it manufactures one: `/api/trpc/` is a string in
 # static_ast.js, not in the bundle being analysed. So it owes the bundle some evidence that tRPC is
-# there at all, and what decides it is layered by how strong the evidence is — the bundle-level
+# there at all, and what decides it is layered by how strong the evidence is, the bundle-level
 # marker, then what built the chain's root, and only then the property-name blocklist that used to
 # be the whole test.
 CORR = os.path.join(ROOT, "tests", "fixtures", "trpc-corroboration")
@@ -64,7 +64,7 @@ CORR = os.path.join(ROOT, "tests", "fixtures", "trpc-corroboration")
 def _trpc_in(case):
     """One case DIRECTORY at a time. `isTrpc` is computed over everything handed to the extractor at
     once, so analysing the no-tRPC case beside a real one would hand it the marker and the test would
-    stop testing anything. `analyze` also takes a directory, not a file — pointing it at a file
+    stop testing anything. `analyze` also takes a directory, not a file, pointing it at a file
     reports "0 scripts -> 0 records" and every assertion about an empty result passes vacuously."""
     d = os.path.join(CORR, case)
     assert os.path.isdir(d), d
@@ -77,7 +77,7 @@ def _trpc_in(case):
 
 def test_a_bundle_with_no_sign_of_trpc_yields_no_trpc_endpoints():
     """The general rule, and the one a name blocklist cannot express. This fixture holds RTK's
-    `api.endpoints.X.useQuery()` AND `queries.workspace.members.useQuery()` — the same shape under a
+    `api.endpoints.X.useQuery()` AND `queries.workspace.members.useQuery()`, the same shape under a
     namespace that is not called `endpoints`. Measured before the rule: two fabricated endpoints,
     `/api/trpc/workspace.members` and `/api/trpc/billing.invoices`, in a file containing no tRPC.
     Grafana carries the marker in 0 of its 159 files and produced 13 records this way."""
@@ -103,7 +103,7 @@ def test_a_real_trpc_procedure_named_endpoints_is_not_thrown_away():
 
 def test_a_marker_that_appears_only_in_a_comment_is_not_evidence():
     """Comments are commentary, not code. The marker was a regex over raw source and could not tell
-    the difference, so a file merely DISCUSSING `/api/trpc/` was treated as a tRPC app — which is how
+    the difference, so a file merely DISCUSSING `/api/trpc/` was treated as a tRPC app, which is how
     the fixture above first passed for the wrong reason. Asked of the AST instead, where a comment is
     not a node value."""
     assert _trpc_in("marker-in-a-comment") == set()
@@ -112,7 +112,7 @@ def test_a_marker_that_appears_only_in_a_comment_is_not_evidence():
 def test_the_verdict_is_a_property_of_the_corpus_not_of_a_file():
     """The regression this exists for, caught by measurement and not by any test at the time.
 
-    The marker lives in ONE file of a real corpus — cal.com's is 1 of 79 — and the chains live in the
+    The marker lives in ONE file of a real corpus, cal.com's is 1 of 79, and the chains live in the
     others. Asking the question per file (or per batch, which is how the extractor is scheduled)
     rejected cal.com's 45 real tRPC endpoints down to 3. The verdict is settled once by the
     corpus-wide index pass, the same way the module index is, for the same reason: which files share

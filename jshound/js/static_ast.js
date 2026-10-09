@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-/* static_ast.js — proper AST extraction of network-sink call-sites from JS source.
+/* static_ast.js, proper AST extraction of network-sink call-sites from JS source.
  *
  * Walks a real JS AST (babel) rather than grepping for `/api/`, so it recovers the
- * CONTRACT — method + path-template + body/param key names — for EVERY call to a network sink, regardless
+ * CONTRACT, method + path-template + body/param key names, for EVERY call to a network sink, regardless
  * of whether the path contains "api". Handles minified bundles AND original sourcemap source (TS/JSX).
  *
  * The wall we CAN'T cross (by design, marked not guessed): when the URL or a body value is assembled from a
  * runtime variable we can't resolve, the variable slice becomes {EXPR}. That marker IS the signal to hand the
- * call to the dynamic engine — it is not a miss, it is a typed hand-off.
+ * call to the dynamic engine, it is not a miss, it is a typed hand-off.
  *
  *   echo "<js source>" | node static_ast.js            # source on stdin
  *   node static_ast.js file1.js file2.js               # source from files
@@ -20,10 +20,10 @@
  *   ky / got / superagent / $.ajax / $.get|post / apollo-ish .query|mutate (documents handled elsewhere)
  *   ANY <ident>.get|post|put|patch|delete|request(url,...) where url is a string/template that looks like a path
  */
-const parser = require("@babel/parser");
+const parser = require("./babel.js").parser;
 
 // RUNTIME CONFIG injected into the HTML. A static bundle cannot know its deployment's base URL, so the
-// server writes it into the page and the bundle reads it back — which is why `${k(c.baseUrl)}admin/...`
+// server writes it into the page and the bundle reads it back, which is why `${k(c.baseUrl)}admin/...`
 // resolves to {EXPR}: the value was never in any JavaScript file. analyze.py harvests those blobs from the
 // saved HTML and passes them with --config. Keyed by leaf property name, because the receiver (`c`) is
 // exactly what minification renames while the property (`baseUrl`) survives.
@@ -37,27 +37,27 @@ let _CONFIG = new Map();
 // Two links, both present in the shipped code, and following them turns an unresolved prefix on 474
 // endpoints into the deployment's real base URL.
 //
-// So: index every assignment to a property NAME — `X.prop = expr` and `{prop: expr}` — resolve the
+// So: index every assignment to a property NAME, `X.prop = expr` and `{prop: expr}`, resolve the
 // right-hand side, and keep it. Reading `obj.prop` on an opaque receiver then becomes a lookup. Keyed by
 // property name for the same reason as everything else here: the receiver is what minification renames,
 // the property is the data contract and survives.
 //
 // Built in a PRE-PASS over the whole batch, because the assignment routinely lives in a different chunk
-// from the read — Keycloak's does.
+// from the read, Keycloak's does.
 let _PROPVALS = new Map();
 // Property names so common that the cross-file index cannot mean anything by them.
 // `_id` IS `id`, AND IT IS THE ONE THAT MATTERS MOST. Every Mongo-backed application keys on `_id`, so
-// it is the most generic property name such an app has — and it was missing from a list that already had
+// it is the most generic property name such an app has, and it was missing from a list that already had
 // `id`. Measured on one target: a React reducer's "addRow" case returns `{editRow:"NEW", editCopy:{_id:
 // "NEW"}}`, a sentinel meaning "this record has no id yet". Whenever that chunk shared a node process with
-// the API module, `dr.post(`/drafts/${e._id}/queue`)` — where `e` is an arrow-function parameter, a pure
-// runtime value — resolved to `/drafts/NEW/queue` and was emitted as a RESOLVED, sendable address beside
+// the API module, `dr.post(`/drafts/${e._id}/queue`)`, where `e` is an arrow-function parameter, a pure
+// runtime value, resolved to `/drafts/NEW/queue` and was emitted as a RESOLVED, sendable address beside
 // the correct `/drafts/{_id}/queue`. 37 such paths in one store: /accounts/NEW, /accounts/pause/NEW,
 // /queue/NEW/draft, /schedules/NEW/queue.
 //
 // Reproduced in two runs of the extractor: the API module alone gives only the correct `{_id}` templates;
 // the same file batched with the reducer gives both. That is what made it look fixed when the app's
-// bundles were re-split — the phantom depends on which files land in one process, not on the code.
+// bundles were re-split, the phantom depends on which files land in one process, not on the code.
 //
 // `Id`, `uuid` and `slug` are here for the same reason: a value found under one of these names somewhere
 // in a bundle says nothing about what it holds at an unrelated call site.
@@ -69,7 +69,7 @@ const _GENERIC_PROP = new Set(["url", "path", "host", "hostname", "origin", "uri
 //
 // `_GENERIC_PROP` above stops a value being borrowed under a name too common to mean anything. This
 // stops a value being borrowed when the VALUE itself cannot be an address. Grafana defines its
-// mixed-datasource sentinel as one object literal —
+// mixed-datasource sentinel as one object literal,
 //
 //     const L = { type: "mixed", uid: "-- Mixed --" };
 //
@@ -77,7 +77,7 @@ const _GENERIC_PROP = new Set(["url", "path", "host", "hostname", "origin", "uri
 // producing 20 endpoints like `/datasources/uid/-- Mixed --/health` where the real path is
 // `/datasources/uid/{uid}/health`. One object literal, twenty fabricated addresses.
 //
-// A raw space cannot appear in a URL path or query — it has to be percent-encoded — so a borrowed
+// A raw space cannot appear in a URL path or query, it has to be percent-encoded, so a borrowed
 // value carrying whitespace is a label, not an address, and `{uid}` is the honest answer. Measured
 // across the 21 corpora: 27 templates held whitespace in their skeleton and all 27 were this one
 // sentinel, so there is no legitimate case to lose. Deliberately a test on the VALUE and not another
@@ -88,14 +88,14 @@ const _BORROWABLE = (v) => typeof v === "string" && v !== "" && !/\s/.test(v);
 // CROSS-MODULE RESOLUTION, for ESM.
 //
 // `import{ w as k }from"./o.js"` names its source file. That makes ESM strictly easier to follow than
-// webpack, whose module ids are numbers — and unbundle.js, the one tool built for this, speaks only
+// webpack, whose module ids are numbers, and unbundle.js, the one tool built for this, speaks only
 // webpack. So the easy case was the unbuilt one.
 //
 // Two things are worth resolving across the boundary:
-//   a string export  — `export const API_BASE = "/api/v2"` used in a URL somewhere else. This is most of
+//   a string export , `export const API_BASE = "/api/v2"` used in a URL somewhere else. This is most of
 //                      the ~500 API-ish path literals that have no attributed call site: the constant is
 //                      declared in one module and consumed in another.
-//   a URL transform  — `export function w(e){ return e.endsWith("/") ? e.slice(0,-1) : e }`, Keycloak's
+//   a URL transform , `export function w(e){ return e.endsWith("/") ? e.slice(0,-1) : e }`, Keycloak's
 //                      trailing-slash strip. Reading its body turns the passthrough from an inference
 //                      into a fact.
 //
@@ -105,12 +105,12 @@ let _EXPORTS = new Map();          // "path\u0000name" -> {str} | {transform:tru
 let _CURFILE = null;
 // THE tRPC VERDICT IS A PROPERTY OF THE CORPUS, NOT OF A BATCH. cal.com carries the marker in 1 of
 // its 79 files, and asking each batch separately rejected the 42 real tRPC endpoints in every batch
-// that did not happen to contain that file — the same "accident of scheduling" the module index
+// that did not happen to contain that file, the same "accident of scheduling" the module index
 // exists to prevent. null means not yet decided; the index pass settles it for the whole corpus.
 //
 // Declared HERE, at module scope, and not beside the other driver state: the driver runs inside a
 // top-level `try {` block, so a `let` declared there is invisible to `extract()` and every call threw
-// a ReferenceError that the per-chunk catch turned into "this file has no endpoints" — 1091 records
+// a ReferenceError that the per-chunk catch turned into "this file has no endpoints", 1091 records
 // became 12 and nothing said why.
 let _IS_TRPC = null;
 // Likewise a property of the corpus: the router is constructed in one chunk and the route table can
@@ -134,7 +134,7 @@ function _resolveSpec(fromFile, spec) {
   // …and that basename fallback ALSO fails on a real corpus, because bodies are stored by CONTENT HASH:
   // the file is `8f91eb0c835fc110a8ff.js` and the specifier says `./app-shared-DKk5IE_B.js`, so neither
   // the path nor the basename can ever match. Measured on one target: 1,147 distinct relative specifiers, ZERO
-  // resolvable. Cross-file import resolution has never worked on crawled input — only on fixtures whose
+  // resolvable. Cross-file import resolution has never worked on crawled input, only on fixtures whose
   // files kept their real names.
   //
   // The original name is not lost, it is in the URL the body was fetched from, which the crawler records.
@@ -217,7 +217,7 @@ function importedValue(name, scope) {
     } catch {}
   }
 }
-const traverse = require("@babel/traverse").default;
+const traverse = require("./babel.js").traverse.default;
 const fs = require("fs");
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "request"]);
@@ -229,9 +229,9 @@ const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "
 const VERB_ALIASES = { getAPIList: "get" };
 // method-bearing member calls on a client: client.post(url, body) / api.get(url)
 const PATHY = /^(https?:\/\/|\/|\.\/|\.\.\/)/; // looks like a URL or path
-// A DATE FORMAT IS NOT A PATH. moment/dayjs ship a locale table —
+// A DATE FORMAT IS NOT A PATH. moment/dayjs ship a locale table,
 //     {LTS:"h:mm:ss A", LT:"h:mm A", L:"MM/DD/YYYY", LL:"MMMM D, YYYY"}
-// — and `L` reached a client-verb sink, so Notion produced an endpoint whose URL was "MM/DD/YYYY".
+//, and `L` reached a client-verb sink, so Notion produced an endpoint whose URL was "MM/DD/YYYY".
 // Requiring a leading slash would have caught it and would also have thrown away real relative
 // paths (`api/datasources/uid/…`, `s3/multipart`), so the test is the shape of a format string
 // instead: every character is a date-format token or a separator, and at least one real token is
@@ -245,11 +245,11 @@ const LOOKS_PATH = (s) =>
   !DATE_FORMAT(s) &&
   (PATHY.test(s) || /^[\w.-]+\/[\w./{}$-]/.test(s)) && // bare "v2/foo" style
   !/\s/.test(s.trim()) &&
-  // A URL cannot contain a control character. Minified bundles carry binary-ish string data — packed
-  // tables, base64 with stray bytes — and a few of those matched the path shape and came out as endpoints:
+  // A URL cannot contain a control character. Minified bundles carry binary-ish string data, packed
+  // tables, base64 with stray bytes, and a few of those matched the path shape and came out as endpoints:
   // `x.com/.04\u0013\u0002`, `shop.example.com/B_I+\u0010&57N`. Printed into the site map they also make the
   // map itself a binary file to anything that classifies by content, so grep on it silently returns
-  // nothing — the same trap this repo already hit in its own extractor source.
+  // nothing, the same trap this repo already hit in its own extractor source.
   // eslint-disable-next-line no-control-regex
   !/[\u0000-\u001f\u007f]/.test(s) &&
   s.length < 400 &&
@@ -284,9 +284,9 @@ function parse(src) {
 
 // Resolve a node to a string TEMPLATE, marking unresolved runtime pieces as {EXPR}. Returns {template, dynamic}.
 // paramNames (optional): when resolving a WRAPPER FUNCTION's body, render references to its parameters as
-// \x01name\x01 placeholders (substituted at each call site) instead of {EXPR} — the inter-procedural trace.
+// \x01name\x01 placeholders (substituted at each call site) instead of {EXPR}, the inter-procedural trace.
 function resolveUrl(node, scope, paramNames) {
-  // `new URL(path, base)` IS the URL, and every fetch-shaped sink accepts the object itself — not
+  // `new URL(path, base)` IS the URL, and every fetch-shaped sink accepts the object itself, not
   // only `.href`. tldraw builds its telemetry calls as
   //     fetch(new URL("/v1/event", this.#cfg.endpoint), {method:"POST", body:…})
   // and this returned {EXPR} for all of them, because strFromNode has no NewExpression case and the
@@ -311,16 +311,16 @@ function NAMED(name) {
   // label: `{param:e}` and `{bI}` are the same endpoint seen through two chunks, and emitting both
   // inflated one host from 156 routes to 359.
   //
-  // But rendering it as a blank `{EXPR}` conflated two different situations — "the name is useless" and
-  // "we could not resolve this at all" — and only the second is a gap worth chasing. `{min}` is uniform,
+  // But rendering it as a blank `{EXPR}` conflated two different situations, "the name is useless" and
+  // "we could not resolve this at all", and only the second is a gap worth chasing. `{min}` is uniform,
   // so dedupe still works, and it says the cause is minification rather than a failure.
   return name && (name.length >= 3 || name === "id") ? "{" + name + "}" : "{min}";
 }
 
-// ENUM/SWITCH-dispatched action segments — `let a; switch(e){case 1:a="completion";case 2:a="retry"}; fetch(`${b}/${a}`)`.
+// ENUM/SWITCH-dispatched action segments, `let a; switch(e){case 1:a="completion";case 2:a="retry"}; fetch(`${b}/${a}`)`.
 // The URL segment is a variable whose possible values are string literals assigned across switch cases / branches.
 // babel's binding.constantViolations gives every reassignment → collect the path-segment-like string values so the
-// slot can be EXPANDED into one endpoint per action (this is how AI apps build streaming endpoints — /completion etc).
+// slot can be EXPANDED into one endpoint per action (this is how AI apps build streaming endpoints, /completion etc).
 function enumValues(b) {
   const vals = new Set();
   const ok = (s) => typeof s === "string" && s.length && s.length < 40 && /^[\w][\w.-]*$/.test(s); // single path segment
@@ -379,7 +379,7 @@ function resolveObjLiteral(node, scope, depth) {
       if (!b || !b.path || b.path.node.type !== "VariableDeclarator") return null;
       const decl = b.path.node;
       let obj = unwrapObj(decl.init);
-      if (decl.id.type === "ObjectPattern") {                 // destructured — mirror the key-path into the init
+      if (decl.id.type === "ObjectPattern") {                 // destructured, mirror the key-path into the init
         const keys = destructureKeys(decl.id, b.identifier, 0);
         if (!keys) return null;
         // The right-hand side of a destructure is usually ANOTHER name, not a literal:
@@ -440,7 +440,7 @@ function strFromNode(node, scope, depth, paramNames) {
       if (paramNames && paramNames.includes(node.name))       // a wrapper param → substitutable placeholder
         return { s: "\x01" + node.name + "\x01", dyn: false };
       // An identifier IMPORTED from another chunk. `import{API_BASE}from"./config.js"` used in a URL is
-      // most of the API-ish path literals that carry no attributed call site — the constant is declared in
+      // most of the API-ish path literals that carry no attributed call site, the constant is declared in
       // one module and consumed in another, and stopping at the module boundary loses the endpoint.
       {
         const iv = importedValue(node.name, scope);
@@ -450,7 +450,7 @@ function strFromNode(node, scope, depth, paramNames) {
       const b = scope && scope.getBinding && scope.getBinding(node.name);
       if (b && b.path && b.path.node) {
         const init = b.path.node.init || (b.path.node.type === "VariableDeclarator" && b.path.node.init);
-        // recurse into string/template inits AND into Logical/Binary inits — the latter is the default-base config
+        // recurse into string/template inits AND into Logical/Binary inits, the latter is the default-base config
         // pattern (`const base = env.API ?? "/api"`, `const u = host + "/v1"`) that later gets concatenated into a URL.
         if (init && init !== node && depth < 6 && (init.type === "StringLiteral" || init.type === "TemplateLiteral" ||
             init.type === "LogicalExpression" || init.type === "BinaryExpression"))
@@ -460,7 +460,7 @@ function strFromNode(node, scope, depth, paramNames) {
         //     const n = Object(o.a)("/api/:version/groups/:id").replace(":id", e);
         //     return i.a.put(n, t);
         // The sink's argument is an Identifier, and because a CallExpression init was not recursed into,
-        // it resolved to `{call:…}` and the endpoint was lost — while the very same expression written
+        // it resolved to `{call:…}` and the endpoint was lost, while the very same expression written
         // INLINE inside the sink resolved fine. Measured on GitLab: 112 `/api/:version/...` templates are
         // reached this way and 111 of them came back unattributed, the one exception being the inline form.
         // A ternary init is the same story (`const d = x ? "/api/:version/groups/..." : "/api/:version/namespaces/..."`).
@@ -481,7 +481,7 @@ function strFromNode(node, scope, depth, paramNames) {
         const ev = enumValues(b);
         if (ev.length >= 1 && ev.length <= 10) return { s: "\x02" + ev.join("|") + "\x02", dyn: true };
       }
-      // DESTRUCTURED CONFIG: `{API_GATEWAY_URL: dS} = CFG[env]` — the local is minified garbage but the
+      // DESTRUCTURED CONFIG: `{API_GATEWAY_URL: dS} = CFG[env]`, the local is minified garbage but the
       // PROPERTY KEY is the real name, and collectConfigUrls() has already harvested every candidate value
       // for it. Label the slot with the key so an opaque `{EXPR}` becomes `{cfg:API_GATEWAY_URL}`, which is
       // joinable against the config table instead of being a dead end.
@@ -498,7 +498,7 @@ function strFromNode(node, scope, depth, paramNames) {
         }
       }
       // A bare {EXPR} tells you nothing about WHY resolution stopped. Say where it got stuck: a function
-      // parameter, a call result, or a member read — `{window.location.origin}` is self-resolving against
+      // parameter, a call result, or a member read, `{window.location.origin}` is self-resolving against
       // the host we already requested, and `{call:getToken}` tells you what to go read next.
       if (b && b.kind === "param") return { s: "{param:" + node.name + "}", dyn: true };
       if (b && b.path && b.path.node && b.path.node.init) {
@@ -507,7 +507,7 @@ function strFromNode(node, scope, depth, paramNames) {
         if (it.type === "MemberExpression" && /^[\w.$\[\]'"]{1,48}$/.test(isrc)) {
           // THE RECEIVER IS USUALLY MINIFIER NOISE. `e.subdomain` is about `subdomain`; the `e` is
           // whatever that scope happened to call it and changes between builds. Strip a 1-3 char
-          // receiver, keep a meaningful one — `window.location.origin` and `import.meta.env.X` are
+          // receiver, keep a meaningful one, `window.location.origin` and `import.meta.env.X` are
           // handled above precisely because their receiver IS the information.
           const trimmed = isrc.replace(/^[A-Za-z_$][\w$]{0,2}\./, "");
           return { s: "{" + (trimmed.includes(".") || trimmed.length > 2 ? trimmed : isrc) + "}",
@@ -541,12 +541,12 @@ function strFromNode(node, scope, depth, paramNames) {
         }
       }
       // unresolved: preserve a MEANINGFUL name as the slot label (survives when it's real, e.g. sourcemap 'orgId').
-      // minified 1-2 char garbage (e, t, Ge) stays {EXPR} — no signal. 'id' is a real, common param name.
+      // minified 1-2 char garbage (e, t, Ge) stays {EXPR}, no signal. 'id' is a real, common param name.
       return { s: NAMED(node.name), dyn: true };
     }
     case "MemberExpression": {
       // `window.location.origin` / `import.meta.env.VITE_API` are self-documenting and often self-resolving
-      // (we KNOW the origin — it is the host we fetched). Never flatten them to an opaque {EXPR}.
+      // (we KNOW the origin, it is the host we fetched). Never flatten them to an opaque {EXPR}.
       const msrc0 = generateSrc(node) || "";
       if (/^(window\.)?location\.(origin|host|hostname|protocol|href)$/.test(msrc0) ||
           /^import\.meta\.env\.[A-Za-z_][\w]*$/.test(msrc0) ||
@@ -556,7 +556,7 @@ function strFromNode(node, scope, depth, paramNames) {
     case "MemberExpression_orig":
     case "OptionalMemberExpression": {
       if (!node.computed && node.property && node.property.name) {
-        // FIRST try to resolve `cfg.base` / `cfg.paths.auth` into the CONFIG OBJECT LITERAL it points at — pure-literal
+        // FIRST try to resolve `cfg.base` / `cfg.paths.auth` into the CONFIG OBJECT LITERAL it points at, pure-literal
         // config objects (baseURL + path tables) are extremely common; recover the real string, not a {slot}. This is
         // load-bearing for axios baseURL resolution and lifts recall broadly wherever URLs come from a config object.
         if (depth < 8) {
@@ -564,9 +564,9 @@ function strFromNode(node, scope, depth, paramNames) {
           if (obj) { const v = objProp(obj, node.property.name); if (v) return strFromNode(v, scope, depth + 1, paramNames); }
         }
         // The value may have been injected into the page rather than written in any file. If the HTML
-        // handed us one under this property name, that is the actual deployed value — better than a slot.
+        // handed us one under this property name, that is the actual deployed value, better than a slot.
         // Same generic-name rule as the property index below. A page config blob that happens to contain
-        // `url` does not tell you what `this.consumer.url` holds three modules away — that substitution
+        // `url` does not tell you what `this.consumer.url` holds three modules away, that substitution
         // put reddit's ActionCable socket at a Zendesk documentation URL.
         const cfgv = _GENERIC_PROP.has(node.property.name) ? undefined
                                                            : _CONFIG.get(node.property.name);
@@ -577,7 +577,7 @@ function strFromNode(node, scope, depth, paramNames) {
         // distinctive name that is a strong signal; for `url`, `path` or `host` it is a coin flip, because
         // every module in the bundle has one and they are unrelated. Measured: reddit's ActionCable does
         // `new I.WebSocket(this.consumer.url, H)`, where the URL is genuinely a runtime value, and the
-        // index confidently supplied `https://support.reddithelp.com/` from some other module's `url:` —
+        // index confidently supplied `https://support.reddithelp.com/` from some other module's `url:`,
         // fabricating a socket at a documentation page. Names this generic must resolve to nothing rather
         // than to whichever literal happened to be indexed first.
         const pv = _GENERIC_PROP.has(node.property.name) ? undefined
@@ -586,14 +586,14 @@ function strFromNode(node, scope, depth, paramNames) {
         // property names survive minification (they ARE the data contract) → `${e?.uuid}` becomes {uuid}, not {EXPR}.
         return { s: "{" + node.property.name + "}", dyn: true };
       }
-      // A COMPUTED member — `cfg[key]` or `paths[name]`. The property is itself a runtime value, so there
+      // A COMPUTED member, `cfg[key]` or `paths[name]`. The property is itself a runtime value, so there
       // is no name to borrow. Distinguishing it from a blank says the lookup table is worth finding.
       return { s: "{computed}", dyn: true };
     }
     case "CallExpression": {
       // THERE WERE TWO `case "CallExpression"` ARMS IN THIS SWITCH. The first handled .concat() chains and
-      // then unconditionally returned {EXPR}, which made this one — encoder unwrapping, user-defined URL
-      // builder inlining, everything below — unreachable. It had never run. The duplicate arrived when a
+      // then unconditionally returned {EXPR}, which made this one, encoder unwrapping, user-defined URL
+      // builder inlining, everything below, unreachable. It had never run. The duplicate arrived when a
       // `break` was changed to a `return` to stop a crash: the crash went away and ninety lines went dark,
       // and nothing failed loudly enough to notice. Merged now, .concat first.
       const c = node.callee, nm = c && (c.name || (c.property && c.property.name));
@@ -612,7 +612,7 @@ function strFromNode(node, scope, depth, paramNames) {
         return { s: acc, dyn: accDyn };
       }
       // BABEL'S INTEROP WRAPPER. ES5 webpack output calls an imported function as `Object(U.a)(d)`, not
-      // `buildUrl(d)` — the callee is a CallExpression, so every guard below that tests for an Identifier
+      // `buildUrl(d)`, the callee is a CallExpression, so every guard below that tests for an Identifier
       // callee silently skipped it. GitLab ships 112 `/api/:version/...` templates reached exactly this
       // way, and all 112 came back {EXPR}. Unwrap one level and re-run this same case on `f(args)`.
       if (c && c.type === "CallExpression" && c.callee && c.callee.name === "Object" &&
@@ -623,7 +623,7 @@ function strFromNode(node, scope, depth, paramNames) {
       // `.replace(":full_path", v)` ON A PATH TEMPLATE IS SLOT SUBSTITUTION, not string mangling.
       // Rails/Express-style templates are built by substituting one colon-param at a time, so the chain
       // `buildUrl(t).replace(":full_path", x).replace(":id", y)` is how the real URL is assembled. Resolve
-      // the object, then fill the named slot — keeping it a NAMED slot, because the name is the contract
+      // the object, then fill the named slot, keeping it a NAMED slot, because the name is the contract
       // (an authorization sweep needs to know a slot wants a full_path and not an id).
       if (c && c.type === "MemberExpression" && !c.computed && c.property &&
           (c.property.name === "replace" || c.property.name === "replaceAll") &&
@@ -641,7 +641,7 @@ function strFromNode(node, scope, depth, paramNames) {
       // AN UNKNOWN ONE-ARG CALL AROUND A COLON TEMPLATE IS A URL BUILDER. `/api/:version/groups/:id` is
       // self-identifying: nothing else in a bundle looks like that, and a function handed one is building
       // a URL from it. The guard is the SHAPE OF THE ARGUMENT, not the callee, which is what makes this
-      // safe when the callee lives in another module and cannot be read — it cannot invent a path,
+      // safe when the callee lives in another module and cannot be read, it cannot invent a path,
       // because the path is already there in the argument.
       if ((node.arguments || []).length === 1 && depth < 6) {
         const inner = strFromNode(node.arguments[0], scope, depth + 1, paramNames);
@@ -653,14 +653,14 @@ function strFromNode(node, scope, depth, paramNames) {
       if (/^(encodeURIComponent|encodeURI|String|toString|escape|trim)$/.test(nm || "") && node.arguments[0])
         return strFromNode(node.arguments[0], scope, depth + 1, paramNames);
       // A ONE-IN-ONE-OUT URL TRANSFORM. Keycloak builds every admin URL as `${k(c.baseUrl)}admin/realms/…`
-      // where `k` is `s => s.endsWith("/") ? s.slice(0,-1) : s` — a trailing-slash strip. The base resolves
+      // where `k` is `s => s.endsWith("/") ? s.slice(0,-1) : s`, a trailing-slash strip. The base resolves
       // fine on its own; the unknown call around it was what forced {EXPR}, so 474 endpoints kept an
       // unresolved prefix because of a four-token helper.
       //
       // Guarded three ways so this cannot invent a URL: exactly one argument, the callee is a user function
       // of one parameter that contains no path literal of its own (so it is massaging its input, not
       // building a different URL), and the argument must already resolve to something URL-shaped. A
-      // transform that only reshapes a URL leaves the URL recognisable — that is the whole assumption, and
+      // transform that only reshapes a URL leaves the URL recognisable, that is the whole assumption, and
       // it is stated here rather than hidden.
       if (c && c.type === "Identifier" && node.arguments.length === 1 && depth < 5) {
         const b0 = scope && scope.getBinding && scope.getBinding(c.name);
@@ -692,7 +692,7 @@ function strFromNode(node, scope, depth, paramNames) {
       // This is an INFERENCE, unlike the case above where the body was read: a one-argument call, in a URL
       // template position, whose argument already resolves to a URL, is treated as reshaping that URL. The
       // result is marked dynamic so nothing downstream mistakes it for a literal. Resolving it properly
-      // needs the module graph — unbundle.js builds one for webpack, and this bundle is Rollup.
+      // needs the module graph, unbundle.js builds one for webpack, and this bundle is Rollup.
       if (c && c.type === "Identifier" && node.arguments.length === 1 && depth < 5) {
         const bx = scope && scope.getBinding && scope.getBinding(c.name);
         const isImported = bx && (bx.kind === "module" ||
@@ -709,15 +709,15 @@ function strFromNode(node, scope, depth, paramNames) {
         if (isImported) {
           const inner = strFromNode(node.arguments[0], scope, depth + 1, paramNames);
           // Pass through whatever the argument resolved to, even a named slot. `k(c.baseUrl)` collapsing to
-          // {EXPR} threw away the one useful fact — that the missing piece is `baseUrl` — and left a reader
+          // {EXPR} threw away the one useful fact, that the missing piece is `baseUrl`, and left a reader
           // with nothing to look up. `{baseUrl}admin/realms/…` names it, and the config values harvested
           // from the page are recorded alongside, so the substitution is a lookup rather than a guess.
           //
           // Deliberately NOT guessing which config key `baseUrl` means: this page carries adminBaseUrl,
           // serverBaseUrl, authServerUrl and authUrl all equal to the same origin, but consoleBaseUrl and
           // resourceUrl differ. Picking one by name similarity would be right here and wrong elsewhere.
-          // Keep the SLOT, never the value. We can see this call happen and cannot see what it does —
-          // Keycloak's `k` is imported from another chunk — so substituting the base produced
+          // Keep the SLOT, never the value. We can see this call happen and cannot see what it does,
+          // Keycloak's `k` is imported from another chunk, so substituting the base produced
           // `https://auth.example.com/authadmin/realms/...`, a URL missing a separator that 404s. A
           // concrete wrong URL is worse than an honest slot: it reads as a fact and cannot be requested.
           // `{baseUrl}admin/realms/...` names exactly what is missing, and the config values harvested
@@ -760,7 +760,7 @@ function strFromNode(node, scope, depth, paramNames) {
       }
       return { s: "{EXPR}", dyn: true };
     }
-    // `await getUrl()`, `(url)`, `url as string`, `url!` — wrappers that change nothing about the value.
+    // `await getUrl()`, `(url)`, `url as string`, `url!`, wrappers that change nothing about the value.
     // Falling through to the default returned {EXPR} and lost whatever was inside them.
     case "AwaitExpression":
     case "ParenthesizedExpression":
@@ -775,13 +775,13 @@ function strFromNode(node, scope, depth, paramNames) {
       // only a method-less route constant survived: 136 records with no verb in one claude.ai file.
       return strFromNode(node.quasi, scope, depth + 1, paramNames);
     case "ConditionalExpression": {
-      // a?b:c — take the consequent template but flag dynamic (both branches are real endpoints; caller can note)
+      // a?b:c, take the consequent template but flag dynamic (both branches are real endpoints; caller can note)
       const c = strFromNode(node.consequent, scope, depth + 1, paramNames);
       return { s: c.s, dyn: true };
     }
     case "LogicalExpression": {
-      // `x ?? "/api"` / `env.BASE || "/api"` — if the LEFT resolves to a concrete value, it wins (a real override).
-      // But when the left is an unresolvable param/env (`{apiPrefix}`), FALL BACK to the RIGHT literal — that's the
+      // `x ?? "/api"` / `env.BASE || "/api"`, if the LEFT resolves to a concrete value, it wins (a real override).
+      // But when the left is an unresolvable param/env (`{apiPrefix}`), FALL BACK to the RIGHT literal, that's the
       // config-DEFAULT base, the actual runtime value whenever the left isn't supplied (the common case). This is
       // what recovers claude.ai's `apiPrefix ?? "/edge-api"` → /edge-api/bootstrap, and every default-base pattern.
       const l = strFromNode(node.left, scope, depth + 1, paramNames);
@@ -800,7 +800,7 @@ function strFromNode(node, scope, depth, paramNames) {
 }
 
 // ── BODY SCHEMA: the nested shape, not a flat key list ──────────────────────────────────────────────
-// bodyKeys() returns only top-level key NAMES, discarding p.value entirely — so `{user:{id,role}}` came out
+// bodyKeys() returns only top-level key NAMES, discarding p.value entirely, so `{user:{id,role}}` came out
 // as ["user"] and the nesting was lost. A flat key list is not a schema; you cannot build a valid request
 // from it. This walks the same AST and keeps the structure, plus the type wherever the VALUE is a literal
 // (TS annotations are erased at build time, but `{limit:50, active:!0}` still carries number/boolean).
@@ -848,7 +848,7 @@ function _shapeFromCallers(binding, paramName, depth) {
     if (!name) return null;
 
     // A plain identifier binding gives us exact references. An object METHOD has no binding, so fall
-    // back to matching `*.name(...)` call sites in the same file — the method name is the index.
+    // back to matching `*.name(...)` call sites in the same file, the method name is the index.
     const fscope = fnPath.scope && fnPath.scope.getBinding && fnPath.scope.getBinding(name);
     const args = [];
     if (fscope && fscope.referencePaths) {
@@ -872,7 +872,7 @@ function _shapeFromCallers(binding, paramName, depth) {
     }
 
     // Union what the callers pass. A union, not a first-match: one endpoint routinely takes several
-    // partial bodies — the wire showed /user/me sent {phone} while the code's first caller passed
+    // partial bodies, the wire showed /user/me sent {phone} while the code's first caller passed
     // {name}, and BOTH are real fields of that endpoint.
     const out = {};
     let got = 0;
@@ -885,7 +885,7 @@ function _shapeFromCallers(binding, paramName, depth) {
       }
     }
     if (got) return out;
-    // Nothing in this file. Ask the corpus-wide index — the caller is usually in another chunk.
+    // Nothing in this file. Ask the corpus-wide index, the caller is usually in another chunk.
     const fromIndex = _CALLARGS.get(name + "|" + idx_);
     return fromIndex && Object.keys(fromIndex).length ? fromIndex : null;
   } catch (_) { return null; }
@@ -907,7 +907,7 @@ function bodySchema(node, scope, depth = 0) {
   if (node.type === "Identifier") {               // follow the variable to its construction site
     // A TYPED PARAMETER IS A SHAPE, and it is the one case no runtime walker can reach: `(data: Foo)`
     // has no object literal to read, anywhere. Tried first because when it is available it is the
-    // authoritative answer — it is the contract the application's own compiler checked.
+    // authoritative answer, it is the contract the application's own compiler checked.
     const ts = tsShapeOfParam(node, scope);
     if (ts && typeof ts === "object") return ts;
     const b = scope && scope.getBinding && scope.getBinding(node.name);
@@ -920,7 +920,7 @@ function bodySchema(node, scope, depth = 0) {
     // verb, a path and no contract at all. Measured across six targets: 49% of declared writes had no
     // body, and on one of them a single sink accounted for 109 of them with zero recovered.
     //
-    // The shape is not missing — it is one frame up, at whoever calls changeRole. Babel already tracks
+    // The shape is not missing, it is one frame up, at whoever calls changeRole. Babel already tracks
     // every reference to a binding, so this walks them, takes the argument in the same position, and
     // unions what the callers agree on. Deliberately conservative: same file only (bundlers keep a
     // module together), literal arguments only, and a cap, because this runs per endpoint.
@@ -948,7 +948,7 @@ function bodySchema(node, scope, depth = 0) {
                        v.type === "LogicalExpression" || v.type === "CallExpression"))
                 ? bodySchema(v, scope, depth + 1)
                 : "{EXPR}";
-      // `{EXPR}` was thrown at every non-literal value, which is most of a real request body — and the
+      // `{EXPR}` was thrown at every non-literal value, which is most of a real request body, and the
       // information was not missing, it was being computed by classifyValue() into a SEPARATE field
       // (body_src) that nothing surfaced. classifyValue resolves an identifier to its binding, a parameter
       // to `input:<name>`, a small enum to its members, a uuid/timestamp call to `client-gen:*`, so
@@ -969,7 +969,7 @@ function bodySchema(node, scope, depth = 0) {
 }
 
 // ── QUERY STRING: axios/ky-style `params:{…}` and `query:{…}` were never extracted at all. ──
-// They are URL parameters — half the input surface of a GET — and WRAPPER_FIELDS only listed them so they
+// They are URL parameters, half the input surface of a GET, and WRAPPER_FIELDS only listed them so they
 // would not be mistaken for a body. Same treatment as the body: keys plus literal-derived types.
 function queryInfo(node, scope) {
   const s = bodySchema(node, scope, 0);
@@ -978,7 +978,7 @@ function queryInfo(node, scope) {
 
 // ── CLIENT-LEVEL HEADERS ────────────────────────────────────────────────────────────────────────────
 // Headers are an injection point exactly like body and query params are, but they are almost never written
-// at the call site. Real clients set them ONCE, centrally, and every request inherits them — so reading only
+// at the call site. Real clients set them ONCE, centrally, and every request inherits them, so reading only
 // per-call `{headers:{…}}` finds nothing on any app that uses an interceptor, which is most of them.
 //
 // Three places a client sets headers, all static AST, all in the same bundle:
@@ -988,7 +988,7 @@ function queryInfo(node, scope) {
 //                          ky hooks: {beforeRequest:[req => req.headers.set(…)]}
 //                          new Headers() / h.append(…) inside a fetch wrapper
 //
-// A header NAME is a wire constant — it survives minification the same way a path or a body key does, and
+// A header NAME is a wire constant, it survives minification the same way a path or a body key does, and
 // it is just as likely to be a backtick template literal as a quoted string, so both are accepted.
 // Conditions are kept: `if (cfg.method !== 'GET') cfg.headers.set(CSRF, t)` means the header is non-GET only,
 // which is a real fact about the contract and not noise.
@@ -1006,7 +1006,7 @@ function _hdrName(node, scope) {
   }
   return null;
 }
-// walk upward for an enclosing `if` whose test mentions `method` — that is the GET/non-GET style guard
+// walk upward for an enclosing `if` whose test mentions `method`, that is the GET/non-GET style guard
 function _hdrCondition(path) {
   let p = path, hops = 0;
   while (p && hops++ < 8) {
@@ -1029,8 +1029,8 @@ function generateSrc(node) {
 // ── PER-ENDPOINT CLIENT BINDING ─────────────────────────────────────────────────────────────────────
 // Emitting headers at program level is not good enough: a bundle routinely builds SEVERAL instances with
 // DIFFERENT config, and which one an endpoint uses decides whether it carries auth, cookies, and CSRF.
-// One client builds two — `Yx.create({baseURL:dS,withCredentials:!0})` and `Yx.create({...,withCredentials:!1})`
-// — so "the bundle sets x-xsrf-token" is not a fact about any particular request.
+// One client builds two, `Yx.create({baseURL:dS,withCredentials:!0})` and `Yx.create({...,withCredentials:!1})`
+//, so "the bundle sets x-xsrf-token" is not a fact about any particular request.
 //
 // The binding is three hops of ordinary variable assignment, all resolvable from babel's scope:
 //     dS = "<baseURL>"
@@ -1052,7 +1052,7 @@ function collectClients(ast) {
     return null;
   };
   traverse(ast, {
-    // instance construction: <lib>.create({...}) — axios, ky, got, ofetch all use this shape
+    // instance construction: <lib>.create({...}), axios, ky, got, ofetch all use this shape
     CallExpression(path) {
       const c = path.node.callee;
       if (c && c.type === "MemberExpression" && c.property && c.property.name === "create") {
@@ -1079,7 +1079,7 @@ function collectClients(ast) {
             }
           }
         }
-        // `x.create({...})` is a generic factory shape — i18n, date, store and chart libs all use it. Only
+        // `x.create({...})` is a generic factory shape, i18n, date, store and chart libs all use it. Only
         // treat it as an HTTP client when it carries HTTP evidence, else dozens of minified locals get
         // reported as "clients". An interceptor registration promotes an instance separately, below.
         const httpish = cfg.baseURL || cfg.headers.length ||
@@ -1141,7 +1141,7 @@ function collectClients(ast) {
   return { instances, alias, resolve };
 }
 // an interceptor commonly early-returns for a verb: `if (c.method?.toUpperCase()==='GET') return c;`
-// That guard means every header set AFTER it applies to non-GET only — a real contract fact.
+// That guard means every header set AFTER it applies to non-GET only, a real contract fact.
 function _interceptorGuard(ip) {
   let fnPath = ip.getFunctionParent && ip.getFunctionParent();
   if (!fnPath) return null;
@@ -1198,7 +1198,7 @@ function collectConfigUrls(ast) {
 // With one exception a name test cannot see: a DOM ATTRIBUTE. Popper.js writes
 // `e.attributes["x-out-of-boundaries"] = ""` onto a tooltip element, and that is markup, not a request
 // header. `attributes`, `dataset`, `style` and `classList` are property names fixed by the DOM rather
-// than chosen by the application, so a minifier cannot rename them — the same reason this file anchors
+// than chosen by the application, so a minifier cannot rename them, the same reason this file anchors
 // on wire constants instead of identifiers. Excluding writes into those leaves 2 recovered and 0
 // invented across the corpora.
 //
@@ -1212,13 +1212,13 @@ function collectClientHeaders(ast) {
   const out = new Map();                       // name -> {name, where, condition}
   // `headers:` in UI code means TABLE COLUMN headers, and that object's keys (role, publicKey,
   // userAssignments…) are not HTTP headers. Discriminate on the shape of the NAME, which is a wire
-  // constant with a real convention, rather than on context — context is unreliable after minification.
+  // constant with a real convention, rather than on context, context is unreliable after minification.
   // A genuine header either carries a dash, is an x-/sec-/sech- extension, or is a registered field name.
   const STD = new Set(["accept", "accept-encoding", "accept-language", "authorization", "cache-control",
     "content-type", "content-length", "content-disposition", "cookie", "origin", "referer", "user-agent",
     "if-match", "if-none-match", "range", "prefer", "from", "host", "link", "location", "te", "dnt"]);
   // Headers the browser FORBIDS script from setting. If we "found" one, we did not find a header the app
-  // sends — we found a library's internal constant list (axios ships exactly such an array) or a response
+  // sends, we found a library's internal constant list (axios ships exactly such an array) or a response
   // header name. Listing `host` and `te` as part of a request contract is worse than listing nothing,
   // because it invites someone to build a request around fields that can never be sent.
   const FORBIDDEN = new Set(["host", "connection", "content-length", "date", "dnt", "expect", "keep-alive",
@@ -1267,7 +1267,7 @@ function collectClientHeaders(ast) {
                       (obj && obj.type === "Identifier" && /^h$|head/i.test(obj.name));
         const n = _hdrName(path.node.arguments[0], path.scope);
         // Same lesson as the assignment path: requiring the RECEIVER to be named "headers" is a gate that
-        // minification always defeats — axios ships `l.set("Authorization","Basic "+btoa(…))`, where `l` is
+        // minification always defeats, axios ships `l.set("Authorization","Basic "+btoa(…))`, where `l` is
         // a Headers object with a mangled name. The header NAME is the wire constant a minifier cannot
         // touch, so a registered or Title-Cased-dashed name is evidence enough on its own.
         const byName = n && (STD.has(String(n).toLowerCase()) || _XHDR(String(n)) ||
@@ -1288,14 +1288,14 @@ function collectClientHeaders(ast) {
       if (/head(er|ers)/i.test(src)) { add(n, "defaults", _hdrCondition(path)); return; }
       // Requiring the RECEIVER to be named "headers" is a gate that minification always defeats: the same
       // code ships as `o["X-CSRFToken"]=…`, and `o` matches nothing. Identifier names are exactly what a
-      // minifier destroys, so anchor on the header NAME instead — a wire constant the minifier cannot touch.
+      // minifier destroys, so anchor on the header NAME instead, a wire constant the minifier cannot touch.
       // Tightened against lowercase-dashed keys so CSS-ish maps (s["font-size"]=…) do not register.
       const k = String(n);
       if (STD.has(k.toLowerCase()) || (_XHDR(k) && !_isDomWrite(l.object)) ||
           (/[A-Z]/.test(k) && /^[A-Za-z][A-Za-z0-9]*(-[A-Za-z0-9]+)+$/.test(k)))
         add(k, "defaults", _hdrCondition(path));
     },
-    // 3: any object literal under a `headers:` key — instance defaults and per-call alike
+    // 3: any object literal under a `headers:` key, instance defaults and per-call alike
     ObjectProperty(path) {
       const k = path.node.key && (path.node.key.name ?? path.node.key.value);
       if (String(k).toLowerCase() !== "headers") return;
@@ -1339,7 +1339,7 @@ function _returnedObject(fn, depth = 0) {
     const st = body[i];
     if (st.type === "ReturnStatement" && st.argument) {
       if (st.argument.type === "ObjectExpression") return st.argument;
-      // `return null == e ? e : {a: e.a, b: e.b}` — a generated serializer guards its null case and
+      // `return null == e ? e : {a: e.a, b: e.b}`, a generated serializer guards its null case and
       // returns the real shape on the other branch. Reading only a bare ObjectExpression return gave up on
       // every openapi-generator client, which is the dominant shape in a modern bundle.
       if (st.argument.type === "ConditionalExpression") {
@@ -1355,7 +1355,7 @@ function _returnedObject(fn, depth = 0) {
 // EVERY header this request carries, not just content-type.
 //
 // A request we cannot reproduce is useless at audit time, and "how does it authenticate" is not a separate
-// question from "what headers does it send" — a session cookie and a bearer token are both just headers. The
+// question from "what headers does it send", a session cookie and a bearer token are both just headers. The
 // hard part is that real apps do not write them at the call site: claude.ai ships
 //     fetch(url, {credentials:"include", headers: X(e)})
 // where X() returns {"anthropic-client-platform":…, "anthropic-device-id":…, …}. Stopping at the call left
@@ -1383,7 +1383,7 @@ function setRequestHeaders(node, scope) {
 
 // The body of an XHR is in `.send(data)`, which is a DIFFERENT STATEMENT from the `.open(method, url)`
 // the sink is recorded at. Reading open's arguments recovers the method and the URL and can never recover
-// the body — a corpus sample found POSTs to /_sec/verify and /api/web/v2/tracker sitting bodyless for
+// the body, a corpus sample found POSTs to /_sec/verify and /api/web/v2/tracker sitting bodyless for
 // exactly this reason. Walk the receiver's other calls, the same way setRequestHeaders does.
 function xhrSendBody(node, scope) {
   if (!node || node.type !== "Identifier") return null;
@@ -1413,7 +1413,7 @@ function headerInfo(node, scope, depth = 0) {
     return n.arguments && n.arguments[0] ? headerInfo(n.arguments[0], scope, depth + 1) : null;
   if (n.type === "Identifier") {
     const b = scope && scope.getBinding && scope.getBinding(n.name);
-    // `const h = new Headers(); h.set("X-Api-Key", k); fetch(u, {headers: h})` — the headers are
+    // `const h = new Headers(); h.set("X-Api-Key", k); fetch(u, {headers: h})`, the headers are
     // never written as an object, they are assembled on the binding. `new Headers({…})` already
     // worked because the names sit inside the wrapper; this spelling returned null, so the endpoint
     // reported no headers at all while the names were visible two statements above it. Same shape
@@ -1476,7 +1476,7 @@ function headerInfo(node, scope, depth = 0) {
     const k = String(raw).toLowerCase();
     if (!/^[a-z][a-z0-9-]{1,60}$/.test(k)) continue;         // a header name, not an options field
     // The VALUE is worth as much as the name and was being thrown away for anything that was not a bare
-    // string literal — which is exactly the interesting case. `Authorization: "Bearer " + token` recorded
+    // string literal, which is exactly the interesting case. `Authorization: "Bearer " + token` recorded
     // as "Authorization: null" tells you nothing; as "Bearer {token}" it tells you the scheme. Traced with
     // the same resolver used for URLs, falling back to the value classifier used for bodies.
     let hv = null;
@@ -1497,7 +1497,7 @@ function headerInfo(node, scope, depth = 0) {
   return Object.keys(h).length ? h : null;
 }
 
-// react-query mutation body: `De(url,"PATCH",{transformVariables: v => ({...})})` — the request body is the
+// react-query mutation body: `De(url,"PATCH",{transformVariables: v => ({...})})`, the request body is the
 // mutation's variables run through transformVariables, so the fields live in that fn's RETURN object (the wire
 // body) or its PARAM destructuring (the input shape). Common in claude.ai and any react-query app. Returns
 // {body_keys, body_src} or null.
@@ -1536,7 +1536,7 @@ function collectMemberAccesses(node, name, out, depth) {
     else if (v && typeof v.type === "string") collectMemberAccesses(v, name, out, depth + 1);
   }
 }
-// RESPONSE schema from a react-query callback (onSuccess/select/onData/transformResponse) — its first param IS the
+// RESPONSE schema from a react-query callback (onSuccess/select/onData/transformResponse), its first param IS the
 // response; destructured keys or `data.field` accesses = the response fields. 869 onSuccess + 155 select on claude.ai.
 function responseFromCallback(node, scope, depth = 0) {
   let fn = node;
@@ -1567,14 +1567,14 @@ function responseFromCallback(node, scope, depth = 0) {
 //     sendRequest({ apiHost: APIHost.Beta, method: "post", url: "/v1/compliance-check", data })
 //
 // `/v1/compliance-check` never reaches the URL resolver. Applying the document rule anyway files it
-// under the frontend host — measured on one target: 821 API endpoints, including `DELETE /v4/items/{id}`,
+// under the frontend host, measured on one target: 821 API endpoints, including `DELETE /v4/items/{id}`,
 // filed under a Webflow marketing site that serves none of them, and 857 endpoints filed under two hosts at
 // once. A tester following that map gets a 404 and concludes the endpoint does not exist.
 //
 // Detection is STRUCTURAL, not a hunt for the name `apiHost`: in an options object that already carries a
 // url, any sibling that resolves to a non-path string, or reads a property off a constant table, is
-// selecting a base. The exclusion list below is the stable fetch/axios/react-query option vocabulary —
-// a fixed language-level set, not target-specific naming — because without it `method:"post"` and
+// selecting a base. The exclusion list below is the stable fetch/axios/react-query option vocabulary,
+// a fixed language-level set, not target-specific naming, because without it `method:"post"` and
 // `credentials:"include"` are also non-path strings.
 const _REQ_OPT_KEYS = new Set([
   "method", "url", "endpoint", "path", "route", "uri", "body", "data", "json", "params", "query",
@@ -1592,7 +1592,7 @@ function baseHint(node, scope) {
     const key = String(p.key.name || p.key.value || "");
     if (!key || _REQ_OPT_KEYS.has(key)) continue;
     const v = p.value;
-    // `apiHost: APIHost.Beta` — the constant table may be unresolvable in a minified bundle, but the
+    // `apiHost: APIHost.Beta`, the constant table may be unresolvable in a minified bundle, but the
     // PROPERTY name survives minification (it is a key, not a binding) and identifies the service.
     if (v && v.type === "MemberExpression" && !v.computed && v.property) {
       const hint = String(v.property.name ?? v.property.value ?? "");
@@ -1600,7 +1600,7 @@ function baseHint(node, scope) {
     }
     const r = strFromNode(v, scope, 0);
     if (r && !r.dyn && r.s && r.s !== "{EXPR}" && r.s.length <= 120 && !r.s.startsWith("/")) {
-      // a base is a host, an origin, or a service token — never a path, never a verb
+      // a base is a host, an origin, or a service token, never a path, never a verb
       if (!/^(get|post|put|patch|delete|head|options|query)$/i.test(r.s)) {
         return { key, hint: r.s, resolved: true };
       }
@@ -1618,18 +1618,18 @@ function baseHint(node, scope) {
 //     urlForSentry: "/billing/:id/credit/:id/cancel"
 //
 // Matched by VALUE, never by key name. A sibling string whose slot-erased form equals the slot-erased
-// form of the URL we reconstructed IS that route's template, whatever the key is called — urlForSentry,
+// form of the URL we reconstructed IS that route's template, whatever the key is called, urlForSentry,
 // routeName, transactionName, pathPattern, or a convention nobody has invented yet. (The slot-eraser
 // already existed: analyze.py uses the same normalisation to build its merge key.)
 //
 // It is a CORROBORATOR, not an authority, and the distinction is load-bearing. Measured on one bundle,
-// 9 call sites have the two disagreeing structurally — including
+// 9 call sites have the two disagreeing structurally, including
 //     url: "/business/api-key/deactivate"   vs   urlForSentry: "/business/api-keys/deactivate"
 // a typo in the application's own code. The real URL is what gets sent; the declared twin is worth having
 // for its SLOT NAMES, which is the part the reconstruction cannot know. `:businessId` versus `:invoiceId`
-// is exactly what tells an authorization sweep which id belongs in which hole — substituting the wrong
+// is exactly what tells an authorization sweep which id belongs in which hole, substituting the wrong
 // kind produces a 400 on the baseline, which is UNTESTED and reads like "denied" to anything careless.
-// The query string is not part of the route, and a declared twin routinely omits it — comparing with it
+// The query string is not part of the route, and a declared twin routinely omits it, comparing with it
 // attached reported `/v3/contacts?customerId={}` against `/v3/contacts` as a contradiction when the two
 // agree about every path segment. Compare paths; a difference in query is not a conflict.
 const _slotErase = (t) => String(t || "")
@@ -1688,7 +1688,7 @@ function optsInfo(node, scope) {
     const key = p.key.name || p.key.value;
     // Minifiers routinely re-emit short strings as BACKTICK template literals (`GET`), which parse as
     // TemplateLiteral, not StringLiteral. Accepting only StringLiteral here silently missed the method on
-    // EVERY call in a Vite-built bundle — 163 endpoints defaulted to GET, including real DELETEs and PATCHes.
+    // EVERY call in a Vite-built bundle, 163 endpoints defaulted to GET, including real DELETEs and PATCHes.
     // strFromNode already handles TemplateLiteral for the `url` field; this is the same node type, ten lines up.
     if (key === "method") {
       const v = p.value;
@@ -1705,9 +1705,9 @@ function optsInfo(node, scope) {
       if (key === "json" && !info.body_encoding) info.body_encoding = "json";   // the option names it
     }
     if ((key === "params" || key === "query" || key === "searchParams") && p.value)
-      info.query_schema = queryInfo(p.value, scope);            // URL parameters — previously dropped entirely
+      info.query_schema = queryInfo(p.value, scope);            // URL parameters, previously dropped entirely
     // `url` is not the only key that names the target: custom clients and error reporters use endpoint/path/
-    // route/uri. claude.ai's error reporter carries endpoint:"/v1/mobile/appendMessage" — a real route we were
+    // route/uri. claude.ai's error reporter carries endpoint:"/v1/mobile/appendMessage", a real route we were
     // throwing away. First one wins, so an explicit `url` still takes precedence.
     if ((key === "url" || key === "endpoint" || key === "path" || key === "route" || key === "uri") &&
         p.value && !info._url) {
@@ -1726,10 +1726,10 @@ function optsInfo(node, scope) {
     // `credentials` decides whether the browser attaches cookies at all, which for a cookie-session app IS
     // the auth mechanism. Without it a replayed request silently goes out unauthenticated.
     if (key === "credentials" && p.value && p.value.type === "StringLiteral") info.credentials = p.value.value;
-    // axios spells the same fact `withCredentials: true`. It answers the identical question — does the browser
-    // attach cookies — so it belongs in the same field rather than being dropped for using the other library's name.
+    // axios spells the same fact `withCredentials: true`. It answers the identical question, does the browser
+    // attach cookies, so it belongs in the same field rather than being dropped for using the other library's name.
     // …and a minifier writes `true` as `!0`, so matching only BooleanLiteral finds it in source and never in a
-    // shipped bundle — precisely the case that matters.
+    // shipped bundle, precisely the case that matters.
     if (key === "withCredentials" && p.value) {
       const v = p.value;
       const b = v.type === "BooleanLiteral" ? v.value
@@ -1748,14 +1748,14 @@ function optsInfo(node, scope) {
     const tb = transformBody(info._tv, scope);
     if (tb) { info.body_keys = tb.body_keys; info.body_src = tb.body_src; }
   }
-  // DESCRIPTOR PASSTHROUGH. Everything above reads a fixed vocabulary — body/data/json, params/query,
+  // DESCRIPTOR PASSTHROUGH. Everything above reads a fixed vocabulary, body/data/json, params/query,
   // url/endpoint/path. That vocabulary is a bet on how a client spells things, and the bet loses silently.
   //
   // Keycloak's admin client declares its whole API as a table:
   //     makeRequest({method:"POST", path:"/{id}/role-mappings/clients/{clientUniqueId}",
   //                  urlParamKeys:["id","clientUniqueId"], payloadKey:"roles"})
   // We read `method` and `path`, recognised neither of the other two, and emitted body_keys:null for all 307
-  // of its endpoints — while `urlParamKeys` appears 300 times and `payloadKey` 21 times in the same bundle,
+  // of its endpoints, while `urlParamKeys` appears 300 times and `payloadKey` 21 times in the same bundle,
   // in objects this function is already walking. The contract was parsed and thrown away.
   //
   // The mistake was interpreting instead of recording, so this records. Any sibling key with a literal value
@@ -1786,7 +1786,7 @@ function optsInfo(node, scope) {
 
 // recover body key NAMES (the wire contract survives minification) from an object / JSON.stringify(obj) / var
 // fields that belong to the HTTP WRAPPER, not the payload. If an options object is made ONLY of these AND has a
-// body/json/data field, it's a wrapper — the real body is that field's VALUE (trace into it), never these keys.
+// body/json/data field, it's a wrapper, the real body is that field's VALUE (trace into it), never these keys.
 const WRAPPER_FIELDS = new Set(["body","json","data","method","headers","header","timeout","signal","params","query",
   "stream","credentials","mode","cache","keepalive","redirect","responseType","withCredentials","onUploadProgress",
   "onDownloadProgress","validateStatus","baseURL","url","abortSignal","retries","idempotencyKey"]);
@@ -1810,12 +1810,12 @@ function isWrapperOpts(node) {
 }
 
 // Recover the REAL body field names. Traces backward: unwraps JSON.stringify, follows variable bindings (multi-hop),
-// resolves spreads, and — crucially — when the arg is a wrapper options object, recurses into its body/json/data
+// resolves spreads, and, crucially, when the arg is a wrapper options object, recurses into its body/json/data
 // value instead of emitting the wrapper's own keys. Returns ["{EXPR-body}"] when a wrapper's body can't be resolved
 // (an honest "there's a body we couldn't trace", not garbage).
 // classify a body field's VALUE by its source, read straight off the AST (not name-guessing): a literal is a known
 // constant, crypto.randomUUID()/Date/Intl are client-generated, a fn param is user-input, an enum-var yields its
-// value-set, a member access is app state. This is what makes a request CONSTRUCTIBLE — you know how to fill each field.
+// value-set, a member access is app state. This is what makes a request CONSTRUCTIBLE, you know how to fill each field.
 function classifyValue(v, scope, depth = 0) {
   if (!v || depth > 4) return "?";
   switch (v.type) {
@@ -1823,7 +1823,7 @@ function classifyValue(v, scope, depth = 0) {
     case "NumericLiteral": case "BooleanLiteral": case "BigIntLiteral": return "const";
     case "NullLiteral": return "const:null";
     case "ArrayExpression": {
-      // `items: [{sku, qty}]` used to render as the string "array", which throws away the element shape —
+      // `items: [{sku, qty}]` used to render as the string "array", which throws away the element shape,
       // and an array of objects is where request schemas keep their most interesting fields. Recurse into
       // the elements so a list of objects reports what an element looks like, exactly as a schema would.
       if (!v.elements.length) return "const:[]";
@@ -1927,7 +1927,7 @@ function bodyFields(node, scope, depth = 0) {
 }
 
 // FormData / multipart body: `const fd=new FormData(); fd.append("file",x); fd.append("signature",s); fetch(url,{body:fd})`.
-// The fields are the .append("name",val) calls on the var — collected by walking its enclosing function. Common for
+// The fields are the .append("name",val) calls on the var, collected by walking its enclosing function. Common for
 // file uploads (juicy attack surface). Returns [{key,val}] or null.
 function collectAppends(node, varName, out, depth) {
   if (!node || typeof node !== "object" || depth > 80 || out.length > 40) return;
@@ -1953,7 +1953,7 @@ function formDataAppends(node, scope) {                       // node = an Ident
   // A generated client declares the container and assigns it on a branch:
   //     let s; canConsumeForm(r) ? s = new FormData : s = new URLSearchParams; s.append("file", t.file)
   // Requiring an INITIALISER missed every one of those, which is the whole multipart surface of an
-  // openapi-generator client — 485 write endpoints across two hosts had a body sitting in plain .append() calls.
+  // openapi-generator client, 485 write endpoints across two hosts had a body sitting in plain .append() calls.
   if (!isCtor(init)) {
     init = null;
     for (const cv of (b.constantViolations || [])) {
@@ -1969,7 +1969,7 @@ function formDataAppends(node, scope) {                       // node = an Ident
   return out.length ? out : null;
 }
 
-// A body that IS one of the enclosing function's parameters is not unknown — it is whatever the callers pass. This
+// A body that IS one of the enclosing function's parameters is not unknown, it is whatever the callers pass. This
 // is 70% of the unresolved write bodies in the corpus (938 of 1345), and in minified code the parameter is named
 // `e` or `o`, so the earlier name-keyed lookup skipped it by construction to avoid collisions. Babel's binding
 // graph has no such problem: go parameter → its function → that function's own binding → its reference paths →
@@ -2022,7 +2022,7 @@ function paramCallSiteArgs(node, scope) {
   return out.length ? out : null;
 }
 
-// `let o = {}; o.name = x; o.email = y; post(url, o)` — the initializer alone says `{}`, and we reported an empty
+// `let o = {}; o.name = x; o.email = y; post(url, o)`, the initializer alone says `{}`, and we reported an empty
 // body for a request carrying two fields. An empty object followed by property writes is one of the most ordinary
 // ways to build a payload; the assignments are right there in the binding's own references.
 function mutatedObjectKeys(node, scope) {
@@ -2045,7 +2045,7 @@ function mutatedObjectKeys(node, scope) {
 }
 
 // HOW the body goes on the wire. `body_keys: ["locale"]` does not say whether the request carries
-// `locale=en` or `{"locale":"en"}`, and those are different requests — a payload aimed at the wrong one is
+// `locale=en` or `{"locale":"en"}`, and those are different requests, a payload aimed at the wrong one is
 // rejected before it reaches anything worth testing. The extractor already knows: it walked the node that
 // BUILT the body. It knew and it threw the answer away, and `isCtor` even matched FormData and
 // URLSearchParams with one regex, collapsing multipart and urlencoded into a single unnamed case.
@@ -2092,7 +2092,7 @@ function bodyEncoding(node, scope, depth = 0) {
 // `body: function(e, t = !1) { return null == e ? e : {reportJSONString: e.reportJSONString, …} }(e.body, !1)`
 // An immediately-invoked serializer, which is how openapi-generator and swagger-typescript-api emit a
 // request body. The node at the `body:` key is a CallExpression, so every body reader saw a call it could
-// not resolve and returned null — the endpoint came out with an operation name, a method, a path, and no
+// not resolve and returned null, the endpoint came out with an operation name, a method, a path, and no
 // contract at all. The shape is right there in the function it invokes.
 function _unwrapIIFE(node, depth = 0) {
   if (!node || depth > 3) return node;
@@ -2104,7 +2104,7 @@ function _unwrapIIFE(node, depth = 0) {
 
 // The VALUE of one header, when the header bag was built by mutation. `mutatedObjectKeys` walks exactly
 // this shape and keeps only the key, so `let n = {}; n["Content-Type"] = "application/json"` told us a
-// content-type EXISTS and not what it is — and what it is happens to be the thing that settles how the
+// content-type EXISTS and not what it is, and what it is happens to be the thing that settles how the
 // body is encoded. Same walk, one field further.
 function mutatedHeaderValue(node, scope, wantKey) {
   try {
@@ -2145,13 +2145,13 @@ function mutatedHeaderValue(node, scope, wantKey) {
 //
 // "Contains no path literal" was the only test, and it does not establish what a function returns.
 // `function strip(p){ return p.slice(0,4) }` contains no path literal and truncates its input to "/api";
-// `fetch(strip("/api/orders"))` was reported as /api/orders, marked dynamic:false — a URL the code never
+// `fetch(strip("/api/orders"))` was reported as /api/orders, marked dynamic:false, a URL the code never
 // requests, asserted as fully resolved. That is worse than an unresolved template.
 //
 // So check the shape of the returns instead. Every one must be the parameter itself, or the parameter
 // through an operation that keeps it the same URL: a `.replace(…)`, a trailing trim (`slice(0, -n)`), a
 // trim/toString. A positive-index slice or substring is a truncation and is refused. Keycloak's
-// `s => s.endsWith("/") ? s.slice(0,-1) : s` — the case this branch exists for — passes on both arms.
+// `s => s.endsWith("/") ? s.slice(0,-1) : s`, the case this branch exists for, passes on both arms.
 function _returnsItsArgument(fn, paramName, depth = 0) {
   if (!fn || depth > 3) return false;
   const ok = (n, d) => {
@@ -2194,7 +2194,7 @@ function _returnsItsArgument(fn, paramName, depth = 0) {
 //     e.post("account/personalization/p13n_preferences", t, {}, {...r, "content-type": "application/json"})
 // so a reader that inspects arg[1] or a known `headers` key finds nothing, and the row comes out
 // `body[?]` when the answer is sitting in the call. Custom clients put headers wherever their signature
-// says; there is no position to rely on, and there does not need to be — a `content-type` property is
+// says; there is no position to rely on, and there does not need to be, a `content-type` property is
 // unambiguous wherever it appears.
 function _ctInArgs(args, depth = 0) {
   if (!args || depth > 3) return null;
@@ -2224,7 +2224,7 @@ function bodyKeys(node, scope, depth = 0) {
   node = _unwrapIIFE(node);
   const fd = node.type === "Identifier" && formDataAppends(node, scope);   // multipart/FormData body
   if (fd) return fd.map(a => a.key);
-  // `body: new URLSearchParams({grant_type:"code", client_id:cid})` — a form-encoded body, and the single
+  // `body: new URLSearchParams({grant_type:"code", client_id:cid})`, a form-encoded body, and the single
   // most common shape for an OAuth token request, which makes it a shape worth never missing. It reached
   // here as a NewExpression, matched nothing, and returned null: the endpoint came out contract-free.
   // FormData built the same way is handled above; this is the other constructor that IS a body.
@@ -2238,7 +2238,7 @@ function bodyKeys(node, scope, depth = 0) {
     const viaCaller = paramProvenance(node, scope, depth);
     if (viaCaller && viaCaller.length) return viaCaller;
   }
-  // `data: e.saveData` — the receiver is unresolvable, the PROPERTY is the whole clue.
+  // `data: e.saveData`, the receiver is unresolvable, the PROPERTY is the whole clue.
   if (node.type === "MemberExpression" && !node.computed && node.property) {
     const pn = node.property.name ?? node.property.value;
     const via = pn && _GETTERS.get(String(pn));
@@ -2249,7 +2249,7 @@ function bodyKeys(node, scope, depth = 0) {
     if (nm === "URLSearchParams" || nm === "FormData" || nm === "Headers") {
       const a0 = node.arguments && node.arguments[0];
       if (a0) return bodyKeys(a0, scope, depth + 1);
-      // `new FormData()` then `.append(...)` elsewhere — resolved through the identifier path above.
+      // `new FormData()` then `.append(...)` elsewhere, resolved through the identifier path above.
       return null;
     }
   }
@@ -2266,7 +2266,7 @@ function bodyKeys(node, scope, depth = 0) {
       return bodyKeys(node.arguments[0], scope, depth + 1);
     // Babel compiles `{...base, extra: v}` into a helper call:
     //     (0,a.A)((0,a.A)({}, e), {}, {cardStatus: e.cardStatus ?? LOST})
-    // The helper's NAME is minified past recognition, but the SHAPE is unmistakable — every argument is an
+    // The helper's NAME is minified past recognition, but the SHAPE is unmistakable, every argument is an
     // object or a reference to one, and the result is their union. That is precisely what a spread produces, so
     // unioning the arguments' keys reconstructs the body whatever the helper happens to be called.
     if (node.arguments.length >= 2 &&
@@ -2282,7 +2282,7 @@ function bodyKeys(node, scope, depth = 0) {
     }
     // A generated client hands the body to a SERIALIZER: `body: PatchedSettingsRequestToJSON(t.request)`.
     // The serializer is machine-written and its return statement enumerates every field of the request, so it
-    // is an exact schema — better than anything a call site would give us. Inline it when it lives in this
+    // is an exact schema, better than anything a call site would give us. Inline it when it lives in this
     // chunk; when it does not, `_bodyFn` below records the name for the cross-chunk join.
     {
       const nm = _calleeIdent(c);
@@ -2298,7 +2298,7 @@ function bodyKeys(node, scope, depth = 0) {
         }
       }
     }
-    // Object.assign({}, defaults, overrides) — every argument contributes keys; unwrapObj keeps only the last one,
+    // Object.assign({}, defaults, overrides), every argument contributes keys; unwrapObj keeps only the last one,
     // which silently halves a merged payload.
     if (c && c.type === "MemberExpression" && c.object && c.object.name === "Object" &&
         c.property && c.property.name === "assign") {
@@ -2316,16 +2316,16 @@ function bodyKeys(node, scope, depth = 0) {
       }
     }
     // An options object that is ALL client configuration and carries no body field is a request with NO
-    // BODY — and that is a fact we read, not a failure to resolve one. openapi-fetch is the common case:
+    // BODY, and that is a fact we read, not a failure to resolve one. openapi-fetch is the common case:
     //     y().POST("/workspaces/{id}/credit-limits", {params:{path:{…}}, body: r})
     //     y().DELETE("/workspaces/{id}/credit-limits/{limitId}", {params:{path:{…}}})
     // The POST names its body and resolves. The DELETE has no `body` key at all, so isWrapperOpts saw no
-    // body field, returned false, and this function fell through to listing the object's own keys — which
+    // body field, returned false, and this function fell through to listing the object's own keys, which
     // reported a body field called `params` on 41 one target endpoints. Both halves were wrong: `params` is
     // where the PATH parameters go, and the request it described sends nothing.
     //
     // The trigger is deliberately narrow. `query` is not in it, because `POST /docs/api/search/fts` with
-    // `{query: "…"}` is a search request whose body really is one field called query — six of those in the
+    // `{query: "…"}` is a search request whose body really is one field called query, six of those in the
     // corpus. Only keys that cannot be anything but client configuration count.
     {
       const keys = node.properties
@@ -2336,7 +2336,7 @@ function bodyKeys(node, scope, depth = 0) {
           !keys.some((k) => BODY_FIELDS.includes(k)) &&
           keys.every((k) => WRAPPER_FIELDS.has(k)) &&
           keys.some((k) => CONFIG_ONLY_FIELDS.has(k)))
-        return [];                       // an EMPTY body, established — not an unresolved one
+        return [];                       // an EMPTY body, established, not an unresolved one
     }
     const keys = [];
     for (const p of node.properties) {
@@ -2348,7 +2348,7 @@ function bodyKeys(node, scope, depth = 0) {
     }
     return keys.length ? keys : [];      // {} is an EMPTY body (a known fact), not an unknown one
   }
-  // `t ? JSON.stringify(t) : void 0` — take whichever branch actually carries a body
+  // `t ? JSON.stringify(t) : void 0`, take whichever branch actually carries a body
   if (node.type === "ConditionalExpression") {
     return bodyKeys(node.consequent, scope, depth + 1) || bodyKeys(node.alternate, scope, depth + 1);
   }
@@ -2365,7 +2365,7 @@ function bodyKeys(node, scope, depth = 0) {
       if (mk) return mk;
       if (r) return r;
     }
-    if (b && b.path && b.path.node && !b.path.node.init) {       // `let x; … x = {...}` — assigned, not initialised
+    if (b && b.path && b.path.node && !b.path.node.init) {       // `let x; … x = {...}`, assigned, not initialised
       for (const cv of (b.constantViolations || [])) {
         const n2 = cv.node;
         if (n2 && n2.type === "AssignmentExpression" && n2.right) {
@@ -2377,11 +2377,11 @@ function bodyKeys(node, scope, depth = 0) {
     // The wrapper often READS the body it was handed:
     //     n = e => post("/2fa", e, {headers:{"X-Brick-Reauthentication": e.currentUserPassword}})
     // Every non-method member access on the body parameter names a field of the body, with no call site, no
-    // framework knowledge and no module graph required. It is only ever PARTIAL — the wrapper touches what it
-    // needs and passes the rest through — so it is marked as such rather than presented as the schema. Rare
+    // framework knowledge and no module graph required. It is only ever PARTIAL, the wrapper touches what it
+    // needs and passes the rest through, so it is marked as such rather than presented as the schema. Rare
     // (2 of 45 param-bodied writes on one target) but free, and the fields it does surface tend to be the
     // ones the wrapper had a reason to care about.
-    const cs = paramCallSiteArgs(node, scope);                   // it's a parameter: ask the callers FIRST —
+    const cs = paramCallSiteArgs(node, scope);                   // it's a parameter: ask the callers FIRST,
     if (cs) {                                                    // a caller passes the WHOLE object, the wrapper
       const merged = [];                                         // only the part it needed
       for (const a of cs) { const k = bodyKeys(a.node, a.scope, depth + 1); if (k) merged.push(...k); }
@@ -2412,9 +2412,9 @@ function hasKeys(obj, ...names) {
   return names.every((n) => present.has(n));
 }
 
-// GENERALIZED duck-typed sink — the big unlock for custom wrappers & react-query/SWR fetch-hooks. Reading real
+// GENERALIZED duck-typed sink, the big unlock for custom wrappers & react-query/SWR fetch-hooks. Reading real
 // claude.ai code: reads are `t(`/api/org/${s}/model_settings`,{queryKey:[...]})` and writes are
-// `or(e,org,"secrets",{method:"POST",body:s})` — the callee is a minified per-resource wrapper (NOT fetch/axios),
+// `or(e,org,"secrets",{method:"POST",body:s})`, the callee is a minified per-resource wrapper (NOT fetch/axios),
 // so name-matching misses them and the URL only survives as a literal. But the OPTIONS OBJECT is a fingerprint:
 // any call carrying an object with a network-signal key (method/body/json/queryKey/mutationKey) IS a request sink.
 // URL = opts.url key, else the first path-like ARGUMENT. method = opts.method, else GET if queryKey (react-query
@@ -2423,7 +2423,7 @@ function hasKeys(obj, ...names) {
 const AXIOS_CFG_KEYS = new Set(["params", "headers", "data", "withCredentials", "signal", "timeout", "responseType",
   "baseURL", "auth", "validateStatus", "cancelToken", "paramsSerializer", "onUploadProgress", "onDownloadProgress",
   "maxRedirects", "proxy", "transformRequest", "transformResponse", "decompress", "credentials", "mode", "cache"]);
-// Config keys that are UNAMBIGUOUS — no real payload is named `withCredentials` or `responseType`. Their mere
+// Config keys that are UNAMBIGUOUS, no real payload is named `withCredentials` or `responseType`. Their mere
 // presence settles it. The rest of AXIOS_CFG_KEYS (`params`, `data`, `auth`, `mode`, `cache`) are perfectly
 // ordinary field names too, so one of them ALONE proves nothing.
 const STRONG_CFG_KEYS = new Set(["withCredentials", "responseType", "validateStatus", "paramsSerializer",
@@ -2431,8 +2431,8 @@ const STRONG_CFG_KEYS = new Set(["withCredentials", "responseType", "validateSta
   "headers", "signal", "timeout", "maxRedirects", "decompress"]);
 // Is this object argument a request CONFIG rather than a payload? Used wherever position alone is ambiguous:
 // `.delete(url, X)`, `.post(url, X)` and the wrapper's internal sink. Uppy ships
-// `this.post(id + "/preauth/", {params: this.companionKeysParams})` — a genuine body whose single key happens to
-// be an axios config name — so a one-key object needs a STRONG key to count as config; otherwise it is data.
+// `this.post(id + "/preauth/", {params: this.companionKeysParams})`, a genuine body whose single key happens to
+// be an axios config name, so a one-key object needs a STRONG key to count as config; otherwise it is data.
 function looksLikeConfigBag(node) {
   if (!node || node.type !== "ObjectExpression" || !node.properties.length) return false;
   const names = [];
@@ -2448,12 +2448,12 @@ function looksLikeConfigBag(node) {
 //
 //   s(`/api/organizations/${e}/invite_link`, "POST", {...t, async onSuccess(r, ...i){ … }})
 //
-// Read as a body that reported `["onSuccess","onError"]` — callback names, on 119 of claude.ai's endpoints,
+// Read as a body that reported `["onSuccess","onError"]`, callback names, on 119 of claude.ai's endpoints,
 // which is most of what its contract recall appeared to be. The real body is supplied later, at
 // `mutate(variables)`, and is genuinely not at this call site: the honest answer is that we do not have it.
 //
 // A spread is tolerated here, unlike in looksLikeConfigBag, because `{...t, onSuccess(){}}` is the shape
-// these wrappers are written in — the spread forwards the caller's options and says nothing either way.
+// these wrappers are written in, the spread forwards the caller's options and says nothing either way.
 // The decision rests on the NAMED keys: every one of them an option, and at least one that no payload
 // would carry.
 const RQ_OPTION_KEYS = new Set([
@@ -2466,12 +2466,12 @@ const RQ_OPTION_KEYS = new Set([
 const RQ_STRONG = new Set(["onSuccess", "onError", "onSettled", "onMutate", "mutationKey", "mutationFn",
                            "queryKey", "queryFn", "gcTime", "staleTime", "getNextPageParam"]);
 // Which positional-method wrappers take their options in the trailing argument. Learned per file from the
-// call sites that are UNAMBIGUOUS — one carrying `onSuccess` or `mutationKey` settles the signature — and
+// call sites that are UNAMBIGUOUS, one carrying `onSuccess` or `mutationKey` settles the signature, and
 // then applied to that wrapper's other calls, where the same argument holds only `{enabled}` or `{meta}`.
 //
 // Necessary because the key names alone cannot decide those: `POST /mcp/remote_server {enabled: true}` is a
 // perfectly ordinary body, and the codebase relies on reading a real payload out of this position (295 of
-// claude.ai's bodies come from it). What settles it is the WRAPPER, not the object — `rt(path, "POST", …)`
+// claude.ai's bodies come from it). What settles it is the WRAPPER, not the object, `rt(path, "POST", …)`
 // takes react-query options in every one of its 27 call sites, and one of them says so out loud.
 let _QUERY_OPT_CALLEES = new Set();
 function _calleeKey(c) {
@@ -2533,7 +2533,7 @@ const _OPTSDBG = !!process.env.AMBIT_OPTS_DEBUG;
 // a local variable assigned two lines up is a scope walk, a call to a payload builder is an inlining problem, and a
 // FormData assembled across ten statements is a different job again. Under AMBIT_BODY_DEBUG each unresolved body
 // carries the SOURCE of the argument we gave up on, so the remaining work can be ranked by what actually occurs
-// rather than by what seems likely. Off by default — this is diagnostic weight, not output.
+// rather than by what seems likely. Off by default, this is diagnostic weight, not output.
 const _BODYDBG = !!process.env.AMBIT_BODY_DEBUG;
 function _dbgBody(rec, node, callNode) {
   if (!_BODYDBG) return rec;
@@ -2619,13 +2619,13 @@ function calleeName(node) {
 //     const cache = new Map();            cache.get("user/profile")       -> GET user/profile
 //     const qs = new URLSearchParams(s);  qs.get("redirect/next")         -> GET redirect/next
 //
-// Both were emitted as endpoints. Arguing about the argument cannot fix this — "user/profile" is a
+// Both were emitted as endpoints. Arguing about the argument cannot fix this, "user/profile" is a
 // perfectly good path and the problem was never the path. The receiver is what is wrong, and where the
 // receiver is a local binding its CONSTRUCTION SITE says what it is. That is evidence, not a guess: a
 // value built by `new Map()` is a Map, and a Map has no endpoints.
 //
 // Only built-ins whose methods actually collide with an HTTP verb are listed. The check is deliberately
-// one-sided — it rejects a receiver it can PROVE is not a client, and says nothing about the rest, so a
+// one-sided, it rejects a receiver it can PROVE is not a client, and says nothing about the rest, so a
 // client this cannot resolve is treated exactly as it was before.
 const NON_HTTP_CTORS = new Set([
   "Map", "WeakMap", "Set", "WeakSet",     // get/set/add/delete/has
@@ -2664,7 +2664,7 @@ const SINK_FNS = new Set(["fetch"]);
 //
 // so `Ds` is `$templateCache` and `Ds.put(key, template)` writes a cache entry. It is not an HTTP PUT, and
 // it was being recorded as one: four fabricated `PUT /dialogs/*.html` endpoints on this target, which then
-// attracted a base URL and became `PUT http://www.amcharts.com/lib/3/images/dialogs/error.html` — a route
+// attracted a base URL and became `PUT http://www.amcharts.com/lib/3/images/dialogs/error.html`, a route
 // that exists nowhere, indistinguishable in the map from one that does.
 //
 // Reading the annotation is not name-guessing: the array IS Angular's published API for surviving
@@ -2696,8 +2696,8 @@ function angularServiceOf(objNode, scope) {
 function collectAxiosInstances(ast) {
   const inst = {};
   // Anchor on the SHAPE (an object argument carrying `baseURL`), never on the callee being named `create`.
-  // One app's staking app builds every one of its nine service clients through a local factory —
-  // `qb = ({baseURL,timeout,headers,networkId}) => wye(Zv.create({baseURL,…}), networkId)` — so `qb({baseURL:…})`
+  // One app's staking app builds every one of its nine service clients through a local factory,
+  // `qb = ({baseURL,timeout,headers,networkId}) => wye(Zv.create({baseURL,…}), networkId)`, so `qb({baseURL:…})`
   // is an axios instance in every way that matters and matched none of `.create`. Requiring the name is the same
   // mistake as detecting headers by receiver name: minifiers and one wrapper layer both defeat it, while `baseURL`
   // as a config key is essentially unique to HTTP clients.
@@ -2705,13 +2705,13 @@ function collectAxiosInstances(ast) {
   //
   // This matched the key `baseURL` exactly, and `baseURL` is AXIOS's option name. Applying axios's
   // vocabulary to a client that is not axios is how one target's whole API went missing: their client is a
-  // custom class configured `baseUrl: "https://api.client.example"` — one lowercase letter — so 186 of
+  // custom class configured `baseUrl: "https://api.client.example"`, one lowercase letter, so 186 of
   // ~280 call sites lost their base and 62 API endpoints were filed under the frontend that served the
   // bundle. A rule that turns on a target's spelling choice also fails on `base_url`, `apiBase`, `urlBase`
   // or a name in any language the developers happen to think in.
   //
   // The VALUE does not have that problem. `https://api.client.example` is an origin whatever key it sits
-  // under, and a bare origin inside a client's construction options is a base — there is nothing else it
+  // under, and a bare origin inside a client's construction options is a base, there is nothing else it
   // could be. So: find properties whose value RESOLVES to an origin, and fall back to the name only to
   // break a tie between several. Matching a published library option (fetch's `method`, Firebase's
   // `projectId`) stays fine; matching what one application called its own variable does not.
@@ -2722,7 +2722,7 @@ function collectAxiosInstances(ast) {
   // A key that says "base" OUTRIGHT, as opposed to the broad family above. The distinction earns its
   // keep for a smaller reason than it was introduced for: it admits `basePath` and `prefixUrl`, which
   // the family above never matched at all, so an ORIGIN under either of those keys is now a base where
-  // before it was ignored. It does NOT admit a relative value — see the value test below for why.
+  // before it was ignored. It does NOT admit a relative value, see the value test below for why.
   const EXPLICIT_BASE = /^(?:api|root|service|server)?_?base_?(?:url|uri|path|address|host)?$|^prefix_?url$/i;
   const originProps = (call, scope) => {
     const arg = call.arguments && call.arguments[0];
@@ -2741,11 +2741,11 @@ function collectAxiosInstances(ast) {
       // accepting one under an explicit base key fixed the fixture case and made Grafana worse, adding
       // four paths like
       //     /apis/dashboard.grafana.app/v0alpha1/namespaces/default/api/datasources/uid/{P}/correlations
-      // which glues the k8s-style resource base onto the legacy REST API — two different Grafana APIs,
+      // which glues the k8s-style resource base onto the legacy REST API, two different Grafana APIs,
       // and four correct records (`DELETE /api/datasources/uid/{P}/correlations/{b}`) replaced by wrong
       // ones. The base is real and belongs to an RTK Query client whose own paths are `/correlations`;
       // it reached these calls because `applyBase` looks instances up by receiver NAME, and a minified
-      // name collides across modules. An origin value masks that — a wrong origin is obvious and rare —
+      // name collides across modules. An origin value masks that, a wrong origin is obvious and rare,
       // while a relative one silently produces a real-looking route pointed at the wrong API, which is
       // the worst output this tool can produce. Fixing it properly means attributing a base by the
       // receiver's BINDING rather than its name; until then this stays origin-only.
@@ -2754,12 +2754,12 @@ function collectAxiosInstances(ast) {
       //
       // Value-shape alone is not enough and it is worth being precise about why, because the first cut of
       // this dropped the name test entirely and immediately fabricated four endpoints. An options object
-      // routinely carries several origins — a docs link, a CDN, an asset root — and they are all origins.
+      // routinely carries several origins, a docs link, a CDN, an asset root, and they are all origins.
       // amcharts is configured `pathToImages: "http://www.amcharts.com/lib/3/images/"`, which no test on
       // the VALUE can distinguish from an API base, and treating it as one produced
       // `GET http://www.amcharts.com/lib/3/images/environment/list/names` on four unrelated clients.
       //
-      // So the key is still consulted — but as a broad, case-insensitive FAMILY rather than the single
+      // So the key is still consulted, but as a broad, case-insensitive FAMILY rather than the single
       // literal `baseURL`, which was axios's spelling and missed one target's `baseUrl` by one character
       // and took 186 call sites with it. baseUrl, baseURL, base_url, apiBase, apiBaseUrl, baseHost,
       // origin, endpoint, server all match. A name outside the family is not trusted on its own.
@@ -2773,8 +2773,8 @@ function collectAxiosInstances(ast) {
   // object literal, bounded, and let the value test decide which one is a base.
   // ARGUMENTS ONLY, and only through nested calls. The first version of this also walked `callee`,
   // `object` and `body`, which is how an amcharts options object buried in an unrelated subtree became
-  // the base for four different clients: `/environment/list/names` and `/logs/overview` — real one target
-  // API paths — came out as `http://www.amcharts.com/lib/3/images/environment/list/names`. A fabricated
+  // the base for four different clients: `/environment/list/names` and `/logs/overview`, real one target
+  // API paths, came out as `http://www.amcharts.com/lib/3/images/environment/list/names`. A fabricated
   // absolute path is worse than a bare relative one, because the relative path is merely incomplete while
   // the fabricated one is a confident 404 that nothing downstream can tell from a real route.
   //
@@ -2795,7 +2795,7 @@ function collectAxiosInstances(ast) {
     for (const obj of objectsIn(call)) hits.push(...originProps({ arguments: [obj] }, scope));
     if (!hits.length) return null;
     if (hits.length === 1) return { base: hits[0].base, dyn: hits[0].dyn };
-    // Several origins in one options object — a base beside a docs link or a websocket URL. Break the tie
+    // Several origins in one options object, a base beside a docs link or a websocket URL. Break the tie
     // on the NAME here, where it is a hint and not the gate; if that does not single one out, take none.
     // A wrong base fabricates routes that 404, which is worse than a bare relative path that is merely
     // incomplete (the same reasoning as the ambiguous-binding rule below).
@@ -2807,7 +2807,7 @@ function collectAxiosInstances(ast) {
   // `this.axiosInstance = axios.create({baseURL: …})` with a DIFFERENT base, and keying the map on the bare
   // property name let the last one win: every other class's calls inherited the saved-blocks base, so
   // `this.axiosInstance.post("/events/created")` was emitted as
-  // `{API_BASE_URL}/accounts/{_id}/items/events/created` — a route that does not exist.
+  // `{API_BASE_URL}/accounts/{_id}/items/events/created`, a route that does not exist.
   // It inflated the contract with dozens of fabricated paths and every one of them 404s.
   // An ambiguous binding must yield NO base, not a wrong one: the bare relative path is true as far as it goes
   // and the firing side probes prefixes anyway, whereas a fabricated absolute path is unfalsifiable noise.
@@ -2833,11 +2833,11 @@ function collectAxiosInstances(ast) {
       }
     });
   } catch {}
-  // drop every key the file bound to two different bases — we cannot tell which call site meant which
+  // drop every key the file bound to two different bases, we cannot tell which call site meant which
   for (const k of Object.keys(bases)) if (bases[k].size > 1) delete inst[k];
   // ALIASES. The call sites rarely name the instance directly: an app with a mainnet and a testnet deployment picks
   // between two clients, and the chooser is what the code calls. One app: `n = useMemo(() => e===1 ? clientA : clientB)`,
-  // where clientA is the mainnet client and clientB the testnet one — so `n.get("/validators")` hits either
+  // where clientA is the mainnet client and clientB the testnet one, so `n.get("/validators")` hits either
   // staking-api.example.com/api/v2 or staking-api-test…, depending on a runtime chain id. Both are real
   // endpoints and we want both, so a conditional contributes EVERY branch rather than being written off as dynamic.
   // Two passes reaches an alias-of-an-alias; declaration order in the bundle is not dependency order.
@@ -2848,7 +2848,7 @@ function collectAxiosInstances(ast) {
       const a = unwrapAlias(node.consequent, depth + 1), b = unwrapAlias(node.alternate, depth + 1);
       return (a || b) ? [...(a || []), ...(b || [])] : null;
     }
-    // any single-argument wrapper around a thunk — useMemo(() => X, deps), lazy(() => X), a plain IIFE
+    // any single-argument wrapper around a thunk, useMemo(() => X, deps), lazy(() => X), a plain IIFE
     if (node.type === "CallExpression") {
       const fn = node.arguments.find((a) => a && (a.type === "ArrowFunctionExpression" || a.type === "FunctionExpression"));
       if (fn) {
@@ -2881,7 +2881,7 @@ function joinBase(base, tmpl) {
 }
 
 // ── GENERIC URL-OBJECT sink discovery ────────────────────────────────────────────────────────────────────────
-// `new URL(path, base)` constructed then handed to ANY function is a network send — you build a URL object to SEND it.
+// `new URL(path, base)` constructed then handed to ANY function is a network send, you build a URL object to SEND it.
 // Rooting the sink on the URL (not the callee name) catches bare-function axios instances (one per service: sv/av/lv…)
 // and any custom client the name-based rules miss. Stack-agnostic by construction.
 function newUrlNode(node, scope, depth) {
@@ -2928,14 +2928,14 @@ function resolveNewUrl(urlNode, scope) {   // `new URL(pathArg, baseArg)` → ba
   return { template, dynamic: p.dynamic || (!!baseArg && !base), key: findRegistryKey(pathArg) };
 }
 
-// enclosing function's binding NAME + params — so a body that's a param can be resolved from that fn's call-sites.
+// enclosing function's binding NAME + params, so a body that's a param can be resolved from that fn's call-sites.
 function enclosingFnInfo(path) {
   const fp = path.getFunctionParent && path.getFunctionParent();
   if (!fp) return null;
   const fn = fp.node; let name = null;
   if (fn.id && fn.id.name) name = fn.id.name;                                        // named function
   else if ((fn.type === "ObjectMethod" || fn.type === "ClassMethod" || fn.type === "ClassPrivateMethod") && fn.key)
-    name = fn.key.name || fn.key.value;                                              // method shorthand `update(e){…}` — key on the fn
+    name = fn.key.name || fn.key.value;                                              // method shorthand `update(e){…}`, key on the fn
   else {
     const pn = fp.parentPath && fp.parentPath.node;                                  // arrow assigned to a name
     if (pn) {
@@ -2952,7 +2952,7 @@ function enclosingFnInfo(path) {
 // object of named methods grouped by resource:
 //   {validators:{ addNewNodeToNetwork: async e => n.post(`/validators/add`, e), … }, auth:{ login: … }}
 // `addNewNodeToNetwork` says more about intent than `POST /validators/add` ever will, and the enclosing keys are an
-// AUTHORED feature map — strictly better than the one we infer by clustering path prefixes, and available for free.
+// AUTHORED feature map, strictly better than the one we infer by clustering path prefixes, and available for free.
 // Property keys are the data contract, so they survive minification; we were walking straight past them.
 // Skip 1-2 char keys: those are minified locals, not names.
 const _structuredQ = (v) => !!v && typeof v !== "string" && (Array.isArray(v) ? v.length : Object.keys(v).length);
@@ -2975,7 +2975,7 @@ function opNameOf(path) {
 }
 
 // tag a record whose body is a whole PARAM so the post-pass resolves it from the wrapper's call-sites (don't give up
-// at "it's a variable" — follow it one hop to the caller). Skip 1-2 char minified names (collision-prone).
+// at "it's a variable", follow it one hop to the caller). Skip 1-2 char minified names (collision-prone).
 function tagBodyParam(rec, argNode, path) {
   const info = enclosingFnInfo(path);
   if (!info || !info.name || info.name.length < 3) return;
@@ -2987,7 +2987,7 @@ function tagBodyParam(rec, argNode, path) {
 //   updateBillingAccount = (t, n = {}) => this.request({path:"/billing/account", method:"PATCH", body:t, ...n})
 // Generated clients (swagger-typescript-api, openapi-typescript-codegen) emit exactly that for EVERY write in the
 // API, so one unhandled shape costs a whole host: one console had 130 of 133 writes with no body, while the
-// call sites — `Le.updateBillingAccount({billing_account:x})` — sat in the same bundle, already indexed. Method
+// call sites, `Le.updateBillingAccount({billing_account:x})`, sat in the same bundle, already indexed. Method
 // names survive minification because they ARE the contract, so keying the lookup on them is safe here.
 function tagOptsBodyParam(rec, callNode, path) {
   if (!rec || !callNode || !Array.isArray(callNode.arguments)) return;
@@ -3005,7 +3005,7 @@ function tagOptsBodyParam(rec, callNode, path) {
 
 function collectWrappers(ast) {
   // A null prototype, because the keys are NAMES FROM THE SOURCE. Once class methods are collected, one of
-  // those names is `constructor` — and on a plain object `wrappers["constructor"]` returns Object from the
+  // those names is `constructor`, and on a plain object `wrappers["constructor"]` returns Object from the
   // prototype chain, so `(wrappers[name] || []).some(...)` threw "some is not a function" and the extractor
   // returned NOTHING for any file containing a class. It failed loudly per file and quietly in aggregate:
   // 11,559 records became 4,703 with no error surfaced, because the batch runner only reports a failure
@@ -3014,13 +3014,13 @@ function collectWrappers(ast) {
   const consider = (name, params, fnPath, isMethod) => {
     // Keyed by NAME alone, this kept the first function of that name and ignored the rest. In a minified
     // bundle every other function is called `t`, so a second scope's `t` inherited the first one's URL
-    // template — `t("b")` came out as /api/one/b, marked dynamic:false, i.e. asserted as fully resolved
+    // template, `t("b")` came out as /api/one/b, marked dynamic:false, i.e. asserted as fully resolved
     // when the request is /api/two/b. Keep them all, each tagged with the function node it came from, and
     // let the call site match on the binding it actually resolves to.
     if (!name || !params.length) return;
     if ((wrappers[name] || []).some((w) => w.fnNode === fnPath.node)) return;
     // A parameter WITH A DEFAULT is an AssignmentPattern, not an Identifier, and was being mapped to a
-    // sentinel that matches nothing — so `post(path, data, params, headers, suffix = ".json")` never even
+    // sentinel that matches nothing, so `post(path, data, params, headers, suffix = ".json")` never even
     // recognised `suffix` as a parameter, and the default that completes the URL was invisible. The name
     // comes from the left side and the default from the right, and the default is what a call site that
     // omits the argument actually sends.
@@ -3034,7 +3034,7 @@ function collectWrappers(ast) {
         if (best) return;
         const n = p.node, c = n.callee;
         // a body sink INSIDE the wrapper: raw fetch, a client method (.get/.post), OR anything carrying an options
-        // object (react-query hook / custom fetcher). Broadened so base-param wrappers around ANY sink resolve —
+        // object (react-query hook / custom fetcher). Broadened so base-param wrappers around ANY sink resolve,
         // claude.ai's org helpers wrap the react-query hook `t(`${e}/invites`,{queryKey})`, not raw fetch.
         const isFetch = c && c.type === "Identifier" && SINK_FNS.has(c.name);
         const isMethodCall = c && c.type === "MemberExpression" && c.property && HTTP_METHODS.has((c.property.name || "").toLowerCase());
@@ -3045,7 +3045,7 @@ function collectWrappers(ast) {
         //     return this.dispatch({path: `/1.1/${path}${suffix}`, method: "POST", data, params, headers})
         // where argument 0 IS the options object and the path is a key inside it. Reading argument 0 as the
         // URL then resolves an ObjectExpression, finds no template, and the method never registers as a
-        // wrapper — so every call through it keeps the bare relative string the caller passed.
+        // wrapper, so every call through it keeps the bare relative string the caller passed.
         let urlNode = n.arguments[0];
         if (urlNode.type === "ObjectExpression") {
           const pk = urlNode.properties.find((pr) => pr.type === "ObjectProperty" && pr.key &&
@@ -3053,7 +3053,7 @@ function collectWrappers(ast) {
           if (pk) urlNode = pk.value;
         }
         const t = resolveUrl(urlNode, p.scope, paramNames);
-        // must reference a param; needs a real literal path segment UNLESS it's a definite fetch/Request sink —
+        // must reference a param; needs a real literal path segment UNLESS it's a definite fetch/Request sink,
         // `fetch(`${base}/${action}`)` is an all-param URL-builder (AI streaming helpers); precision comes from the
         // call-site arg resolution + the LOOKS_PATH filter, not from a literal segment here.
         const realSeg = /[/][\w-]/.test(t.template.replace(/\x01\w+\x01|\{[^}]*\}/g, ""));
@@ -3065,15 +3065,15 @@ function collectWrappers(ast) {
           bestMethod = oi.method || (isMethodCall ? c.property.name.toUpperCase() : (hasQK ? "GET" : (oi.body_keys ? "POST" : null)));
           // Two body forms were being dropped here, and together they are the single largest cause of bodyless
           // writes in the corpus (129 of 233 unresolved bodies came from wrapper sinks):
-          //   1. a POSITIONAL body — `client.post(url, data)` carries no options object, so optsInfo never ran;
-          //   2. a body that is one of the WRAPPER'S OWN PARAMETERS — unknowable inside the wrapper, but sitting
+          //   1. a POSITIONAL body, `client.post(url, data)` carries no options object, so optsInfo never ran;
+          //   2. a body that is one of the WRAPPER'S OWN PARAMETERS, unknowable inside the wrapper, but sitting
           //      in plain sight at every call site. The URL template already resolves through call-site args by
           //      param index; the body simply never learned the same trick.
           let bnode = null;
           if (!optsArg && isMethodCall && /^(post|put|patch)$/i.test(c.property.name || "")) {
             const cand = n.arguments[1] || null;
             // …but arg1 is only the body if it is not a CONFIG bag. `X.post(url,{method,signal})` reported a body of
-            // ["method","signal"] — a fabricated contract, which is worse than an absent one. Same content test as
+            // ["method","signal"], a fabricated contract, which is worse than an absent one. Same content test as
             // the DELETE case: config keys mean config.
             bnode = looksLikeConfigBag(cand) ? null : cand;
           }
@@ -3118,7 +3118,7 @@ function collectWrappers(ast) {
     //   }
     //
     // The method BUILDS the URL from its own argument, so `client.post("account/deactivate", body)` is
-    // POST /1.1/account/deactivate.json — and without this the call site yields the bare relative string
+    // POST /1.1/account/deactivate.json, and without this the call site yields the bare relative string
     // `account/deactivate`, which is not a path anyone can request. x's whole legacy API reaches the map
     // that way.
     "ClassMethod|ObjectMethod"(p) {
@@ -3129,7 +3129,7 @@ function collectWrappers(ast) {
   return wrappers;
 }
 // The function an identifier ACTUALLY resolves to at this call site. Two scopes each declaring `t` are two
-// different functions, and a name lookup cannot tell them apart — which is the whole problem in a minified
+// different functions, and a name lookup cannot tell them apart, which is the whole problem in a minified
 // bundle, where names are one letter and reused constantly.
 function _fnOfBinding(name, scope) {
   try {
@@ -3147,7 +3147,7 @@ function _fnOfBinding(name, scope) {
 }
 
 // A reference to a JavaScript BUILTIN is never a path segment. A polyfill registry calls its helper with
-// `Array.prototype.push`, `String.prototype.charCodeAt`, `Symbol.iterator` — and substituting those into a
+// `Array.prototype.push`, `String.prototype.charCodeAt`, `Symbol.iterator`, and substituting those into a
 // wrapper's URL template produced DELETE /gw/v1/auth/passkeys/Map.prototype.forEach: a route that
 // does not exist, filed under a real API prefix, which is worse than the endpoint simply being missing.
 // 11 of these on one corpus host. The value is unknowable at this call site, so say so.
@@ -3169,7 +3169,7 @@ function renderWrapper(w, callArgs, scope) {
   const tmpl = w.tmpl.replace(/\x01(\w+)\x01/g, (_, pname) => {
     const idx = w.paramNames.indexOf(pname);
     // A DEFAULT completes the URL only for a client-class method, where the default IS part of the
-    // address — `post(path, …, suffix = ".json")` builds /1.1/<path>.json when the caller omits it.
+    // address, `post(path, …, suffix = ".json")` builds /1.1/<path>.json when the caller omits it.
     // Applying the same rule to plain function wrappers changed long-standing behaviour and produced
     // /bin/twitter/api-proxy.jsony: a wrapper matched by NAME alone to a call whose argument was never a
     // path. The defaults were added for the class case; keep them there.
@@ -3179,7 +3179,7 @@ function renderWrapper(w, callArgs, scope) {
     const u = strFromNode(arg, scope, 0, null);
     if (_isBuiltinRef(u.s)) { dynamic = true; return "{EXPR}"; }
     if (u.dyn) dynamic = true;
-    return u.s;   // keep the resolved base even if it has named {slots} — `/api/organizations/{uuid}` is the win
+    return u.s;   // keep the resolved base even if it has named {slots}, `/api/organizations/{uuid}` is the win
   });
   if (tmpl.includes("{EXPR}")) dynamic = true;
   return { template: tmpl, dynamic };
@@ -3201,18 +3201,18 @@ function methodBodyFromArgs(args, scope) {
 // ── RESPONSE-SCHEMA forward-trace ───────────────────────────────────────────────────────────────────────────
 // The "nobody does this" frontier. After a request, code consumes the response: `const d=await r.json(); d.members;
 // d.next_page_token` or `const {items}=await r.json()` or `(await t.json()).members`. The property accesses on the
-// .json() result ARE the response schema (field names survive minification — wire contract). We collect them per
+// .json() result ARE the response schema (field names survive minification, wire contract). We collect them per
 // ENCLOSING FUNCTION, then attach to that function's sink IFF the function has exactly one sink (avoids
-// misattribution when a fn makes several calls). Partial by design — high-precision where it fires.
+// misattribution when a fn makes several calls). Partial by design, high-precision where it fires.
 // ── RESPONSE SHAPE FROM THE CALL SITE ────────────────────────────────────────────────────────────────────────
 // The existing collector anchors on `.json()`, which only ever sees the raw-fetch idiom. Every client library
-// parses the body for you — `const {data} = await api.get(url)` never calls .json() — so for the majority of the
+// parses the body for you, `const {data} = await api.get(url)` never calls .json(), so for the majority of the
 // corpus the response schema was structurally invisible, which is why REST coverage sat at 1.4% while GraphQL,
 // where the response shape is written into the query text, was complete.
 //
 // Anchoring on the CALL instead works for both, and it attaches to the right record by construction rather than
 // through the enclosing-function heuristic: we already have the call node, so we can just read how its result is
-// consumed. Three consumption shapes cover essentially all of it — await into a binding, await into a member
+// consumed. Three consumption shapes cover essentially all of it, await into a binding, await into a member
 // access, and a .then() callback.
 const _RESP_BUILTIN = new Set([
   "then", "catch", "finally", "length", "constructor", "prototype", "toString", "valueOf", "hasOwnProperty",
@@ -3228,7 +3228,7 @@ const _RESP_BUILTIN = new Set([
 // ["data","status"] describes the LIBRARY, not the API, so unwrap one level and report what is inside.
 const _RESP_ENVELOPE = new Set(["data", "body", "result", "response", "payload"]);
 // The wider set is only used to ASK "is this nothing but an envelope?". One API wraps every reply as
-// {meta, data}, so the recovered schema came back as ["meta","data"] for 90 endpoints — a description of the
+// {meta, data}, so the recovered schema came back as ["meta","data"] for 90 endpoints, a description of the
 // framing, identical for every route, and worse than an empty answer because it reads like a real payload.
 // `meta`/`status`/`error` can be genuine fields, which is why they belong here and not in the unwrap set:
 // they are grounds for suspecting an envelope, never grounds for stripping one.
@@ -3252,7 +3252,7 @@ function _fieldsOf(fnPath, name, viaEnvelope) {
                 o.object.name === name && o.property && _RESP_ENVELOPE.has(o.property.name))) return;
         } else if (!(o && o.type === "Identifier" && o.name === name)) return;
         // A property you CALL is a method, not a data field. One dashboard's schemas came back as ["on"],
-        // ["apiFetch"], ["toUrl"] — every one of them an invocation on the variable, none of them anything the
+        // ["apiFetch"], ["toUrl"], every one of them an invocation on the variable, none of them anything the
         // server returns. Same reasoning that removed `toLowerCase` from response schemas, generalised: the
         // blocklist can never name every helper an app defines, but the call syntax identifies all of them.
         const par = mp.parentPath;
@@ -3275,7 +3275,7 @@ function _patternKeys(pattern) {
   for (const pr of (pattern.properties || [])) {
     if (pr.type !== "ObjectProperty" || !pr.key) continue;
     const k = pr.key.name ?? pr.key.value;
-    // `const {data:{user,org}} = await get(...)` — the envelope key is noise, its CONTENTS are the schema
+    // `const {data:{user,org}} = await get(...)`, the envelope key is noise, its CONTENTS are the schema
     if (_RESP_ENVELOPE.has(k) && pr.value && pr.value.type === "ObjectPattern") {
       for (const k2 of _patternKeys(pr.value)) out.add(k2);
     } else if (_respClean(k)) out.add(k);
@@ -3297,14 +3297,14 @@ function _responseAtCallSite(path) {
   try {
     let p = path.parentPath;
     if (!p) return null;
-    // `X.then(d => …)` — the callback parameter IS the parsed response
+    // `X.then(d => …)`, the callback parameter IS the parsed response
     if (p.node && p.node.type === "MemberExpression" && p.node.property && p.node.property.name === "then" &&
         p.parentPath && p.parentPath.node && p.parentPath.node.type === "CallExpression") {
       const thenCall = p.parentPath;
       const cb = thenCall.node.arguments[0];
       const cbPath = thenCall.get("arguments.0");
       if (cb && (cb.type === "ArrowFunctionExpression" || cb.type === "FunctionExpression") && cb.params[0]) {
-        // `fetch(u).then(r => r.json()).then(d => …)` — the FIRST callback receives the Response object, and its
+        // `fetch(u).then(r => r.json()).then(d => …)`, the FIRST callback receives the Response object, and its
         // only job is to parse. The payload shape is one link further along the chain, so follow it rather than
         // reporting nothing (this is the single commonest raw-fetch idiom there is).
         let body = cb.body;
@@ -3319,7 +3319,7 @@ function _responseAtCallSite(path) {
         const prm = cb.params[0];
         if (prm.type === "ObjectPattern") {
           const s = _patternKeys(prm);
-          // `then(({data}) => data)` names the envelope and reads nothing out of it — that is not a schema
+          // `then(({data}) => data)` names the envelope and reads nothing out of it, that is not a schema
           if (s.size && [...s].every((f) => _RESP_ENVELOPE.has(f))) {
             const inner = (prm.properties.find((pr) => pr.key && _RESP_ENVELOPE.has(pr.key.name ?? pr.key.value)) || {}).value;
             const s2 = inner && inner.type === "Identifier" ? _fieldsOf(cbPath, inner.name, false) : new Set();
@@ -3381,9 +3381,9 @@ function collectResponseSchemas(ast) {
     byFn.set(fnNode, e);
   };
   // filter only JS builtins that indicate the var is used as a promise/array (not data fields). status/ok/etc are
-  // legit API field names ({status:"active"}) — the .json() RESULT is data, so don't blocklist real-sounding keys.
+  // legit API field names ({status:"active"}), the .json() RESULT is data, so don't blocklist real-sounding keys.
   // Every member access on the parsed result was treated as a response FIELD, including methods called on
-  // it — `data.toLowerCase()` is not a field named toLowerCase. Only a handful of promise/array names were
+  // it, `data.toLowerCase()` is not a field named toLowerCase. Only a handful of promise/array names were
   // filtered; the full builtin surface leaks otherwise, and a response schema with endsWith in it is worse
   // than none because it invites reasoning about a field the server never returns.
   const BUILTIN = new Set([
@@ -3483,13 +3483,13 @@ function trpcCall(n, scope, isTrpc) {
   const term = c.property.name;
   const isHook = TRPC_HOOKS.has(term);
   if (!isHook && !(isTrpc && TRPC_GENERIC.has(term))) return null;
-  // CORROBORATION. This collector does not read a URL, it MANUFACTURES one — `/api/trpc/` is a
-  // string in this file, not in the bundle — so the bundle has to show some sign of tRPC before the
+  // CORROBORATION. This collector does not read a URL, it MANUFACTURES one, `/api/trpc/` is a
+  // string in this file, not in the bundle, so the bundle has to show some sign of tRPC before the
   // manufactured URL is worth anything. `isTrpc` (the `@trpc` / `/api/trpc/` / `createTRPC*` marker)
   // already existed and was consulted only for the GENERIC terminals; hook terminals skipped it
   // entirely, which is how a bundle containing no tRPC produced tRPC endpoints. Measured: Grafana
   // carries the marker in 0 of 159 files and produced 13 such records; cal.com carries it and is a
-  // real tRPC app. This rejects every look-alike at once instead of naming them one at a time —
+  // real tRPC app. This rejects every look-alike at once instead of naming them one at a time,
   // `queries.workspace.members.useQuery()` fabricates `/api/trpc/workspace.members` and no property
   // name blocklist can see it coming.
   if (!isTrpc) return null;
@@ -3498,7 +3498,7 @@ function trpcCall(n, scope, isTrpc) {
     if (o.type === "MemberExpression" && o.property && !o.computed) { parts.unshift(o.property.name ?? o.property.value); o = o.object; }
     else break;
   }
-  if (parts.length < 2) return null;             // need router.procedure (≥2) — distinguishes tRPC from bare useQuery
+  if (parts.length < 2) return null;             // need router.procedure (≥2), distinguishes tRPC from bare useQuery
   if (parts.some(p => p == null || /^\d+$/.test(String(p)) || /^(then|catch|map|filter|forEach|call|apply|bind)$/.test(String(p))))
     return null;                                 // reject array-index / promise / method-chain false positives
   // RTK QUERY HAS THE SAME SHAPE AND IS NOT tRPC. Its generated hooks are
@@ -3506,7 +3506,7 @@ function trpcCall(n, scope, isTrpc) {
   // tRPC hook terminal, so the ungated duck-type matched them and INVENTED endpoints: Grafana
   // produced 13 records at paths like /api/trpc/hK.endpoints.upsertRuleGroupForNamespace while the
   // string "/api/trpc" appears zero times in its entire bundle. A fabricated endpoint is worse than
-  // a missed one — someone sends requests to a URL that was never there.
+  // a missed one, someone sends requests to a URL that was never there.
   //
   // WHAT BUILT THE ROOT decides it when the root can be read. `createApi`/`injectEndpoints` is RTK
   // and not a request here; `createTRPC*` is tRPC and stays one even if a procedure happens to be
@@ -3514,8 +3514,8 @@ function trpcCall(n, scope, isTrpc) {
   const factory = chainRootFactory(o, scope);
   if (factory === "rtk") return null;
   // FALLBACK, for the common case where the root cannot be read. In a minified bundle RTK's api
-  // object arrives as a cross-module reference with no resolvable construction — Grafana's is
-  // `hK.endpoints.<name>` — so the property name is the only tell left, and removing this would
+  // object arrives as a cross-module reference with no resolvable construction, Grafana's is
+  // `hK.endpoints.<name>`, so the property name is the only tell left, and removing this would
   // re-admit exactly the records it was added for. It is a blocklist and is treated as the last
   // resort it is: a chain whose root is PROVEN to be tRPC skips it, which is what stops a real
   // tRPC procedure named `endpoints` from being thrown away.
@@ -3579,11 +3579,11 @@ function collectZodSchemas(ast) {
   return schemas;
 }
 
-// ── DECLARATIVE endpoint tables — `{login:{url:"/api/auth/login",method:"post"}, ...}` (Nuxt auth, API client
+// ── DECLARATIVE endpoint tables, `{login:{url:"/api/auth/login",method:"post"}, ...}` (Nuxt auth, API client
 // configs, route tables). Not a call site, so the call-based rules miss them; the {url|path, method} object IS the
 // contract. Require BOTH a path-like url AND a method (strong HTTP signal → no false positives on random objects).
 // header NAMES from a table entry's `headers` value: a literal object, or a local built by assignment
-// (`let i={}; i.Authorization = \`Bearer ${t}\`; return {headers:i}`) — the generated-client shape.
+// (`let i={}; i.Authorization = \`Bearer ${t}\`; return {headers:i}`), the generated-client shape.
 function headerNamesOf(node, scope) {
   const out = [];
   const push = (k) => { const kk = String(k || "").trim(); if (kk && !out.includes(kk)) out.push(kk); };
@@ -3649,7 +3649,7 @@ function collectSerializers(ast) {
     if (!name || name.length < 4 || !/[A-Za-z]/.test(name)) return;
     // openapi-generator emits a PAIR: `XToJSON(json)` simply forwards to `XToJSONTyped(json,false)`, and only
     // the second returns the literal. Call sites use the first. Resolving through the delegation means the name
-    // we publish is the name the call site will ask for — otherwise the two halves never meet and the join is
+    // we publish is the name the call site will ask for, otherwise the two halves never meet and the join is
     // silently empty, which is exactly what happened here (142 tagged call sites, 0 resolved).
     const ret = _returnedObjectOf(name, fnPath.scope, 0);
     if (!ret || ret.type !== "ObjectExpression" || !ret.properties.length) return;
@@ -3702,7 +3702,7 @@ function _tableOpName(path) {
   return undefined;
 }
 
-// A route handle assigned from a tagged template — `$J = T(`user`).put`/user/password`` — is called later with
+// A route handle assigned from a tagged template, `$J = T(`user`).put`/user/password``, is called later with
 // the payload. Walk from the declaration to the binding, then to every call of it, and union the argument shapes.
 // Same move as resolving a function parameter from its call sites; the handle is just a differently-shaped
 // function. Capped at a few call sites: the point is the shape, not an exhaustive census.
@@ -3738,7 +3738,7 @@ function _handleCallBody(path) {
 // react-query's mutation shape. `mutationFn` receives the payload, and the payload is supplied by whoever calls
 // the hook's `mutate`:
 //     const m = useMutation({mutationFn: p => api.post("/x", p)});   …later…   m.mutate({a, b})
-// The parameter has no name binding to follow — it belongs to an anonymous arrow handed to a library — so the
+// The parameter has no name binding to follow, it belongs to an anonymous arrow handed to a library, so the
 // generic call-site walk cannot reach the caller. But the HOOK RESULT is an ordinary binding, and `.mutate` /
 // `.mutateAsync` on it carries exactly the body. This is the dominant write idiom in modern React apps, so the
 // whole class was invisible.
@@ -3833,8 +3833,8 @@ function _mutationCallBody(path, paramName) {
 // QUERY STRINGS BUILT IMPERATIVELY. `formDataAppends` already understands
 //     const p = new URLSearchParams(); p.set("limit", n); p.append("status", "open")
 // but it was only ever consulted for the BODY. The same object put after a `?` is a query string, and three of
-// the four ordinary ways to build one — the .set/.append form, the constructor-object form, and
-// `new URL(...).searchParams.set(...)` — produced `?{EXPR}` and no parameters at all. Query strings are a
+// the four ordinary ways to build one, the .set/.append form, the constructor-object form, and
+// `new URL(...).searchParams.set(...)`, produced `?{EXPR}` and no parameters at all. Query strings are a
 // first-class injection point, so knowing a request takes `limit,cursor,status` and not knowing their names is
 // most of the difference between a testable endpoint and a URL.
 function _queryFromUrlArg(node, scope) {
@@ -3846,7 +3846,7 @@ function _queryFromUrlArg(node, scope) {
   };
   try {
     if (!node) return null;
-    // `\`/items?${p}\`` / `\`/items?${p.toString()}\`` — an expression sitting after the question mark
+    // `\`/items?${p}\`` / `\`/items?${p.toString()}\``, an expression sitting after the question mark
     if (node.type === "TemplateLiteral") {
       let seenQ = false;
       for (let i = 0; i < node.quasis.length; i++) {
@@ -3859,11 +3859,11 @@ function _queryFromUrlArg(node, scope) {
         if (e.type === "Identifier") fromIdent(e);
       }
     }
-    // `fetch(u.toString())` — same object, one unwrap away
+    // `fetch(u.toString())`, same object, one unwrap away
     if (node.type === "CallExpression" && node.callee && node.callee.type === "MemberExpression" &&
         node.callee.property && node.callee.property.name === "toString")
       return _queryFromUrlArg(node.callee.object, scope);
-    // `fetch(u.href)` — the commonest spelling of the same thing, and it was the one that fell
+    // `fetch(u.href)`, the commonest spelling of the same thing, and it was the one that fell
     // through. `fetch(u)` and `fetch(u.toString())` both resolved their searchParams while
     // `fetch(u.href)` reported none, which reads as "this endpoint takes no query parameters".
     if ((node.type === "MemberExpression" || node.type === "OptionalMemberExpression") &&
@@ -3908,7 +3908,7 @@ function collectEndpointTables(ast) {
           body = bodyKeys(p.value, path.scope);
           const bs = bodySchema(p.value, path.scope);
           if (bs && bs !== "{EXPR}") bodySch = bs;
-          // unresolved because the serializer is in another chunk — record its NAME to join on later
+          // unresolved because the serializer is in another chunk, record its NAME to join on later
           if (!body && p.value.type === "CallExpression") bodyFn = _calleeIdent(p.value.callee);
         }
         // The table entry is the WHOLE request, not just its URL and verb. A generated client returns
@@ -3920,7 +3920,7 @@ function collectEndpointTables(ast) {
         //                     mediaType:["application/json"],
         //                     security:["AuthHeader","CountryCodeHeader","IPHeader"]}}
         // That is the answer to "what must be sent to be allowed in" written down by the app itself, named
-        // scheme by scheme and endpoint by endpoint — and we were reading past it to take only url and method.
+        // scheme by scheme and endpoint by endpoint, and we were reading past it to take only url and method.
         else if (k === "security" && p.value) {
           const sec = _stringList(p.value, path.scope);
           if (sec && sec.length) security = [...new Set(sec)];
@@ -3952,20 +3952,20 @@ function collectEndpointTables(ast) {
 // registerServerReference). The action ID IS the callable endpoint: POST to the route with header `Next-Action:<id>`.
 // The hidden part of RSC (server components → DB) isn't an HTTP endpoint anyway; server actions + route handlers
 // are the real surface, and this recovers the action IDs statically.
-// NOTE: `collectServerActions` was defined TWICE in this file. The first definition — deleted here —
+// NOTE: `collectServerActions` was defined TWICE in this file. The first definition, deleted here,
 // returned a list of id STRINGS; the second returns finished `_kind: "server-action"` records. Function
 // declarations hoist, so the later one silently won and the earlier one had never run. What it left
 // behind was a call site written against the string API feeding the record API, producing
-// {_kind:"action", action_id:{_kind:"server-action", …}} — a record nested inside a field. ingest.py
+// {_kind:"action", action_id:{_kind:"server-action", …}}, a record nested inside a field. ingest.py
 // reads `_kind === "server-action"`, never matched it, and every Next.js server action in every
 // run was dropped: 0 rows across seven targets.
 //
 // Same shape as the duplicate `case "CallExpression"` that sat dead in this file, and the unreachable
-// field check in isSocketBinding. A duplicate definition does not fail — it picks one.
+// field check in isSocketBinding. A duplicate definition does not fail, it picks one.
 
 // ── RTK-Query: createApi({ endpoints: b => ({ getX: b.query({ query: a => ({url,method,body}) }) }) }) ─────────
 // The endpoint builder's query/mutation fn returns a URL string OR {url,method,body}. builder.query→GET,
-// builder.mutation→POST. baseUrl lives in fetchBaseQuery (a prefix), so templates are relative — still real paths.
+// builder.mutation→POST. baseUrl lives in fetchBaseQuery (a prefix), so templates are relative, still real paths.
 function collectRtk(ast) {
   const eps = [];
   traverse(ast, { CallExpression(path) {
@@ -3982,7 +3982,7 @@ function collectRtk(ast) {
       let method = c.property.name === "mutation" ? "POST" : "GET", template = null, body = null, dyn = false;
       // A BODY THAT EXISTS BUT CANNOT BE RESOLVED IS NOT THE SAME AS NO BODY, and `body_keys: null`
       // said both. RTK Query writes `body: $.check`, where `check` is a TypeScript type erased at
-      // compile time — the field names are genuinely not in the JavaScript, but the fact that this
+      // compile time, the field names are genuinely not in the JavaScript, but the fact that this
       // request carries a `check` object IS, and it is the difference between "send nothing" and
       // "send a check". Measured on Grafana: 409 rtk-query endpoints, 6 with resolved keys, and the
       // other 403 were indistinguishable from bodyless.
@@ -4006,7 +4006,7 @@ function collectRtk(ast) {
         // RTK Query's fetchBaseQuery serialises a non-string, non-FormData body with
         // JSON.stringify and sets content-type: application/json. The endpoint definition
         // therefore never spells the encoding out, and 301 of Grafana's 358 body-bearing endpoints
-        // carried none at all — a tester reading that has to guess what to send. Marked as
+        // carried none at all, a tester reading that has to guess what to send. Marked as
         // INFERRED with its reason, the way every other inferred field in this file is, because a
         // default is a different kind of fact from something read at the call site.
         if ((body || bodyParam) && !rec.body_encoding) {
@@ -4027,7 +4027,7 @@ function collectRtk(ast) {
   return eps;
 }
 
-// ── Relay: compiled concreteRequest carries params:{name, operationKind, text} — the GraphQL op + (often) its SDL.
+// ── Relay: compiled concreteRequest carries params:{name, operationKind, text}, the GraphQL op + (often) its SDL.
 function collectRelay(ast) {
   const ops = [];
   traverse(ast, { ObjectExpression(path) {
@@ -4048,8 +4048,8 @@ function collectRelay(ast) {
 
 // ── Apollo: gql`...` tags are compiled to DocumentNode AST OBJECT LITERALS at build ({kind:"OperationDefinition",
 //   name:{value}, variableDefinitions, selectionSet:{selections:[{kind:"Field",...}]}}). Unlike Relay's flat
-//   {operationKind,text}, Apollo ships the full AST — so we RECONSTRUCT the query text by walking the literal.
-//   This recovers the complete selection set (every field) statically — no runtime capture / browser needed.
+//   {operationKind,text}, Apollo ships the full AST, so we RECONSTRUCT the query text by walking the literal.
+//   This recovers the complete selection set (every field) statically, no runtime capture / browser needed.
 function collectApollo(ast) {
   const sVal = n => (n && n.type === "StringLiteral") ? n.value : null;
   const gp = (o, key) => { if (!o || o.type !== "ObjectExpression") return null; for (const p of o.properties) { const k = p.key && (p.key.name ?? p.key.value); if (k === key) return p.value; } return null; };
@@ -4057,7 +4057,7 @@ function collectApollo(ast) {
   const pType = t => { if (!t) return ""; const k = sVal(gp(t, "kind")); if (k === "NonNullType") return pType(gp(t, "type")) + "!"; if (k === "ListType") return "[" + pType(gp(t, "type")) + "]"; return nv(gp(t, "name")) || ""; };
   const pVal = v => { const k = sVal(gp(v, "kind")); if (k === "Variable") return "$" + nv(gp(v, "name")); if (["IntValue", "FloatValue", "BooleanValue", "EnumValue"].includes(k)) return String(sVal(gp(v, "value"))); if (k === "StringValue") return JSON.stringify(sVal(gp(v, "value")) || ""); if (k === "NullValue") return "null"; if (k === "ListValue") return "[]"; if (k === "ObjectValue") return "{}"; return "…"; };
   const pArgs = a => { if (!a || a.type !== "ArrayExpression" || !a.elements.length) return ""; return "(" + a.elements.map(x => nv(gp(x, "name")) + ": " + pVal(gp(x, "value"))).join(", ") + ")"; };
-  const pDir = d => { if (!d || d.type !== "ArrayExpression" || !d.elements.length) return ""; return " " + d.elements.map(x => "@" + nv(gp(x, "name")) + pArgs(gp(x, "arguments"))).join(" "); };   // @include(if:$x)/@skip — dropping these breaks "variable never used"
+  const pDir = d => { if (!d || d.type !== "ArrayExpression" || !d.elements.length) return ""; return " " + d.elements.map(x => "@" + nv(gp(x, "name")) + pArgs(gp(x, "arguments"))).join(" "); };   // @include(if:$x)/@skip, dropping these breaks "variable never used"
   const pSel = (ss, frags) => { if (!ss) return ""; const sels = gp(ss, "selections"); if (!sels || sels.type !== "ArrayExpression") return ""; return sels.elements.map(s => { const k = sVal(gp(s, "kind")); if (k === "Field") { const nm = nv(gp(s, "name")); const al = nv(gp(s, "alias")); const sub = pSel(gp(s, "selectionSet"), frags); return (al ? al + ": " : "") + nm + pArgs(gp(s, "arguments")) + pDir(gp(s, "directives")) + (sub ? " { " + sub + " }" : ""); } if (k === "FragmentSpread") { const fn = nv(gp(s, "name")); if (frags) frags.add(fn); return "..." + fn + pDir(gp(s, "directives")); } if (k === "InlineFragment") { const tc = gp(s, "typeCondition"); return "... on " + nv(gp(tc, "name")) + pDir(gp(s, "directives")) + " { " + pSel(gp(s, "selectionSet"), frags) + " }"; } return ""; }).filter(Boolean).join(" "); };
   const pVarDefs = v => { if (!v || v.type !== "ArrayExpression" || !v.elements.length) return ""; return "(" + v.elements.map(vd => "$" + nv(gp(gp(vd, "variable"), "name")) + ": " + pType(gp(vd, "type"))).join(", ") + ")"; };
   const pFrag = (node, frags) => "fragment " + nv(gp(node, "name")) + " on " + nv(gp(gp(node, "typeCondition"), "name")) + " { " + pSel(gp(node, "selectionSet"), frags) + " }";
@@ -4079,7 +4079,7 @@ function collectApollo(ast) {
 
 // ── Connect-RPC / gRPC-web / protobuf-es: generated service def is an object literal
 //   { typeName: "pkg.v1.FooService", methods: { getBar: { name: "GetBar", I:.., O:.., kind:.. }, ... } }
-// Both Connect and gRPC-web POST to `/{typeName}/{Method.name}`. The service def IS the wire contract — typeNames
+// Both Connect and gRPC-web POST to `/{typeName}/{Method.name}`. The service def IS the wire contract, typeNames
 // and method names are protocol strings, survive minification. Message-type descriptors also carry `typeName` but
 // have NO `methods` object, so requiring `methods` filters them out (incl. the google.protobuf.* runtime internals).
 function collectConnect(ast) {
@@ -4113,7 +4113,7 @@ function collectConnect(ast) {
   return eps;
 }
 
-// ── SWR: useSWR(key, fetcher) — key IS the URL. Import-binding based (works on ESM/sourcemap source; in fully
+// ── SWR: useSWR(key, fetcher), key IS the URL. Import-binding based (works on ESM/sourcemap source; in fully
 // bundled code the import is erased → SWR keys still land via the literal-grep backstop). GET (mutations rare).
 function collectSwr(ast) {
   const names = new Set(), eps = [];
@@ -4133,7 +4133,7 @@ function collectSwr(ast) {
   return eps;
 }
 
-// merge two records for the SAME (method, template) — UNION their body fields (a PATCH/POST endpoint called from
+// merge two records for the SAME (method, template), UNION their body fields (a PATCH/POST endpoint called from
 // several sites patches different fields; keeping just the first loses the rest), plus response_keys/headers/src.
 function _uniqPush(arr, add) { const s = new Set(arr); for (const x of add) if (!s.has(x)) { arr.push(x); s.add(x); } }
 function mergeRecord(prev, f) {
@@ -4141,8 +4141,8 @@ function mergeRecord(prev, f) {
   if (f.body_src) prev.body_src = { ...(prev.body_src || {}), ...f.body_src };
   if (f.response_keys) { if (!prev.response_keys) prev.response_keys = [...f.response_keys]; else _uniqPush(prev.response_keys, f.response_keys); }
   if (!prev.headers && f.headers) prev.headers = f.headers;
-  // Fields that only ONE of the duplicate records carries. The same endpoint is commonly described twice — once
-  // by a call site and once by a declarative table — and whichever arrived first was keeping its blanks: the
+  // Fields that only ONE of the duplicate records carries. The same endpoint is commonly described twice, once
+  // by a call site and once by a declarative table, and whichever arrived first was keeping its blanks: the
   // record that knew the operation name and the required auth schemes lost them to a bare earlier duplicate.
   for (const k of ["op", "security", "media_type", "req_headers", "query_schema", "body_schema", "group",
                    "body_from", "credentials"])
@@ -4156,7 +4156,7 @@ function mergeRecord(prev, f) {
 //     Ec = E`/${`accountId`}/images`;  Oc = E`${Ec}/transformations`
 //     T(`userDetails`).get`/user/details`
 //     T(`accountContractRoute`).post`/accounts/${`accountId`}/contract`
-// One dashboard's dashboard is 26MB of JS with ZERO occurrences of `fetch(` or `axios` — every request is one
+// One dashboard's dashboard is 26MB of JS with ZERO occurrences of `fetch(` or `axios`, every request is one
 // of these. Without this sink such a target reports "no API" rather than "not supported", which is the worst
 // possible failure because it is indistinguishable from a real answer.
 // Inside these DSLs a string-literal interpolation names the slot rather than supplying a value, so
@@ -4233,7 +4233,7 @@ function collectTemplateVars(ast) {
 
 
 // ── TYPESCRIPT TYPES, WHEN THE TARGET SHIPS ITS OWN SOURCE ─────────────────────────────────────────────
-// Types are the one thing minification genuinely destroys — they are erased at compile time and exist
+// Types are the one thing minification genuinely destroys, they are erased at compile time and exist
 // nowhere in a bundle. Everything else (routes, verbs, wire keys) survives, because a key that crosses
 // the wire cannot be renamed without breaking the server.
 //
@@ -4243,7 +4243,7 @@ function collectTemplateVars(ast) {
 // post-transpile JS where the types are already gone, and there is nothing to recover there.
 //
 // A body handed in as `data: CreateInquiryRequest` is unresolvable by every runtime-shape walker in this
-// file — there is no object literal to read. The declaration is right there in the same file.
+// file, there is no object literal to read. The declaration is right there in the same file.
 const _TS_PRIM = {
   TSStringKeyword: "string", TSNumberKeyword: "number", TSBooleanKeyword: "boolean",
   TSNullKeyword: "null", TSUndefinedKeyword: "undefined", TSAnyKeyword: "any",
@@ -4281,7 +4281,7 @@ function tsShape(node, depth = 0, seen = new Set()) {
       if (k == null) continue;
       const v = tsShape(m.typeAnnotation, depth + 1, seen);
       // Structure beats annotation: a nested object or array is kept as itself. For a leaf, optionality
-      // is worth carrying — a required field missing from a request is a different test from an optional
+      // is worth carrying, a required field missing from a request is a different test from an optional
       // one, and it is the difference between probing a validator and probing the handler behind it.
       o[String(k)] = (v && typeof v === "object") ? v
                    : (m.optional ? "optional " : "") + (typeof v === "string" && v ? v : "?");
@@ -4289,7 +4289,7 @@ function tsShape(node, depth = 0, seen = new Set()) {
     return Object.keys(o).length ? o : null;
   }
   if (t === "TSIntersectionType") {
-    // `A & B` is one object with both field sets — which is exactly how these codebases compose a
+    // `A & B` is one object with both field sets, which is exactly how these codebases compose a
     // request type out of a shared base and the bits specific to one call.
     const o = {};
     for (const x of node.types || []) {
@@ -4330,7 +4330,7 @@ function tsShapeOfParam(node, scope) {
 
 let _TS_TYPES = new Map();
 
-// IS THERE tRPC IN THIS FILE — asked of the AST, not of the text.
+// IS THERE tRPC IN THIS FILE, asked of the AST, not of the text.
 //
 // This was `/@trpc|\/api\/trpc\/|createTRPCReact|.../.test(src)`, and a regex over raw source cannot
 // tell code from commentary: a file whose COMMENT mentions `/api/trpc` was marked as a tRPC app, which
@@ -4338,16 +4338,16 @@ let _TS_TYPES = new Map();
 // non-code text are not AST node values, so asking the tree removes the whole class.
 //
 // Three structural facts, any one of which is evidence:
-//   an import/export from `@trpc/...`      — the dependency, in an unbundled or partially-bundled file
-//   a name `createTRPC*`                    — the client factory, which survives as a property name
-//   a string literal containing `/api/trpc` — the endpoint itself; cal.com ships `R = "/api/trpc"`
+//   an import/export from `@trpc/...`     , the dependency, in an unbundled or partially-bundled file
+//   a name `createTRPC*`                   , the client factory, which survives as a property name
+//   a string literal containing `/api/trpc`, the endpoint itself; cal.com ships `R = "/api/trpc"`
 //
 // Gated on a cheap substring precheck first: if the text is absent entirely there is nothing to
 // confirm, and that is the common case over a 1400-chunk walk.
-// HASH ROUTING OR PATH ROUTING — and why the obvious test cannot answer it.
+// HASH ROUTING OR PATH ROUTING, and why the obvious test cannot answer it.
 //
 // This was a regex over the chunk's source, and it was wrong in both directions. Measured over 11
-// corpora holding 557 route records it produced exactly TWO labels and both were wrong — Grafana's
+// corpora holding 557 route records it produced exactly TWO labels and both were wrong, Grafana's
 // and Slack's, each a path-routed app called hash-routed.
 //
 // Grafana was called hash-routed because `createHashRouter` appears inside react-router's error string
@@ -4367,7 +4367,7 @@ let _TS_TYPES = new Map();
 // or cannot be resolved locally at all, is code reaching into the router from outside. Only the second
 // is evidence.
 //
-// The field stays absent unless one side has evidence and the other does not — an app that genuinely
+// The field stays absent unless one side has evidence and the other does not, an app that genuinely
 // renders `<HashRouter>` through a minified alias is not detectable this way, and saying nothing is
 // the honest output. None of the corpora here produce a positive, which is why the only true-positive
 // coverage is a fixture; a wrong label here is worse than none, because the docstring below is right
@@ -4399,7 +4399,7 @@ function detectRouting(ast, src) {
       },
     });
   } catch { return null; }
-  if (hash === path) return null;          // both, or neither — nothing to state
+  if (hash === path) return null;          // both, or neither, nothing to state
   return hash ? "hash" : "path";
 }
 
@@ -4434,11 +4434,11 @@ function extract(src) {
   const ast = parse(src);
   if (!ast) return [];
   const TMPLVARS = /`/.test(src) ? collectTemplateVars(ast) : new Map();
-  // Only when the file actually declares types — a minified bundle never does, so this costs it nothing.
+  // Only when the file actually declares types, a minified bundle never does, so this costs it nothing.
   _TS_TYPES = /\b(interface|type)\s+[A-Z]/.test(src) ? collectTsTypes(ast) : new Map();
   _GETTERS = /\bget\s+[A-Za-z_$]/.test(src) || /\bclass\b/.test(src)
             ? indexObjectGetters(ast) : new Map();
-  // gate the two per-chunk collectors on a cheap substring precheck — a wrapper must contain a fetch sink, a
+  // gate the two per-chunk collectors on a cheap substring precheck, a wrapper must contain a fetch sink, a
   // response schema must contain `.json(`; skipping chunks without them keeps the 1400-chunk walk fast.
   const WRAPPERS = /fetch\s*\(|queryKey|mutationKey|\bmethod:/.test(src) ? collectWrappers(ast) : {};
   // Which wrappers in THIS file take react-query options in their trailing argument, learned from the call
@@ -4446,18 +4446,18 @@ function extract(src) {
   _QUERY_OPT_CALLEES = /onSuccess|onError|mutationKey|queryKey|onSettled/.test(src)
                      ? indexQueryOptCallees(ast) : new Set();
   // UNGATED, and that is the fix. This was gated on an origin literal being present, on the reasoning
-  // that "if a file contains no origin literal it can carry no base" — which is false. A base is
+  // that "if a file contains no origin literal it can carry no base", which is false. A base is
   // routinely RELATIVE:
   //
   //     const client = axios.create({ baseURL: "/api/v2" });
   //     client.get("/users")        // -> /api/v2/users
   //
   // There is no `//host.tld` anywhere in that file, so the collector never ran, `INSTANCES` came back
-  // empty, and the call was reported as `/users`. That is not a missing record, it is a WRONG one — a
+  // empty, and the call was reported as `/users`. That is not a missing record, it is a WRONG one, a
   // real-looking route pointed at the wrong place, which is the worst output this tool can produce.
   //
   // The gate existed for speed, so the speed was measured rather than assumed: on Grafana's ten
-  // largest chunks, gated 93.4s vs ungated 94.4s for identical output — about 1%, inside the noise,
+  // largest chunks, gated 93.4s vs ungated 94.4s for identical output, about 1%, inside the noise,
   // because any chunk big enough to matter contains an origin literal and ran the collector anyway.
   // A premature optimisation whose predicate is wrong is worth deleting, not repairing.
   const INSTANCES = collectAxiosInstances(ast);
@@ -4466,7 +4466,7 @@ function extract(src) {
     let inst = INSTANCES[nm.obj] || (nm.obj ? INSTANCES["this." + nm.obj] : null);
     // the client can also be chosen inline at the call: `(chainId===mainnet ? mainnetClient : testnetClient).get(path)`.
     // Same two-host fan-out as the aliased form, just written at the use site instead of bound to a name.
-    // `(opts?.client ?? client).get({url})` — the defaulting receiver every generated OpenAPI client emits,
+    // `(opts?.client ?? client).get({url})`, the defaulting receiver every generated OpenAPI client emits,
     // and the shape that carried 186 of one target's ~280 call sites. The left branch is an optional member
     // read that resolves to nothing; the right is the module-level client with the base on it. Taking
     // whichever branch resolves is the same reasoning the conditional form already used, and `??`/`||`
@@ -4492,7 +4492,7 @@ function extract(src) {
     }
     return { template: joinBase(inst.base, u.template), dynamic: u.dynamic || inst.dyn };
   };
-  // The corpus verdict when the index pass reached one, this chunk's own reading otherwise — which is
+  // The corpus verdict when the index pass reached one, this chunk's own reading otherwise, which is
   // the right answer for a direct single-file invocation and for `--index-only` not having run.
   const isTrpc = _IS_TRPC !== null ? _IS_TRPC : detectTrpc(ast, src);
   const found = [];
@@ -4512,15 +4512,15 @@ function extract(src) {
       for (const v of em[1].split("|")) push({ ...o, template: o.template.replace(/\x02[^\x02]*\x02/, v) });
       return;
     }
-    // keep only things that look like a request target (path/url), drop pure {EXPR} with no literal skeleton —
+    // keep only things that look like a request target (path/url), drop pure {EXPR} with no literal skeleton,
     // EXCEPT keep it when it carries a substantial request BODY (≥2 real keys). A `fetch({EXPR-url}, {body:{...}})`
     // whose URL is unresolvable still holds a real body worth recovering; the co-location merge later staples that
     // body onto the matching resolved-URL record (the "surround"). Marked _bodyOnly so merge can find it.
     const skeleton = o.template.replace(/\{[^}]*\}/g, "");
     const pathish = LOOKS_PATH(o.template) || LOOKS_PATH(skeleton) || /^(https?|wss?):\/\//.test(o.template);
     const realBody = Array.isArray(o.body_keys) && o.body_keys.filter((k) => !String(k).startsWith("{")).length >= 2;
-    // A SOCKET IS A FINDING EVEN WITHOUT ITS URL. `new WebSocket(e)` is how everyone writes it — the URL is
-    // assembled at runtime from a base and a token — so this test discarded literally every WebSocket in
+    // A SOCKET IS A FINDING EVEN WITHOUT ITS URL. `new WebSocket(e)` is how everyone writes it, the URL is
+    // assembled at runtime from a base and a token, so this test discarded literally every WebSocket in
     // every bundle, and the map said the application had none. That is the opposite of true for a
     // real-time product, where the socket carries the domain events. The existence of the connection,
     // and any message shape recovered for it, are worth more than the URL we could not resolve.
@@ -4551,7 +4551,7 @@ function extract(src) {
   };
 
   // per-node try/catch: a single malformed node must not abort the whole-file traversal (else one bad
-  // call-site silently drops ALL of a chunk's endpoints — the 314-match-but-0-output bug). ALSO tracks the
+  // call-site silently drops ALL of a chunk's endpoints, the 314-match-but-0-output bug). ALSO tracks the
   // enclosing function so response schemas can be attached to the right sink post-hoc.
   const guard = (fn) => (path) => {
     try {
@@ -4569,7 +4569,7 @@ function extract(src) {
       if (!tag) return;
       // Bare-tag form: a route-constant registry, where the path is defined in a nested object of templates
       //     zero_trust: { applications: E`/accounts/${`accountId`}/access/apps`, policies: E`…` }
-      // and the verb is only applied later at the use site. The path is still the discovery — emitting it
+      // and the verb is only applied later at the use site. The path is still the discovery, emitting it
       // with an honest UNKNOWN method beats dropping it. On that dashboard this shape holds ~200 of the
       // ~250 real paths; the verb-tagged form holds the rest.
       if (tag.type === "Identifier") {
@@ -4592,7 +4592,7 @@ function extract(src) {
       const m = verb.toLowerCase();
       // The tagged template DECLARES the route; the body arrives when the resulting handle is invoked:
       //     $J = T(`user`).put`/user/password`      …later…    $J({oldPassword, newPassword})
-      // Nothing at the declaration says what is sent, so every write through this DSL had a null body — and on
+      // Nothing at the declaration says what is sent, so every write through this DSL had a null body, and on
       // that dashboard the DSL is the entire API. The handle is an ordinary binding, so its call sites are
       // reachable the same way a function's are.
       const meth = (m === "del" ? "DELETE" : m === "query" ? "GET" : m === "mutate" ? "POST" : m).toUpperCase();
@@ -4607,10 +4607,10 @@ function extract(src) {
     }),
     NewExpression: guard(function (path) {
       const n = path.node;
-      // `new g.WebSocket(...)` — the constructor reached through a module namespace, which is what a
+      // `new g.WebSocket(...)`, the constructor reached through a module namespace, which is what a
       // bundler emits whenever the global was imported from a shim. Reading only `callee.name` sees
       // nothing there: reddit ships 4 of its 5 sockets as `new g.WebSocket(` and 1 as `new tV.WebSocket(`,
-      // so the whole realtime layer was invisible. The property name is what survives minification —
+      // so the whole realtime layer was invisible. The property name is what survives minification,
       // the same reason every other collector in this file matches on it.
       const cn = n.callee && (n.callee.name ||
                               (n.callee.property && (n.callee.property.name ?? n.callee.property.value)));
@@ -4632,7 +4632,7 @@ function extract(src) {
       // index this call-site by callee name (for inter-procedural body-param resolution later)
       { const cn0 = c && (c.type === "Identifier" ? c.name : (c.type === "MemberExpression" && c.property ? (c.property.name || c.property.value) : null));
         if (cn0 && cn0.length >= 3) { let arr = callsByName.get(cn0); if (!arr) callsByName.set(cn0, arr = []); if (arr.length < 300) arr.push({ args: n.arguments, scope: path.scope }); } }
-      // GENERATED-CLIENT runtime: request(config, {method, url, ...}) — openapi-typescript-codegen /
+      // GENERATED-CLIENT runtime: request(config, {method, url, ...}), openapi-typescript-codegen /
       // swagger-typescript-api / orval. The wrapper name is minified (ue, __request, request…) so we can't
       // key on it; instead we detect the CALL by its options object carrying BOTH method AND url. This is the
       // dominant modern pattern (one target=309 eps, another=openapi) that a callee-name rule misses entirely.
@@ -4647,7 +4647,7 @@ function extract(src) {
             // both method and url, which is the generated-client signature. So the base is composed by a
             // wrapper and the document-origin rule must not be applied downstream. Say so on the record.
             const _bh = baseHint(arg, path.scope);
-            // The app's own parameterised twin, if it ships one. Used for slot NAMES only — the URL that
+            // The app's own parameterised twin, if it ships one. Used for slot NAMES only, the URL that
             // actually gets sent is the one we reconstructed, and where the two disagree we keep ours and
             // record the disagreement rather than following a typo into a 404.
             const _dt = declaredTemplate(arg, path.scope, oi._url.template, oi._urlKey);
@@ -4667,8 +4667,8 @@ function extract(src) {
             //     complianceCheck: { createInquiry: async data => sendRequest({..., url: "/x", data }) }
             //
             // `data` is a parameter, so the shape lives at this method's CALL SITES, one hop away. The
-            // machinery for that hop already existed — tagOptsBodyParam marks the record, and a later pass
-            // joins it against callsByName — but it was only ever invoked from the duck-typed optsSink
+            // machinery for that hop already existed, tagOptsBodyParam marks the record, and a later pass
+            // joins it against callsByName, but it was only ever invoked from the duck-typed optsSink
             // fallback, never from here. Generated API clients are the dominant modern shape and they all
             // come through this branch, so on a target built that way NOTHING was ever tagged: measured on
             // one bundle, [bp] tagged=0 with 1,694 indexed call sites sitting right there. Six corpora
@@ -4679,11 +4679,11 @@ function extract(src) {
           }
         }
       }
-      // fetch(url, opts) — incl. one-hop alias `const n = fetch; n(url)` (decidable; arbitrary aliasing is not)
+      // fetch(url, opts), incl. one-hop alias `const n = fetch; n(url)` (decidable; arbitrary aliasing is not)
       if (c.type === "Identifier" && (c.name === "fetch" || bindsTo(c, path.scope, "fetch"))) {
         let u = resolveUrl(n.arguments[0], path.scope);
         // `const u = new URL("/api/search", origin); u.searchParams.set(...); fetch(u)` is an ordinary modern
-        // idiom, and resolveUrl can only see a variable there — so the record fell through to a bare path
+        // idiom, and resolveUrl can only see a variable there, so the record fell through to a bare path
         // literal with UNKNOWN method: the path was found but never attributed to a request. The URL-object
         // resolver already existed for the `F(new URL(...).href)` shape; the plain fetch sink never consulted it.
         if (!LOOKS_PATH(u.template)) {
@@ -4740,7 +4740,7 @@ function extract(src) {
         if (oi._url) push({ sink: "axios", kind: "xhr", method: oi.method || "GET", template: oi._url.template, body_keys: oi.body_keys, body_encoding: oi.body_encoding, content_type: oi.content_type, body_schema: oi.body_schema, query_schema: oi.query_schema, req_headers: oi.headers, credentials: oi.credentials, dynamic: oi._url.dynamic });
         return;
       }
-      // GENERIC URL-object sink: F(new URL(path, base).href, [body]) for ANY callee F — bare-function axios instances
+      // GENERIC URL-object sink: F(new URL(path, base).href, [body]) for ANY callee F, bare-function axios instances
       // (one per service: sv/av/lv/…) + any custom client the callee-name rules miss. Rooted on the URL, not the name.
       if (c.type === "Identifier" && c.name !== "URL") {
         const un = newUrlNode(n.arguments[0], path.scope);
@@ -4760,14 +4760,14 @@ function extract(src) {
           }
         }
       }
-      // <client>.get|post|put|patch|delete|request(url[, body|opts])  — axios/ky/got/$.ajax/custom http clients
+      // <client>.get|post|put|patch|delete|request(url[, body|opts]) , axios/ky/got/$.ajax/custom http clients
       if (nm.prop && HTTP_METHODS.has(nm.prop.toLowerCase())) {
         const arg0 = n.arguments[0];
         if (!arg0) return;
         // `new Map().get("user/profile")` is not a request, however path-shaped the argument is.
         if (receiverIsNotHttpClient(nm.objNode, path.scope)) return;
         // AngularJS `$templateCache.put("template/tooltip/tooltip-popup.html", "<div>…</div>")` is a .put()
-        // call whose first argument is a path — and it is not a request. One banking-client host contributed
+        // call whose first argument is a path, and it is not a request. One banking-client host contributed
         // ~200 phantom PUT "endpoints" this way. The tell is the SECOND argument: a request body is data,
         // a template cache entry is a markup blob.
         if (nm.prop.toLowerCase() === "put" && n.arguments.length === 2) {
@@ -4777,7 +4777,7 @@ function extract(src) {
                       ? (a1.quasis[0].value.cooked || "") : null;
           if (lit !== null && /^\s*<(\w|!)/.test(lit)) return;
         }
-        // Angular HttpClient.request(method, url, opts) — method as arg0 STRING, url as arg1 (reverse of the
+        // Angular HttpClient.request(method, url, opts), method as arg0 STRING, url as arg1 (reverse of the
         // positional-method fetcher below). Distinct enough (arg0 is an HTTP-verb literal) to handle here.
         if (nm.prop.toLowerCase() === "request" && arg0.type === "StringLiteral" &&
             ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(arg0.value.toUpperCase()) && n.arguments[1]) {
@@ -4796,7 +4796,7 @@ function extract(src) {
             const ub = applyBase(nm, oi._url);
             const rec0 = { sink: `${nm.obj || "?"}.${nm.prop}`, kind: "xhr", method: oi.method || nm.prop.toUpperCase(), template: ub.template, body_keys: oi.body_keys, body_encoding: oi.body_encoding, content_type: oi.content_type, body_schema: oi.body_schema, query_schema: oi.query_schema, req_headers: oi.headers, credentials: oi.credentials, dynamic: ub.dynamic };
             if (!oi.body_keys) tagOptsBodyParam(rec0, n, path);
-            // The content-type may be in an argument we did not treat as the options object — see
+            // The content-type may be in an argument we did not treat as the options object, see
             // _ctInArgs. Fills only what is missing; a resolved construction still wins.
             if (!rec0.content_type) {
               const ct = _ctInArgs(n.arguments);
@@ -4807,7 +4807,7 @@ function extract(src) {
           return;
         }
         const u = resolveUrl(arg0, path.scope);
-        // require a path-ish first arg so we don't grab array.map/get(0) etc. — but check the EXPR-STRIPPED
+        // require a path-ish first arg so we don't grab array.map/get(0) etc., but check the EXPR-STRIPPED
         // skeleton too, so a runtime base prefix (Angular's this.http.get(this.host + '/rest/x') → '{EXPR}/rest/x')
         // is kept, not dropped for failing to start with '/'.
         const sk = u.template.replace(/\{[^}]*\}/g, "");
@@ -4815,10 +4815,10 @@ function extract(src) {
         if (!LOOKS_PATH(u.template) && !LOOKS_PATH(sk) && !/^https?:/.test(u.template) && !rk) return;
         const method = nm.prop.toLowerCase() === "request" ? "GET" : nm.prop.toUpperCase();
         // arg1 is the BODY only for body-bearing verbs (axios/Angular .post(url,body)). For GET/DELETE/HEAD arg1 is
-        // an options bag ({params,headers}) — reading it as body produced spurious 'params'/'headers' body keys.
+        // an options bag ({params,headers}), reading it as body produced spurious 'params'/'headers' body keys.
         // This is the commonest client shape there is, and it was giving up almost all of its contract: it
         // called bodyKeys() for a flat list of names, never bodySchema(), and ignored the config argument
-        // entirely — which is where query params and headers live. Corpus-wide that left body coverage at
+        // entirely, which is where query params and headers live. Corpus-wide that left body coverage at
         // 3% and query at 8% while the information sat in the very arguments we were already looking at.
         //   axios convention:  post/put/patch(url, DATA, CONFIG)   get/delete/head(url, CONFIG)
         const bodyBearing = /^(POST|PUT|PATCH)$/.test(method);
@@ -4830,7 +4830,7 @@ function extract(src) {
             n.arguments[1].properties.length && !looksLikeConfigBag(n.arguments[1]))
           delArg = n.arguments[1];
         // …and the mirror of the DELETE test: `X.post(url, {method:"POST", signal})` is a CONFIG bag that some
-        // clients accept in the data position, and reading it as data reported a body of ["method","signal"] —
+        // clients accept in the data position, and reading it as data reported a body of ["method","signal"],
         // keys no request ever carries. Requiring EVERY key to be a config key keeps real payloads intact.
         const a1 = n.arguments[1];
         const a1IsCfg = bodyBearing && looksLikeConfigBag(a1);
@@ -4845,18 +4845,18 @@ function extract(src) {
         const cfg = cfgArg ? optsInfo(cfgArg, path.scope) : null;
         let ub = applyBase(nm, u);   // prefix instance baseURL if X came from axios.create({baseURL})
         // RESOLVE THE BASE THROUGH THE CLIENT'S OWN METHOD. `client.post("account/deactivate", body)` gives
-        // the bare string `account/deactivate`, which is not a path anyone can request — the base lives in
+        // the bare string `account/deactivate`, which is not a path anyone can request, the base lives in
         // the method that was called:
         //
         //     post(path, data, params, headers, suffix = ".json") {
         //       return this.dispatch({path: `/1.1/${path}${suffix}`, method: "POST", ...});
         //     }
         //
-        // so the request is POST /1.1/account/deactivate.json. The receiver cannot be resolved — it is a
-        // destructured factory argument — but the METHOD can, and only when exactly one method of that name
+        // so the request is POST /1.1/account/deactivate.json. The receiver cannot be resolved, it is a
+        // destructured factory argument, but the METHOD can, and only when exactly one method of that name
         // in this file builds a URL. Two would mean we do not know which, and guessing asserts an address.
         if (!/^(https?:)?\/\//.test(ub.template) && ub.template[0] !== "/") {
-          // The parameter has to sit in a PATH POSITION in the method's template — at the start, or
+          // The parameter has to sit in a PATH POSITION in the method's template, at the start, or
           // straight after a "/". `/1.1/${path}${suffix}` qualifies; `/bin/twitter/api-proxy.json${x}`
           // does not, and substituting into it produced `/bin/twitter/api-proxy.jsony` and
           // `/bin/twitter/api-proxy.jsonnormal` from arguments that were never path segments. A string is
@@ -4886,14 +4886,14 @@ function extract(src) {
                credentials: cfg ? cfg.credentials : null,
                dynamic: ub.dynamic, registry_key: rk,
                // A custom client puts headers wherever its signature says. x's takes them FOURTH, inside a
-               // spread — `e.post(url, t, {}, {...r, "content-type": "application/json"})` — so reading a
+               // spread, `e.post(url, t, {}, {...r, "content-type": "application/json"})`, so reading a
                // designated options position finds nothing and the row says body[?] while the answer sits
                // in the call. See _ctInArgs.
                content_type: (cfg && cfg.content_type) || _ctInArgs(n.arguments) };
         // The body is very often the wrapper's own parameter, handed straight through:
         //   addNewNodeToNetwork: async e => n.post(`/validators/add`, e)
         // The shape isn't lost, it's one hop up at the caller. The fetch sink already followed that hop; this
-        // sink — the commonest client shape there is — gave up and wrote {EXPR}.
+        // sink, the commonest client shape there is, gave up and wrote {EXPR}.
         if (dataArg && dataArg.type === "Identifier" && !(bodyNode && bodyNode.length)) {
           tagBodyParam(rec, dataArg, path);
           const mb = _mutationCallBody(path, dataArg.name);
@@ -4906,7 +4906,7 @@ function extract(src) {
       // tRPC proxy-chain call
       const tp = trpcCall(n, path.scope, isTrpc);
       if (tp) { push(tp); return; }
-      // POSITIONAL-METHOD custom fetcher: `De(url, "POST", opts)` — method is arg1 as a string (not in an options
+      // POSITIONAL-METHOD custom fetcher: `De(url, "POST", opts)`, method is arg1 as a string (not in an options
       // object). Very common custom-fetcher signature that the {method:} rules miss. arg0 path-like = the gate.
       if ((c.type === "Identifier" || c.type === "MemberExpression") && n.arguments.length >= 2 &&
           n.arguments[1].type === "StringLiteral" &&
@@ -4920,7 +4920,7 @@ function extract(src) {
             const a2 = n.arguments[k];
             if (!a2) continue;
             // TanStack Query options are cache behaviour, not payload. Skipped before anything reads keys
-            // off them — this argument describes what to do with the RESULT.
+            // off them, this argument describes what to do with the RESULT.
             if (looksLikeQueryOptions(a2)) continue;
             if (_QUERY_OPT_CALLEES.has(_calleeKey(c)) && allKeysAreQueryOptions(a2)) continue;
             if (a2.type === "ObjectExpression") {                       // options wrapper: {body:…, headers:…}
@@ -4929,11 +4929,11 @@ function extract(src) {
             }
             // …but the arg is often the PAYLOAD ITSELF, not a wrapper: `post(url, "POST", {phone, code})`.
             // A raw payload object carries no NET_SIGNAL key (method/body/json), so optsInfo returns nothing
-            // and the body was silently dropped — 295 of claude.ai's 390 missing bodies were exactly this.
+            // and the body was silently dropped, 295 of claude.ai's 390 missing bodies were exactly this.
             // bodyKeys already understands objects, identifiers, member exprs, JSON.stringify and spreads.
             if (wantsBody) {
               let bk = bodyKeys(a2, path.scope);
-              // A wrapper known to take options here can still yield real fields — claude's
+              // A wrapper known to take options here can still yield real fields, claude's
               // `useApiMutation(url, "POST", {...e, onError, transformVariables: e => ({...e, source})})`
               // contributes `source` to the variables through the transform. Keep what the transform put
               // there and drop the names that are only ever cache behaviour, instead of taking the object
@@ -4950,19 +4950,19 @@ function extract(src) {
       }
       // INTER-PROCEDURAL: callee is a custom fetch wrapper we resolved (pass 1) → substitute args into its URL template.
       // Only FUNCTION wrappers here. Class and object methods are registered under the same map by NAME,
-      // and this branch ends in `return` when it cannot match a binding — so once `get`, `post`, `send` and
+      // and this branch ends in `return` when it cannot match a binding, so once `get`, `post`, `send` and
       // every other method name were in it, ordinary calls to a same-named function entered here, failed to
       // bind, and returned, skipping every other sink below. That cost 6,856 of x's 11,559 records.
       if (c.type === "Identifier" && (WRAPPERS[c.name] || []).some((w) => !w.isMethod)) {
         // Match the function this identifier BINDS to here, not merely its spelling. With one candidate
-        // and no resolvable binding we still use it — that is the common single-definition case and losing
+        // and no resolvable binding we still use it, that is the common single-definition case and losing
         // it would cost far more than it protects. With several, a wrong pick asserts a concrete URL the
         // code never requests, so we take only an exact match.
         const cands = WRAPPERS[c.name].filter((w) => !w.isMethod);
         const bound = _fnOfBinding(c.name, path.scope);
         // Matching by NAME alone is the weaker half of this rule, and reading the path out of a dispatch
         // options object made more functions qualify as wrappers, so it started firing on calls it should
-        // not: `/bin/twitter/api-proxy.jsony`, `.jsonnormal`, `.jsonthrow` — a wrapper whose parameter is a
+        // not: `/bin/twitter/api-proxy.jsony`, `.jsonnormal`, `.jsonthrow`, a wrapper whose parameter is a
         // WHOLE PATH (`/bin/twitter/api-proxy.json${p}`) matched by name to calls passing something else
         // entirely. When the binding is resolved the function is the right one whatever its template looks
         // like; when it is not, only trust a wrapper whose parameter sits in a path position.
@@ -4984,15 +4984,15 @@ function extract(src) {
                template: rendered.template, body_keys: bk, body_schema: bs, dynamic: rendered.dynamic });
         return;
       }
-      // FALLBACK: no named sink matched — duck-type by the options object (custom wrappers / react-query hooks).
+      // FALLBACK: no named sink matched, duck-type by the options object (custom wrappers / react-query hooks).
       const ds = optsSink(n, path.scope);
       if (ds) { if (!ds.body_keys) tagOptsBodyParam(ds, n, path); push(ds); return; }
     }),
   });
 
-  // INTER-PROCEDURAL body resolution: a wrapper `X=(data)=>send(url,data)` has the body as a PARAM — resolve it from
+  // INTER-PROCEDURAL body resolution: a wrapper `X=(data)=>send(url,data)` has the body as a PARAM, resolve it from
   // X's call-sites (`X({...})`). Follow the variable one hop to the caller instead of giving up at "it's a variable".
-  // axios/fetch CONFIG keys — not body fields; filter so a passed-through config object doesn't leak as a body.
+  // axios/fetch CONFIG keys, not body fields; filter so a passed-through config object doesn't leak as a body.
   const CONFIG_KEYS = new Set(["withcredentials","baseurl","headers","header","method","params","query","signal",
     "timeout","canceltoken","responsetype","transformrequest","transformresponse","adapter","validatestatus",
     "maxredirects","xsrfcookiename","xsrfheadername","onuploadprogress","ondownloadprogress","credentials","mode",
@@ -5036,7 +5036,7 @@ function extract(src) {
       // AND THE SHAPE, not just the names. This pass wrote body_keys only, and body_keys is not what
       // anything downstream reads: ingest fills `req_body` from body_shape, the store's map prints
       // body_shape, and the bench measures it. So an endpoint whose body WAS recovered here still
-      // arrived with no body — the work was done and filed in a drawer nobody opens.
+      // arrived with no body, the work was done and filed in a drawer nobody opens.
       //
       // Shapes are unioned across call sites for the same reason the keys are: one endpoint routinely
       // takes several partial bodies. /user/me was observed sending {phone} while the first caller in
@@ -5062,12 +5062,12 @@ function extract(src) {
   // PUBLISH call-site argument shapes so a wrapper defined in ANOTHER chunk can be resolved. one target ships
   //     export const initiateTransfer = async (request: TransferRequest) =>
   //         httpClient.post('/v1/transfers/initiate', request)
-  // where the parameter's shape is a TypeScript type — erased at compile time, so unrecoverable from the
-  // wrapper itself — while a caller two modules away builds the literal and passes it. Same join as the
+  // where the parameter's shape is a TypeScript type, erased at compile time, so unrecoverable from the
+  // wrapper itself, while a caller two modules away builds the literal and passes it. Same join as the
   // serializers: the definition and the evidence live in different files, and only the host-level pass sees both.
   // Names shorter than four characters are minified locals and would collide, so they are left alone.
-  // Deliberately CHEAP. The first version ran full bodyKeys — binding walks, call-site recursion, FormData
-  // scans — once per named call in the chunk, and on a 3 MB bundle with thousands of names that pushed
+  // Deliberately CHEAP. The first version ran full bodyKeys, binding walks, call-site recursion, FormData
+  // scans, once per named call in the chunk, and on a 3 MB bundle with thousands of names that pushed
   // two financial dashboards past a 1260-second budget into a reported zero. A published call-site shape is
   // a hint for another chunk to use, not a place to spend the analysis budget: read a literal, or one hop to a
   // literal, and otherwise move on.
@@ -5115,7 +5115,7 @@ function extract(src) {
 
   // attach RESPONSE schemas: group records by enclosing function; a function with exactly ONE sink gets its
   // response fields attached to that sink (unambiguous). Multi-sink functions are skipped (can't tell which call
-  // the .json() belongs to) — high-precision over recall.
+  // the .json() belongs to), high-precision over recall.
   const byFn = new Map();
   for (const f of found) if (f._fn) { const a = byFn.get(f._fn) || []; a.push(f); byFn.set(f._fn, a); }
   for (const [fnNode, recs] of byFn) {
@@ -5125,8 +5125,8 @@ function extract(src) {
     if (recs.length === 1) {
       recs[0].response_keys = [...new Set([...(recs[0].response_keys || []), ...fields])].slice(0, 40);
     } else if (recs.length <= 4) {
-      // A function with several sinks makes the .json() ambiguous — we cannot say WHICH call returned those
-      // fields — so this was dropped entirely, which is why response coverage sat near zero. Dropping is not
+      // A function with several sinks makes the .json() ambiguous, we cannot say WHICH call returned those
+      // fields, so this was dropped entirely, which is why response coverage sat near zero. Dropping is not
       // the only honest option: the fields did come back from one of a small, named set of calls, and that
       // is worth recording as long as it is not asserted as fact. Marked ambiguous, with the count, so a
       // consumer can weigh it. Beyond four sinks the association is too weak to be worth anything.
@@ -5146,12 +5146,12 @@ function extract(src) {
   if (/typeName:|MethodKind|@?connectrpc|createPromiseClient|createConnectTransport/.test(src))
     for (const r of collectConnect(ast)) found.push(r);
 
-  // dedupe by (method, template) — but when the template is still {EXPR} (host/path unresolved), a distinct
+  // dedupe by (method, template), but when the template is still {EXPR} (host/path unresolved), a distinct
   // registry_key IS a distinct endpoint, so key on it too (else N registry-bridged endpoints collapse into one {EXPR}).
   const seen = new Map();
   for (const f of found) {
     // Records that are not endpoints have neither a method nor a template, so keying on those two alone
-    // collapsed EVERY serializer in a chunk into a single "undefined undefined" entry — 4 published, 1 survived,
+    // collapsed EVERY serializer in a chunk into a single "undefined undefined" entry, 4 published, 1 survived,
     // and the cross-chunk body join came back empty for a reason that had nothing to do with the join.
     const k = f._kind && !f.template
       ? `${f._kind} ${f.name || ""}`
@@ -5161,7 +5161,7 @@ function extract(src) {
     else mergeRecord(prev, f);                                 // UNION body fields across call sites
   }
   const eps = [...seen.values()];
-  // Relay compiled requests (gated on relay markers). BRACES matter — this used to leak collectApollo out of the if.
+  // Relay compiled requests (gated on relay markers). BRACES matter, this used to leak collectApollo out of the if.
   if (/operationKind|concreteRequest/.test(src)) {
     for (const o of collectRelay(ast)) eps.push(_relayRecord(o.name, o.kind, o.text));
   }
@@ -5182,8 +5182,8 @@ function extract(src) {
   // mention `request(` somewhere, which contradicted the very case the global string sweep inside this
   // collector was written for: `fetch("/graphql", {body: JSON.stringify({query: "mutation X(…)"})})` names
   // no `request` at all, so the sweep that exists to catch it never ran. Measured across the corpus: 8
-  // supabase files, 20 real operations — AddressCreate, AddressUpdate, AddressDelete, AddPhone,
-  // UserPrivacySettingsSet — extracted by nothing.
+  // supabase files, 20 real operations, AddressCreate, AddressUpdate, AddressDelete, AddPhone,
+  // UserPrivacySettingsSet, extracted by nothing.
   //
   // Admitting on the document's own text is not a loosening. A string that opens `mutation Name(` is a
   // GraphQL operation whatever transport carries it, and the sweep's admission test is stricter than the
@@ -5207,7 +5207,7 @@ function extract(src) {
     for (const g of collectGatewayRoutes(ast)) eps.push({ _kind: "gateway", path: g.path, service: g.service });
   // The gate must admit what the collector READS, not only the constructor names minification erases.
   // The name-agnostic pass looks at `uri`, `url` and `endpoint` keys; the gate listed only `uri:`, so a
-  // minified `createClient({url})` — urql, graphql-ws, graphql-sse — matched nothing and the pass written
+  // minified `createClient({url})`, urql, graphql-ws, graphql-sse, matched nothing and the pass written
   // to survive minification was skipped on exactly the chunk it was written for.
   if (/HttpLink|ApolloClient|createUploadLink|createClient\(|GraphQLClient|\b(uri|url|endpoint)\s*:/.test(src))
     for (const g of collectGraphqlEndpoints(ast))
@@ -5246,7 +5246,7 @@ function extract(src) {
     for (const e of collectFirebase(ast)) eps.push(e);
   // drop incomplete-base STUBS: a `{EXPR}/groups` record is subsumed once wrapper-resolution produced the full
   // `/api/orgs/{id}/groups`. Only drop records that START with a slot (unresolved base) when a resolved (leading-`/`)
-  // record of the same method has a slot-normalized template ending with the stub's — keeps real short paths.
+  // record of the same method has a slot-normalized template ending with the stub's, keeps real short paths.
   const norm = (t) => t.replace(/\{[^}]*\}/g, "§");
   const real = eps.filter((e) => !e._kind);
   const resolved = real.filter((e) => e.template[0] === "/");
@@ -5265,16 +5265,16 @@ function extract(src) {
   // path literals (/v1/payouts/bulk, /v1/integration/keys, /graphql) behind a transpiled class
   // client, and sink-attribution alone reported ZERO. A path nobody can attribute is still a path we know
   // exists, and silently dropping it is indistinguishable from the target not having it.
-  // So harvest the rest — as separate, honestly-labelled record kinds, never mixed into the sink-attributed
+  // So harvest the rest, as separate, honestly-labelled record kinds, never mixed into the sink-attributed
   // endpoints. Precision is handled by labelling, not by discarding.
   // A sibling-less `{path:"…"}` is only a route if nothing better already explained it. 1win ships
-  // `api.post({path:"/v1/onramp/quote", body:{…}})` — the sink collector reads that correctly as a POST
+  // `api.post({path:"/v1/onramp/quote", body:{…}})`, the sink collector reads that correctly as a POST
   // with a four-key body, and the loosened route rule was re-emitting the same path a second time as a
   // contract-free "route". That is worse than noise: it duplicates a record we understand with one we do
   // not, under a label that says the opposite of the truth.
   //
   // The path-literal collector already resolves exactly this conflict by deferring to whatever a sink
-  // claimed. Same rule, same reason — so compute the claim set from the sink-attributed endpoints BEFORE
+  // claimed. Same rule, same reason, so compute the claim set from the sink-attributed endpoints BEFORE
   // any route is added, and let bare routes stand only where no call site speaks for the path.
   const sinkClaimed = new Set();
   for (const e of kept) {
@@ -5303,11 +5303,11 @@ function extract(src) {
 }
 
 // ── COOKIES ─────────────────────────────────────────────────────────────────────────────────────────────
-// A cookie is just a header, but it is the one header script CANNOT set through fetch — the browser attaches
+// A cookie is just a header, but it is the one header script CANNOT set through fetch, the browser attaches
 // it, gated on `credentials`. So the contract needs two different facts: WHICH cookies exist (names), and
 // whether a given request carries them at all. We had the second (credentials) and, for the first, only
-// whatever a single response happened to Set-Cookie. Everything the app manages itself in JavaScript —
-// document.cookie writes, js-cookie, and read helpers naming a cookie — was invisible.
+// whatever a single response happened to Set-Cookie. Everything the app manages itself in JavaScript,
+// document.cookie writes, js-cookie, and read helpers naming a cookie, was invisible.
 //
 // The read sites matter as much as the writes: `getCookie("session_id")` names a cookie the app expects the
 // server to have set, which a single unauthenticated response will never show us.
@@ -5317,8 +5317,8 @@ const _COOKIE_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/;
 function collectCookies(ast) {
   const out = new Map();
   // Minification renames getCookie() to c(), so a name-based test finds almost nothing. Identify the
-  // helpers by BEHAVIOUR instead — any function whose body touches document.cookie is a cookie helper,
-  // whatever it ended up being called — and then read the string argument at its call sites. Same
+  // helpers by BEHAVIOUR instead, any function whose body touches document.cookie is a cookie helper,
+  // whatever it ended up being called, and then read the string argument at its call sites. Same
   // principle as the header fix: anchor on what the code does, not on an identifier a minifier rewrites.
   const cookieFns = new Set();
   traverse(ast, {
@@ -5341,7 +5341,7 @@ function collectCookies(ast) {
     },
   });
   // A helper that touches document.cookie may also be a generic storage wrapper, and it gets called with
-  // header names too — `content-type` and `Authorization` are not cookies. Anything that is a known HTTP
+  // header names too, `content-type` and `Authorization` are not cookies. Anything that is a known HTTP
   // header name is rejected: a false cookie is worse than a missing one, because it misdescribes how the
   // app authenticates.
   const NOT_A_COOKIE = new Set(["content-type", "authorization", "accept", "accept-language", "user-agent",
@@ -5350,12 +5350,12 @@ function collectCookies(ast) {
   // Two very different levels of evidence end up here, and conflating them would misreport how the app
   // authenticates. A `document.cookie = "sid=..."` write, or a call to something literally named
   // getCookie(), IS a cookie. A call to a minified helper that merely touches document.cookie somewhere in
-  // its body is an inference — those helpers are often generic storage wrappers, which is how fromBase64
+  // its body is an inference, those helpers are often generic storage wrappers, which is how fromBase64
   // and select got in. Both are kept; only the first is asserted.
   const add = (name, mode, value, confidence) => {
     if (!name || !_COOKIE_NAME.test(String(name))) return;
     if (NOT_A_COOKIE.has(String(name).toLowerCase())) return;
-    // `x-` / `sec-` prefixes are a header convention, not a cookie one — X-Request-URL and
+    // `x-` / `sec-` prefixes are a header convention, not a cookie one, X-Request-URL and
     // x-statsig-region reached here through the same generic storage helper.
     if (/^(x|sec|http)-/i.test(String(name))) return;
     const k = String(name);
@@ -5384,7 +5384,7 @@ function collectCookies(ast) {
         const name = c && (c.name || prop);
         if (!name) return;
         if (!_COOKIE_FN.test(String(name)) && !cookieFns.has(String(name))) return;
-        // js-cookie style: Cookies.get("x") / Cookies.set("x", v) — the object is what is named
+        // js-cookie style: Cookies.get("x") / Cookies.set("x", v), the object is what is named
         const objSrc = c.type === "MemberExpression" ? (generateSrc(c.object) || "") : "";
         const isCookieObj = /cookie/i.test(objSrc) || /cookie/i.test(String(name)) ||
                             cookieFns.has(String(c.name || "")) || cookieFns.has(String(prop || ""));
@@ -5410,7 +5410,7 @@ function collectCookies(ast) {
 
 // ── OUTPUT INVARIANTS ───────────────────────────────────────────────────────────────────────────────────
 // Roughly twenty collectors push records, and each one that skips a normalisation step ships a malformed
-// record downstream. Patching them individually is a losing game — a structural audit across 224 hosts found
+// record downstream. Patching them individually is a losing game, a structural audit across 224 hosts found
 // empty templates, unbalanced slots containing raw minified code, `//` from base+path concatenation, records
 // that are nothing but `{EXPR}`, methods like "EMAIL", and XML namespace URLs presented as endpoints.
 // One choke point every record passes through is the only way these stay fixed.
@@ -5421,7 +5421,7 @@ const _NAMESPACE = /^https?:\/\/(www\.)?(w3\.org|xmlns\.|purl\.org|schema\.org|x
 
 // A slot whose "name" is a fragment of minified code ({call:function(){if(null!=self}) is noise, but the
 // PATH around it is a real endpoint. A regex replace cannot handle the nesting and left the template
-// unbalanced, so the record was thrown away — losing genuine endpoints to fix cosmetic ones, which is the
+// unbalanced, so the record was thrown away, losing genuine endpoints to fix cosmetic ones, which is the
 // wrong trade. Walk the string with a depth counter instead and rewrite each slot in place.
 function _normSlots(t) {
   let out = "", i = 0;
@@ -5447,7 +5447,7 @@ function _normSlots(t) {
 //
 // That is strictly MORE than we can recover for a REST call: the names are declared rather than inferred,
 // and every one carries a type and a nullability marker. We were already capturing the whole document text
-// and then throwing this away — 141 operations on one host, every one of them with its variables sitting
+// and then throwing this away, 141 operations on one host, every one of them with its variables sitting
 // unparsed in a field we had already stored.
 //
 // Parsed by bracket-matching rather than by regex, because a default value can itself contain parentheses
@@ -5485,11 +5485,11 @@ function graphqlVariables(text) {
 // One shape for every GraphQL collector, so the variable contract cannot be attached by one and forgotten
 // by the next two.
 // Is this document COMPLETE, or did we capture one fragment of something assembled at runtime? Braintree's
-// SDK builds its mutation by conditional concatenation —
+// SDK builds its mutation by conditional concatenation,
 //     a = "mutation TokenizeCreditCard($input: TokenizeCreditCardInput!",
 //     o && (a += ", $authenticationInsightInput: AuthenticationInsightInput!"),
 //     a += ") { tokenizeCreditCard(input: $input) { … } }"
-// — so the literal we hold opens a variable list it never closes. Two occurrences in the whole corpus, both
+//, so the literal we hold opens a variable list it never closes. Two occurrences in the whole corpus, both
 // in that one third-party SDK, which is why the assembly is not traced: it is not worth a general
 // string-accumulation pass. But a partial document must not be presented as a whole one. A reader who
 // cannot tell "this is the operation" from "this is the first third of it" will try to replay it and get a
@@ -5519,7 +5519,7 @@ function _relayRecord(op, kind, text) {
   const vars = graphqlVariables(text);
   if (vars) {
     rec.body_keys = vars.map((v) => v.name);
-    rec.variables = vars;                   // names AND types — the operation declared both
+    rec.variables = vars;                   // names AND types, the operation declared both
     // The operation states a TYPE for every variable, so its shape is better than anything inferred for a
     // REST body: `{campaignId: "ID!"}` rather than `{campaignId: "?"}`. Use it directly.
     const shape = {};
@@ -5547,14 +5547,14 @@ const _ENC_FROM_CT = (ct) => {
   return null;
 };
 
-// A PLACEHOLDER IS NOT A FIELD NAME. bodyKeys marks what it could not resolve inline — "{EXPR}" for a
+// A PLACEHOLDER IS NOT A FIELD NAME. bodyKeys marks what it could not resolve inline, "{EXPR}" for a
 // computed key, "...{EXPR}" for an unresolvable spread, "{EXPR-body}" for a wrapper body it could not
-// follow — and those markers travelled in the key LIST, mixed among real fields:
+// follow, and those markers travelled in the key LIST, mixed among real fields:
 //
 //     ['og_image_url', '{EXPR-body}', 'publish_visibility']
 //
 // which tells a reader to send a parameter literally called {EXPR-body}. 143 of 1,583 recovered bodies
-// across the corpus carried one. The fact is real and worth keeping — part of this body is unresolved —
+// across the corpus carried one. The fact is real and worth keeping, part of this body is unresolved,
 // but it belongs on the record, not in the field list, exactly like `text_partial` on a GraphQL fragment.
 const _BODY_PLACEHOLDER = /^\.{0,3}\{EXPR(-body)?\}$/;
 
@@ -5591,7 +5591,7 @@ function sanitize(records) {
     let t = r.template;
     if (typeof t === "string") {
       t = t.replace(/[\r\n\t]+/g, "").trim();
-      // A FRAGMENT IS NEVER SENT. `/pricing#api` and `/pricing` are one request — the part after `#` is
+      // A FRAGMENT IS NEVER SENT. `/pricing#api` and `/pricing` are one request, the part after `#` is
       // resolved entirely in the browser and no server ever sees it. Keeping it split one endpoint into
       // many: 1,017 of claude's 7,126 endpoints carried one, 14% of that map, including
       // `/docs/en/build-with-claude/overview#feature-availability` sitting beside the same page without it.
@@ -5605,10 +5605,10 @@ function sanitize(records) {
       if (t.length > 300) t = t.slice(0, 300);
       if (!t) continue;                                  // empty template: a config default, not an endpoint
       if (/^\{[^}]*\}$/.test(t)) {
-        // Nothing but a slot. For a REST path that is unusable — there is no endpoint to speak of. But a
+        // Nothing but a slot. For a REST path that is unusable, there is no endpoint to speak of. But a
         // socket opened to a runtime URL is still a socket that EXISTS, and a call whose body we recovered
         // is still a contract we learned; dropping either loses a fact because one field was unresolvable.
-        // `new WebSocket(e)` is the ordinary way to write it — the URL is always built at runtime — so
+        // `new WebSocket(e)` is the ordinary way to write it, the URL is always built at runtime, so
         // this rule silently deleted every WebSocket in every bundle. Keep them with a null target, the
         // same way a Next.js server action has no path of its own.
         const worth = r.kind === "ws" || r.kind === "ws-message" ||
@@ -5627,8 +5627,8 @@ function sanitize(records) {
     } else if (t !== undefined && t !== null) {
       continue;                                          // a non-string template is a bug, not data
     }
-    // ONE SPELLING FOR "WE DO NOT KNOW". A method field holding something that is not an HTTP verb —
-    // "EMAIL" is a config enum that reached one — used to become the string "UNKNOWN", while a path with
+    // ONE SPELLING FOR "WE DO NOT KNOW". A method field holding something that is not an HTTP verb,
+    // "EMAIL" is a config enum that reached one, used to become the string "UNKNOWN", while a path with
     // no call site at all became NULL. Two encodings of the same fact meant every consumer had to test for
     // both, and any that tested for one silently mishandled the other: 530 rows NULL and others "UNKNOWN"
     // in the same table. NULL is the one that SQL already understands, so the string goes; what was
@@ -5644,16 +5644,16 @@ function sanitize(records) {
     }
     // Hold EVERY response schema to the same standard, whichever collector produced it. The older `.json()`
     // and options-object paths were still emitting One dashboard's ["success","result","errors"] envelope and
-    // react-query's ["data","isLoading"] hook state — identical on every route, so they say nothing about the
+    // react-query's ["data","isLoading"] hook state, identical on every route, so they say nothing about the
     // endpoint. One choke point means a new collector cannot reintroduce the noise.
-    // `post(url, {})` is a KNOWN answer — the request carries no fields — and it is not the same claim as "we
+    // `post(url, {})` is a KNOWN answer, the request carries no fields, and it is not the same claim as "we
     // could not work out the body". Both currently land as a falsy body_keys and become indistinguishable, which
     // makes a resolved empty body look like a gap in every count downstream.
     if (Array.isArray(r.body_keys) && r.body_keys.length === 0) r.body_empty = true;
 
     // ONE field that always carries the best body shape we have, so a consumer never has to know which of
-    // three fields to look in. `body_src` is the full nested tree — objects, arrays and their element
-    // shapes — but it is only produced when every value could be classified, which is a much narrower
+    // three fields to look in. `body_src` is the full nested tree, objects, arrays and their element
+    // shapes, but it is only produced when every value could be classified, which is a much narrower
     // condition than recovering the key NAMES. Where the tree exists, use it. Where only names exist, emit
     // the names with unknown values rather than nothing: a schema listing fields of unknown type is still
     // a schema, and it is what the flat `body_keys` was always standing in for.
@@ -5664,7 +5664,7 @@ function sanitize(records) {
     //
     // Every literal sibling key of that config is already captured verbatim in `descriptor`. We read
     // `method` and `path` out of it and left `body_keys: null` sitting directly beside `payloadKey:"roles"`
-    // in the same record — then reconstructed the identical fact downstream, in another language, by
+    // in the same record, then reconstructed the identical fact downstream, in another language, by
     // subtracting path parameters from a call site in a different file. Read it here instead.
     const desc = r.descriptor;
     if (desc && typeof desc === "object") {
@@ -5683,7 +5683,7 @@ function sanitize(records) {
     //
     // Three different walkers can describe a body and they were consulted in a fixed order that had the
     // best one missing entirely. `bodySchema()` produces the NESTED tree with per-leaf provenance and every
-    // collector already carried it as `body_schema` — and then this assembly ignored that field and built
+    // collector already carried it as `body_schema`, and then this assembly ignored that field and built
     // `body_shape` out of the flat key list with a literal "?" per key. Measured on one bundle:
     //
     //   body_schema: {"issueDate": {"year":"computed:getFullYear","month":"{EXPR}","day":"computed:getDate"},
@@ -5691,7 +5691,7 @@ function sanitize(records) {
     //   body_shape : {"issueDate":"?", "attachments":"?"}        <- what reached the store
     //
     // The nesting was recovered, then discarded one assignment later. Across every store in runs/, 455 of
-    // 473 leaf values in the shipped schema are the placeholder "?" — which is what a request contract
+    // 473 leaf values in the shipped schema are the placeholder "?", which is what a request contract
     // looks like when the answer was computed and thrown away.
     //
     // So: score each candidate by how much it actually says (a nested object says more than a typed leaf,
@@ -5730,7 +5730,7 @@ function sanitize(records) {
 }
 
 // Query parameters are a first-class injection point, so leaving them buried inside the template string as
-// "?token={param:e}&limit=50" is a lossy representation — a consumer would have to re-parse the URL to learn
+// "?token={param:e}&limit=50" is a lossy representation, a consumer would have to re-parse the URL to learn
 // anything. Whenever a resolved template carries a query string, lift it into the same structured shape the
 // opts-sink produces. The literal values are worth keeping too: "?usePrefix=false&labelNames[]=INBOX" states
 // the parameter's real domain, which is exactly what you need to fuzz it credibly.
@@ -5742,7 +5742,7 @@ function annotateQuery(records) {
     if (qi < 0) continue;
     // query_schema is EITHER an array of {name,…} (opts-sink) or a nested schema object keyed by param
     // name (queryInfo). Assuming the array form threw a TypeError that the caller swallowed, which turned
-    // every affected file into a silent "no endpoints" — the whole point of merging here is to add
+    // every affected file into a silent "no endpoints", the whole point of merging here is to add
     // information, so it must adapt to whichever representation the record already carries.
     const existing = e.query_schema;
     const isArr = Array.isArray(existing);
@@ -5775,12 +5775,12 @@ function annotateQuery(records) {
   }
 }
 
-// Client-side route tables: {path:"/x", element|component|children|loader|lazy|handle}. High precision — the
+// Client-side route tables: {path:"/x", element|component|children|loader|lazy|handle}. High precision, the
 // sibling key is what separates a router config from any other object with a `path` property.
 const _ROUTE_SIB = /^(element|component|Component|children|loader|action|lazy|handle|render|page|name|title|redirect|beforeEnter|meta)$/;
 // Next.js SERVER ACTIONS. A `"use server"` function is invoked by POSTing to whatever PAGE renders it, with
 // the operation identified by a `Next-Action:` header rather than by the path. So the entire mutation surface
-// of an App Router app is invisible to anything that enumerates URLs — every action on a page shares one
+// of an App Router app is invisible to anything that enumerates URLs, every action on a page shares one
 // path, exactly like GraphQL operations sharing /graphql.
 //
 // The client never receives the function body, only a reference:
@@ -5789,7 +5789,7 @@ const _ROUTE_SIB = /^(element|component|Component|children|loader|action|lazy|ha
 //                                         ^ build-scoped id                                      ^ the dev's own name
 //
 // Argument 5 is the gift: the developer's name for the RPC. That makes a finding writable against a stable
-// identity ("the acceptInvite action") instead of a hash that dies at the next deploy — the id is derived at
+// identity ("the acceptInvite action") instead of a hash that dies at the next deploy, the id is derived at
 // build time and changes whenever the code does.
 //
 // Anchored on the framework's exported function name, which is legitimate here: `createServerReference` is a
@@ -5828,7 +5828,7 @@ function collectServerActions(ast) {
 
 // NAVIGATION SINKS. A route the app can navigate to is surface, exactly as much as one it can fetch, and
 // none of this was being collected. A census over 25 corpus hosts found ~1,977 navigation-sink occurrences
-// against 1,158 network ones — we had built half an extractor and were reading the resulting endpoint
+// against 1,158 network ones, we had built half an extractor and were reading the resulting endpoint
 // count as if it were the whole map.
 //
 // These carry no method and no contract; a navigation target is a destination, not a request with a body.
@@ -5836,22 +5836,22 @@ function collectServerActions(ast) {
 // this", which are different claims and must not be counted together.
 // CLASS GETTERS RETURNING AN OBJECT. `data: e.saveData` is the commonest way a model hands its payload to
 // a client: the call site names a PROPERTY and the shape lives in a getter on some class elsewhere in the
-// bundle. Discourse ships exactly this —
+// bundle. Discourse ships exactly this,
 //     create(e) { return S(`/bookmarks.json`, {method:"POST", data: e.saveData}) }
 //     class Bookmark { get saveData() { return {reminder_at:…, name:…, bookmarkable_id:…} } }
-// — and we reported the endpoint with no body while six field names sat in the same file.
+//, and we reported the endpoint with no body while six field names sat in the same file.
 //
 // Indexed by property NAME, because the receiver's type is exactly what minification destroys. That makes
 // it a heuristic: two classes could define the same getter differently. Property names like `saveData` are
 // distinctive enough that the risk is small, and the alternative is recovering nothing.
 let _GETTERS = new Map();
-// BACKWARD TRACE. `data: row` where `row` is a function PARAMETER — the shape is not here, it is in
+// BACKWARD TRACE. `data: row` where `row` is a function PARAMETER, the shape is not here, it is in
 // whoever calls this function. Keycloak does exactly this: `updateRequiredAction({alias:o.alias}, o)`,
 // where `o` is a table row built by a `.map()` two frames away.
 //
 // So: find the enclosing function, find ITS call sites, take the argument in the same position, and
 // recurse. If that argument is itself an element of an array (a forEach/map callback parameter), follow
-// the array to the expression that produced it. Both hops are bounded — this is a search for a literal,
+// the array to the expression that produced it. Both hops are bounded, this is a search for a literal,
 // not a solver, and it gives up rather than guessing.
 function paramProvenance(node, scope, depth) {
   if (!node || node.type !== "Identifier" || depth > 4) return null;
@@ -5947,13 +5947,13 @@ function _note(into, k, v) {
 
 // ── CALLER ARGUMENT SHAPES, INDEXED ACROSS THE WHOLE CORPUS ────────────────────────────────────────
 // `changeRole(e){ r({url:"...", data:e}) }` hands us a verb, a path and no contract. The shape is one
-// frame up at whoever calls changeRole — and in a real bundle that caller is in a DIFFERENT CHUNK, so
+// frame up at whoever calls changeRole, and in a real bundle that caller is in a DIFFERENT CHUNK, so
 // resolving it inside one file finds nothing. Measured: the same-file version fixed the pattern in
 // isolation and moved 0 of 604 bodies across six real targets.
 //
 // This rides along on the index pass that already reads every file once, recording, per method name
 // and argument position, the LITERAL object shapes callers pass. Union rather than first-wins: one
-// endpoint routinely takes several partial bodies — the wire showed /user/me sending {phone} while the
+// endpoint routinely takes several partial bodies, the wire showed /user/me sending {phone} while the
 // first caller in the code passed {name}, and both are real fields.
 const _CALLARGS = new Map();
 
@@ -6006,8 +6006,8 @@ function indexPropertyValues(ast, into) {
         const l = p.node.left;
         if (l.type !== "MemberExpression" || l.computed || !l.property || !l.property.name) return;
         const v = _shallowValue(p.node.right);
-        // Only keep a value the bundle is UNANIMOUS about. Keycloak assigns baseUrl four different ways —
-        // `this.baseUrl=t.baseUrl`, `=t.adminBaseUrl`, `=t?.baseUrl||DEFAULT` — and taking the first
+        // Only keep a value the bundle is UNANIMOUS about. Keycloak assigns baseUrl four different ways,
+        // `this.baseUrl=t.baseUrl`, `=t.adminBaseUrl`, `=t?.baseUrl||DEFAULT`, and taking the first
         // produced `https://auth.example.com/authadmin/realms/...`, a URL missing a separator that 404s.
         // Disagreement means we do not know, and a named slot is the honest answer; the config values are
         // recorded separately so a reader can resolve it deliberately.
@@ -6056,28 +6056,28 @@ function indexObjectGetters(ast) {
   return m;
 }
 
-// JSX SURFACE — forms and navigation declared in component code.
+// JSX SURFACE, forms and navigation declared in component code.
 //
 // A <form> in a component is a request contract as much as one in served markup: it states its method, its
 // target and every field name. A <Link to=…> is a navigation target. The extractor had no JSX handling at
 // all, so on a React application every form declared in code was invisible unless a crawl happened to
-// render the state containing it — which makes form discovery depend on reaching a state, when the
+// render the state containing it, which makes form discovery depend on reaching a state, when the
 // declaration was sitting in the bundle the whole time.
 //
 // Both shapes are handled because production ships the second: source `<form action="/x">` appears only in
 // sourcemapped or unminified code, while a built bundle contains `jsx("form",{action:"/x",children:[…]})`.
-// The element NAME and the attribute names survive minification — they are the DOM contract — so the
+// The element NAME and the attribute names survive minification, they are the DOM contract, so the
 // compiled form is as readable as the source one.
 // A <form> record, without inventing where it goes.
 //
 // `action || "/"` claimed that every action-less form posts to the site root. In shipped React that is
-// simply false — measured over 830 MB of corpus bundles, 323 of 340 forms (95%) declare no action, because
+// simply false, measured over 830 MB of corpus bundles, 323 of 340 forms (95%) declare no action, because
 // submission is an onSubmit handler that calls preventDefault and fetches somewhere else entirely. The
 // form never touches "/". Recording it that way manufactured a root endpoint out of the commonest shape
 // in the sample.
 //
 // The field names are still real and still worth having, so the record survives with an explicit null
-// target instead of a fabricated one. Where the endpoint actually lives — inside the handler — the fetch
+// target instead of a fabricated one. Where the endpoint actually lives, inside the handler, the fetch
 // call site is already extracted as its own sink with its own body keys, so nothing is lost by declining
 // to guess here.
 function _formRecord(method, action, fields, source) {
@@ -6227,7 +6227,7 @@ function collectNavigation(ast) {
         const objName = l.object && (l.object.name || (l.object.property && l.object.property.name));
         if (prop === "href" && (objName === "location" || objName === "Location"))
           add(str(path.node.right, path.scope), "location.href");
-        // a.href = "/x" on a created anchor — the DOM-inserted navigation case
+        // a.href = "/x" on a created anchor, the DOM-inserted navigation case
         else if (prop === "href")
           add(str(path.node.right, path.scope), "element.href");
       } catch {}
@@ -6249,7 +6249,7 @@ function collectNavigation(ast) {
         if (prop === "open" && (objName === "window" || objName === "self" || objName === "top"))
           return add(str(a[0], path.scope), "window.open");
 
-        // history.pushState(state, title, "/x") — the URL is the THIRD argument
+        // history.pushState(state, title, "/x"), the URL is the THIRD argument
         if (prop === "pushState" || prop === "replaceState")
           return add(str(a[2], path.scope), "history." + prop);
 
@@ -6285,29 +6285,29 @@ function collectNavigation(ast) {
 // ── WebSocket MESSAGES ────────────────────────────────────────────────────────────────────────────
 //
 // `new WebSocket(url)` was recorded with `body_keys: null`: we learned that a socket exists and nothing
-// about what travels over it. For a real-time product that is most of the application — the domain
-// presence, moderation — and it is the part a crawl can never reach, because messages are sent when a
+// about what travels over it. For a real-time product that is most of the application, the domain
+// presence, moderation, and it is the part a crawl can never reach, because messages are sent when a
 // user does something and the crawler deliberately does not press buttons. Static analysis is not merely
 // the better route here, it is the only one.
 //
 // Three shapes carry essentially all of it:
 //
 //   ws.send(JSON.stringify({...}))          raw socket
-//   channel.push("new_msg", {body: t})      Phoenix — what one target ships
+//   channel.push("new_msg", {body: t})      Phoenix, what one target ships
 //   socket.emit("chat", {room, text})       Socket.IO
 //
 // Matched by BINDING PROVENANCE, not by method name. `.push` is Array.prototype.push and `.emit` is every
 // EventEmitter in the bundle; keying on the name would drown the map in noise. So the receiver must be
 // traceable to a socket or a channel, which is the same technique used for useNavigate() elsewhere.
 const _WS_INIT = /^(WebSocket|SockJS|ReconnectingWebSocket)$/;
-// A socket is almost never a local `const`. Real code keeps it on the instance —
-// `this.socket.emit("setup", {...})` — so the receiver is a member expression and there is no binding to
+// A socket is almost never a local `const`. Real code keeps it on the instance,
+// `this.socket.emit("setup", {...})`, so the receiver is a member expression and there is no binding to
 // trace. Measured on a real bundle (one target's a socket client class): every send is
 // `this.socket.emit(...)`, and requiring a resolvable binding found none of them.
 //
 // So accept a socket-shaped RECEIVER NAME as well, gated on the file actually containing socket
-// machinery. Two independent signals — the field is called `socket`/`ws`/`channel`, and this file
-// constructs or imports a socket — which keeps `this.emitter.emit("change", …)` out.
+// machinery. Two independent signals, the field is called `socket`/`ws`/`channel`, and this file
+// constructs or imports a socket, which keeps `this.emitter.emit("change", …)` out.
 const _SOCK_FIELD = /^(socket|ws|websocket|sock|conn|connection|channel|io|client)$/i;
 const _SOCK_EVIDENCE = /socket\.io|engine\.io|new [A-Za-z_$.]*WebSocket\(|phx_join|SockJS|ReconnectingWebSocket/;
 
@@ -6317,7 +6317,7 @@ function collectSocketMessages(ast, src) {
   const isSocketBinding = (node, scope) => {
     if (!node) return null;
     // The FIELD case must be tested before the Identifier guard below. It was written after it, which made
-    // it unreachable — the guard returns on anything that is not an Identifier, and `this.socket` is a
+    // it unreachable, the guard returns on anything that is not an Identifier, and `this.socket` is a
     // MemberExpression. Same shape as the duplicate `case "CallExpression"` that sat dead in this file for
     // weeks: an early return turning later code into decoration.
     if (node.type === "MemberExpression" && !node.computed && node.property && fileHasSocket) {
@@ -6349,7 +6349,7 @@ function collectSocketMessages(ast, src) {
         if (!/^(send|emit|push|on)$/.test(String(m || ""))) return;
         const kindOf = isSocketBinding(c.object, path.scope);
         if (!kindOf) return;
-        // `.on(event, handler)` is the INBOUND half — what the server sends us. No body to recover, but
+        // `.on(event, handler)` is the INBOUND half, what the server sends us. No body to recover, but
         // the event name is half the protocol and it is free to record.
         if (m === "on") {
           const a0 = (path.node.arguments || [])[0];
@@ -6384,7 +6384,7 @@ function collectRouteTables(ast, src) {
   const out = [];
   const seen = new Set();
 
-  // A router config is a TREE and children are declared RELATIVE to their parent — `{path:"/app", children:
+  // A router config is a TREE and children are declared RELATIVE to their parent, `{path:"/app", children:
   // [{path:"users"}]}` means /app/users. Requiring a leading slash therefore threw away every nested route
   // and kept only the roots: 105 of 465 `{path:...}` occurrences on one Keycloak bundle, which read as a
   // complete route list and was a quarter of one.
@@ -6407,12 +6407,12 @@ function collectRouteTables(ast, src) {
     return segs;
   };
 
-  // A `path` property alone is ambiguous — it is also how you spell a filesystem path, an SVG asset, or a
-  // config key — so the sibling test (`element`, `component`, `loader`, …) is what makes a route object
+  // A `path` property alone is ambiguous, it is also how you spell a filesystem path, an SVG asset, or a
+  // config key, so the sibling test (`element`, `component`, `loader`, …) is what makes a route object
   // recognisable. That test is right about what it accepts and wrong about what it rejects: an app is free
   // to declare `creatorTag: l({path:"/tags/:tag"})` and let a factory attach the component elsewhere, and
   // then NO route object has a sibling and the whole table disappears. Measured on the corpus: the bare
-  // shape is the DOMINANT one among SPAs we recovered nothing from — 6 of 16 hosts, 102 occurrences —
+  // shape is the DOMINANT one among SPAs we recovered nothing from, 6 of 16 hosts, 102 occurrences,
   // while hosts that already worked are dominated by the sibling shape. So it is a real table, not noise.
   //
   // What separates a route table from an incidental `path:` is DENSITY. One `{path:"/usr/lib"}` is a config
@@ -6420,7 +6420,7 @@ function collectRouteTables(ast, src) {
   // then keep them only if enough of them exist to BE a table, and label them distinctly so a consumer can
   // tell a factory-declared route from an explicitly-declared one.
   // WHERE a client route lives decides whether it can be crawled at all, and the router says which.
-  // Hash routing keeps the whole route in the URL fragment, which browsers never transmit — so the server
+  // Hash routing keeps the whole route in the URL fragment, which browsers never transmit, so the server
   // has never heard of these paths and answers 404 to every one of them. Measured on Keycloak's admin
   // console: /master/clients, /master/users/abc/settings and a route invented for the test all returned
   // 404 identically, while the bundle held 105 real routes. Path routing is the opposite: the request is
@@ -6465,7 +6465,7 @@ function collectRouteTables(ast, src) {
       if (_NOT_A_ROUTE.test(p)) return;
       // `{path:"/v1/onramp/quote", method:"POST"}` is an API call descriptor, not a client-side route. It
       // was landing here as a "route", which is the one mislabel that could do harm: a crawler that skips
-      // routes because they never reach the server would then skip real endpoints. A verb settles it —
+      // routes because they never reach the server would then skip real endpoints. A verb settles it,
       // client routes do not carry an HTTP method.
       if (verb) return;
       bare.push(t);
@@ -6492,7 +6492,7 @@ const _NOT_A_ROUTE = /^\/(usr|etc|var|tmp|home|dev|proc|sys|opt|bin|sbin|lib|mnt
 // Emitting all three verbatim means the same endpoint appears as several distinct records, dedupe never
 // fires, and a diff between two sources of the same route reports a false difference. Everything is
 // canonicalised to the {name} form on the way out. Only a bracket that owns a WHOLE path segment is a
-// parameter — `labelNames[]=x` in a query string and `arr[0]` indexing must survive untouched.
+// parameter, `labelNames[]=x` in a query string and `arr[0]` indexing must survive untouched.
 const _NEXT_SEG = /\/\[{1,2}(?:\.{3})?([A-Za-z0-9_]+)\]{1,2}(?=\/|$)/g;
 const _EXPRESS_SEG = /\/:([A-Za-z0-9_]+)/g;
 // TanStack Router / Remix file-system route strings, which X and a growing number of apps register their
@@ -6503,15 +6503,15 @@ const _EXPRESS_SEG = /\/:([A-Za-z0-9_]+)/g;
 //   _name   a PATHLESS LAYOUT route. It groups children and contributes NOTHING to the URL.
 //
 // so that route is /{username}/articles. Emitting the raw form gave x.com 378 "endpoints" that were route
-// TREE node names — /$username/_profile/articles, /$username/_followers/verified_followers — none of them
+// TREE node names, /$username/_profile/articles, /$username/_followers/verified_followers, none of them
 // a path any client ever sends.
 //
 // Gated on a $-segment being present in the input, because a leading-underscore segment is perfectly legal
-// in a real URL — /_next/static/... is one of the most common paths on the web — and only the file-system
+// in a real URL, /_next/static/... is one of the most common paths on the web, and only the file-system
 // route syntax is evidence that this string is a route tree rather than a path.
 const _FS_PARAM = /\/\$([A-Za-z_]\w*)/g;
 // A BARE `$` segment is TanStack's splat: `/design/$` matches /design/ and everything under it. It is not a
-// regex anchor, though it reads exactly like one — `_NOTPATH` rejects a trailing `$` for that reason, and
+// regex anchor, though it reads exactly like one, `_NOTPATH` rejects a trailing `$` for that reason, and
 // route records do not pass through that filter, so five claude.ai routes came out as `/design/$`,
 // `/memory/$`, `/desktop/connected/$`. Unrequestable as written, and a wildcard once rendered.
 const _FS_SPLAT = /\/\$(?=\/|$)/g;
@@ -6538,7 +6538,7 @@ const _canonPath = (s, fileHasFsRoutes) =>
 
 const MAX_PATH_LITERALS = 25000;
 const _ASSETY = /\.(js|mjs|cjs|css|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot|otf|map|mp4|webm|mp3|wav|pdf|wasm|zip|csv)$/i;
-// regexes, CSS, windows paths, URLs — plus two shapes that survived and are provably not requestable:
+// regexes, CSS, windows paths, URLs, plus two shapes that survived and are provably not requestable:
 // XPath axes (/descendant::$1, /child::$1) and local filesystem paths (/usr/local/bin/claude), both of
 // which are ordinary string constants in real bundles and both of which look exactly like URL paths.
 const _NOTPATH = /[\s<>()\[\]"'`\\|@]|^\/\/|\/{3}|^\/[A-Z]:|^\/\^|\$$|::|^\/(usr|etc|opt|proc|dev)\/(bin|lib|local|share|sbin|include)\/|^\/(Users|home)\/[\w.-]+\/(Desktop|Documents|Library|\.\w)/;
@@ -6547,21 +6547,21 @@ function collectPathLiterals(ast, claimed, src) {
   const fileHasFsRoutes = _FS_EVIDENCE.test(String(src || ""));
   const consider = (raw, node, asRoute) => {
     if (typeof raw !== "string" || raw.length < 4 || raw.length > 200) return;
-    // A URL cannot contain a control character. Minified bundles carry binary-ish string data — packed
-    // tables, base64 with stray bytes — and a handful matched the path shape and came out as endpoints:
+    // A URL cannot contain a control character. Minified bundles carry binary-ish string data, packed
+    // tables, base64 with stray bytes, and a handful matched the path shape and came out as endpoints:
     // `/.04\u0013\u0002`, `/B_I+\u0010&57N`. Printed into the site map they also made the map itself a
     // binary file to anything that classifies by content, so grep over it returned nothing rather than an
-    // error — exactly the trap this repo hit in its own extractor source.
+    // error, exactly the trap this repo hit in its own extractor source.
     // eslint-disable-next-line no-control-regex
     if (/[\u0000-\u001f\u007f]/.test(raw)) return;
     // Canonicalise BEFORE filtering. The reject-list excludes square brackets to drop CSS selectors and
-    // regex fragments, which also silently discarded every Next.js dynamic route (/[lang]/privacy) — the
+    // regex fragments, which also silently discarded every Next.js dynamic route (/[lang]/privacy), the
     // single most common route syntax in the corpus. Once [lang] has become {lang} the filter is safe.
     const v = _canonPath(raw, fileHasFsRoutes);
     if (_NOTPATH.test(v) || _ASSETY.test(v)) return;
     // A path whose BASE is a variable is still a path: `${apiBase}/orgs/${id}/plans/active` is one of
     // the most common shapes in real code, and demanding a literal leading "/" discarded every one of them.
-    // An ABSOLUTE url is likewise a request the app makes — and it is the form a bundler PRODUCES when it
+    // An ABSOLUTE url is likewise a request the app makes, and it is the form a bundler PRODUCES when it
     // inlines an env-var base at build time, so rejecting it loses exactly the endpoints that were easiest
     // to resolve (href:"https://www.client.example/public/docs/Terms").
     const skeleton = v.replace(/\{[^}]*\}/g, "");
@@ -6576,14 +6576,14 @@ function collectPathLiterals(ast, claimed, src) {
     // Firebase auth endpoints into one bucket, which the dedupe then threw away.
     // A CLIENT-SIDE ROUTE IS NOT AN ABSOLUTE URL. The sibling test that promotes a literal to a route
     // is "the object declaring this URL also names the view that renders it", and a link table sitting
-    // beside a component satisfies it — so Supabase's testimonial wall, `https://x.com/<user>/status/
+    // beside a component satisfies it, so Supabase's testimonial wall, `https://x.com/<user>/status/
     // <id>` next to the card that renders it, produced 51 of its 53 "routes". This app's router cannot
     // render x.com. An absolute URL stays recorded as a path-literal, which keeps it in the corpus
     // without claiming it as surface, and `-f urls` and `-f table` stop listing other people's tweets.
     if (asRoute && isAbs) asRoute = false;
     const norm = v.replace(/\$\{[^}]*\}|\{[^}]*\}/g, "*");
-    // A ROUTE SEEN SECOND STILL OUTRANKS A PATH-LITERAL SEEN FIRST. The same URL usually appears twice —
-    // once in a nav/link table and once in the router manifest — and whichever the traversal reached first
+    // A ROUTE SEEN SECOND STILL OUTRANKS A PATH-LITERAL SEEN FIRST. The same URL usually appears twice,
+    // once in a nav/link table and once in the router manifest, and whichever the traversal reached first
     // decided the type. Only the manifest occurrence carries the sibling that PROVES it is a page, so let
     // it upgrade the record rather than be discarded as a duplicate of the weaker sighting.
     if (seen.has(norm)) {
@@ -6600,7 +6600,7 @@ function collectPathLiterals(ast, claimed, src) {
     }
     // Suppress a literal ONLY when it is genuinely the same request already recorded: either an exact match,
     // or the claimed record is the absolute form of this same path (https://api.x/v1/foo vs /v1/foo).
-    // Plain suffix matching in either direction is a coincidence, not a duplicate — `/payments/*` being
+    // Plain suffix matching in either direction is a coincidence, not a duplicate, `/payments/*` being
     // claimed does NOT mean `/orgs/*/payables/vendors/*/payments/*` is the same endpoint. That one
     // over-broad test was silently eating real paths, and it collided far more inside a minified bundle
     // (where a single file holds every claimed template) than across many small original source files.
@@ -6616,7 +6616,7 @@ function collectPathLiterals(ast, claimed, src) {
   // nothing in the output to say so. The ceiling is now well above what real files produce, and reaching it
   // emits a record rather than passing in silence.
   let capped = false;
-  // react-intl / formatjs message IDs. `{id: "/hFOCx", defaultMessage: "Option"}` — the generated hash
+  // react-intl / formatjs message IDs. `{id: "/hFOCx", defaultMessage: "Option"}`, the generated hash
   // sometimes starts with a slash, and 45 of one target's "endpoints" were translation keys: /h2oPn, /pWSBh,
   // /iEWO1. The signature is unambiguous, so this costs nothing: the string is the value of an `id`
   // property in an object that ALSO carries `defaultMessage`. Nothing but formatjs looks like that.
@@ -6632,7 +6632,7 @@ function collectPathLiterals(ast, claimed, src) {
   };
   // CLIENT ROUTES ARE NOT ENDPOINTS, and the object says which it is.
   //
-  // `{url:"/app/records/drafts", chunkName:"dashboards"}` is a router's code-splitting table — a PAGE
+  // `{url:"/app/records/drafts", chunkName:"dashboards"}` is a router's code-splitting table, a PAGE
   // in the SPA. Emitted as an untyped path-literal it became a candidate API route, and because the base
   // was unresolved it was then attributed to whichever host happened to be guessed: 18 of one target's 199
   // "API" candidates on the gateway host were its own dashboard pages.
@@ -6657,7 +6657,7 @@ function collectPathLiterals(ast, claimed, src) {
       // A CONCATENATED PREFIX IS PART OF THE PATH.
       //
       // `h + "/records/drafts"` where `h="/home"` is one string, and emitting the right operand alone
-      // produced `/records/drafts` — a path that does not exist, sitting next to the real one. The
+      // produced `/records/drafts`, a path that does not exist, sitting next to the real one. The
       // prefix is a plain binding in scope; not reading it invented an endpoint out of half of a real one.
       let val = p.node.value;
       const par = p.parentPath && p.parentPath.node;
@@ -6704,7 +6704,7 @@ function collectPathLiterals(ast, claimed, src) {
   return out;
 }
 
-// API-GATEWAY routing table — a config array of [prefix, serviceLabel] pairs mapping request prefixes
+// API-GATEWAY routing table, a config array of [prefix, serviceLabel] pairs mapping request prefixes
 // to backend services (`[["/services/graphql","graphql"],["/services/billing","billing"],...]`). Worth
 // collecting because this is app CONFIG rather than library code, which is exactly why the real
 // endpoint path is never produced by any data-layer adapter: the prefix lives here and nowhere else.
@@ -6725,7 +6725,7 @@ function collectGatewayRoutes(ast) {
   return out;
 }
 
-// GraphQL client endpoint URI — new HttpLink({uri}) / createHttpLink / createUploadLink / BatchHttpLink /
+// GraphQL client endpoint URI, new HttpLink({uri}) / createHttpLink / createUploadLink / BatchHttpLink /
 // ApolloClient({uri}) / createClient({url}). The uri is app CONFIG (not in Apollo/urql itself), often the real
 // /services/graphql path a data-layer adapter can't produce. Resolved to a template.
 function collectGraphqlEndpoints(ast) {
@@ -6735,7 +6735,7 @@ function collectGraphqlEndpoints(ast) {
     const c = node.callee;
     const nm = c && (c.name || (c.property && c.property.name));
     if (!isLink(nm)) return;
-    // graphql-request: `new GraphQLClient(endpoint)` — endpoint is a POSITIONAL string (not a {uri} property).
+    // graphql-request: `new GraphQLClient(endpoint)`, endpoint is a POSITIONAL string (not a {uri} property).
     if (nm === "GraphQLClient" && node.arguments[0]) {
       const u = resolveUrl(node.arguments[0], scope);
       if (u.template && u.template !== "{EXPR}")
@@ -6768,8 +6768,8 @@ function collectGraphqlEndpoints(ast) {
   // NAME-AGNOSTIC PASS. Everything above keys off the constructor's NAME, and minification erases it.
   // Measured across five targets: 16 of 18 link-shaped constructions had a name no regex could match.
   // `new cJe({uri:`${ym}/graphql`, cache:…})` IS ApolloClient and `new ZQe({uri:t})` IS createUploadLink,
-  // so isLink() fired on neither, no endpoint record was emitted, and twenty's entire GraphQL surface —
-  // 925 operations — came out of analysis with no address at all.
+  // so isLink() fired on neither, no endpoint record was emitted, and twenty's entire GraphQL surface,
+  // 925 operations, came out of analysis with no address at all.
   //
   // Widening the gate to "any object literal with a uri property" is WRONG, and measurably so. Of those
   // 16, four are HLS playlist segments (`new f({uri:r, bandwidth, codecs, frameRate})`) and one is a
@@ -6777,7 +6777,7 @@ function collectGraphqlEndpoints(ast) {
   // from a video segment, and inventing five GraphQL endpoints is worse than missing one.
   //
   // What CAN tell them apart is the URI's own value. A path whose last segment is `graphql` is a GraphQL
-  // endpoint declaration whatever constructed it — the evidence is in the value, not in the name. That
+  // endpoint declaration whatever constructed it, the evidence is in the value, not in the name. That
   // admits twenty's one real site and none of the five false ones.
   const cand = [];
   traverse(ast, {
@@ -6796,15 +6796,15 @@ function collectGraphqlEndpoints(ast) {
 
   // SIBLING ENDPOINTS OF THE SAME SERVER, which is what `len(gql_gw) == 1` downstream depends on being
   // right about. GQL_PATH only recognises a path SPELLED graphql, and a server is free to put a second
-  // schema somewhere else: twenty's one bundle constructs three clients — `${ym}/graphql`,
-  // `${ym}/metadata` and `${ym}/admin-panel` — and only the first is spelled for it. So the collector
+  // schema somewhere else: twenty's one bundle constructs three clients, `${ym}/graphql`,
+  // `${ym}/metadata` and `${ym}/admin-panel`, and only the first is spelled for it. So the collector
   // reported ONE endpoint, the "exactly one declared, apply it to everything" branch in ingest fired, and
   // 925 operations were stamped /graphql, wrong for the 246 that live at /metadata. Both siblings answer
   // GraphQL introspection for real: `{__typename}` returns `{"data":{"__typename":"Query"}}` on each.
   //
   // A candidate qualifies as a sibling when it shares the EXACT unresolved origin of one that IS spelled
   // graphql. That is a narrow test: same file, same base expression, same construction shape. It is still
-  // an inference, so it is labelled `sibling-of-graphql` rather than presented as a read endpoint — and
+  // an inference, so it is labelled `sibling-of-graphql` rather than presented as a read endpoint, and
   // its purpose downstream is to make the ambiguity refusal fire and to NAME the other candidates, not to
   // be chosen between. Naming `/admin-panel` is the difference between a map that knows a third schema
   // exists and one that does not.
@@ -6824,7 +6824,7 @@ function collectGraphqlEndpoints(ast) {
       if (!o || !gqlOrigins.has(o)) continue;
       if (!/^\/[A-Za-z0-9._~\-\/]*$/.test(c.path) || /\.(js|css|png|svg|json|map)$/i.test(c.path)) continue;
       // A SEPARATE KIND, because the count of siblings must NOT become a count of GraphQL endpoints.
-      // Of twenty's four, three answer GraphQL and `/rest` is its REST API — nothing static separates
+      // Of twenty's four, three answer GraphQL and `/rest` is its REST API, nothing static separates
       // them. So feeding these into the "how many endpoints are declared" test would refuse to address
       // any operation on a perfectly ordinary app that ships one GraphQL client and one upload URL,
       // which is the 309-unaddressed-operation gap all over again. They travel as information: named in
@@ -6836,7 +6836,7 @@ function collectGraphqlEndpoints(ast) {
   // Both passes see a client that is BOTH recognisably named and pointed at a graphql path, so the same
   // endpoint arrives twice with two different provenances. The caller dedupes by uri and keeps whichever
   // came last, which silently downgraded `client-name` to `uri-path`. Named evidence is the stronger of
-  // the two — a constructor the app calls `HttpLink` is a GraphQL link whatever its path — so it wins.
+  // the two, a constructor the app calls `HttpLink` is a GraphQL link whatever its path, so it wins.
   const RANK = { "client-name": 3, "uri-path": 2, "sibling-endpoint": 1 };
   const best = new Map();
   for (const e of out) {
@@ -6846,12 +6846,12 @@ function collectGraphqlEndpoints(ast) {
   return [...best.values()];
 }
 
-// A path whose last segment names a GraphQL endpoint. Self-evidencing — it needs no constructor name.
+// A path whose last segment names a GraphQL endpoint. Self-evidencing, it needs no constructor name.
 const GQL_PATH = /(^|\/)(graphql|graphiql|gql)(\/|\?|$)/i;
 
 // Reduce a partly-resolved template to the part that IS resolved, but ONLY when the unresolved part is
 // the ORIGIN. twenty's `${ym}/graphql` resolves to `{min}/graphql`: `ym` is imported from another chunk,
-// so the HOST is a runtime value while the PATH is a constant. The path is the half worth recording —
+// so the HOST is a runtime value while the PATH is a constant. The path is the half worth recording,
 // the store keys endpoints per host and resolves the host from the wire, whereas `{min}/graphql` is not
 // an address anyone can send.
 //
@@ -6865,11 +6865,11 @@ function originOnlySlot(t) {
   // A LEADING SLOT IS NOT AUTOMATICALLY AN ORIGIN, and this used to assume it was. `strFromNode` labels
   // its slots precisely enough to tell them apart, and that label is the only evidence available: a
   // `{param:tenant}` or `{call:getPrefix}` at the front is a PATH PREFIX, so deleting it turns
-  // `{param:tenant}/graphql` into a root-level `/graphql` the bundle never declares — a fabricated
+  // `{param:tenant}/graphql` into a root-level `/graphql` the bundle never declares, a fabricated
   // address, which this codebase treats as worse than an unresolved one.
   //
   // `{EXPR}` and `{min}` mean "we could not read this at all" and "the minifier ate the name", which is
-  // what an imported base URL looks like — twenty's `${ym}` is exactly that. A name that reads like a
+  // what an imported base URL looks like, twenty's `${ym}` is exactly that. A name that reads like a
   // base URL is also admitted. Everything else keeps its slot and stays honest; GQL_PATH still matches.
   const label = m[1].slice(1, -1);
   const originish = label === "EXPR" || label === "min"
@@ -6878,7 +6878,7 @@ function originOnlySlot(t) {
   return originish ? m[2] : t;
 }
 
-// PLAIN-STRING GraphQL queries — graphql-request `client.request(\`query ...\`)` / `request(url, \`...\`)`, or any
+// PLAIN-STRING GraphQL queries, graphql-request `client.request(\`query ...\`)` / `request(url, \`...\`)`, or any
 // client handed a raw SDL string (NOT gql-compiled → collectApollo can't see it). Extract op name + full text from
 // the string. (Apollo/urql/codegen compile to DocumentNodes and are already covered by collectApollo.)
 function collectGraphqlString(ast) {
@@ -6914,13 +6914,13 @@ function collectGraphqlString(ast) {
   // The pass above reads only DIRECT arguments of a call named `request`, so it sees
   // `client.request("query X {...}")` and nothing else. Braintree's SDK ships
   // `t.request({api:"graphQLApi", data:{query:"mutation DeletePaymentMethodFromSingleUseToken($input:...)"}})`
-  // — the document is two levels inside an object literal and was invisible. So is every
+  //, the document is two levels inside an object literal and was invisible. So is every
   // `fetch("/graphql", {body: JSON.stringify({query: "..."})})`, which is the commonest transport there is.
   //
   // So sweep every string literal too. The bar is deliberately stricter here than `isGql`: a global sweep
   // cannot use its "starts with { and ends with }" alternative, which matches JSON blobs, CSS and template
-  // fragments. An operation keyword followed by a name and a bracket is unambiguous — nothing else ships
-  // `mutation SomeName(` inside a string — so that alone is the admission test.
+  // fragments. An operation keyword followed by a name and a bracket is unambiguous, nothing else ships
+  // `mutation SomeName(` inside a string, so that alone is the admission test.
   const NAMED_OP = /^\s*(query|mutation|subscription)\s+([A-Za-z_]\w*)\s*[({]/;
   traverse(ast, {
     StringLiteral(path) {
@@ -6939,7 +6939,7 @@ function collectGraphqlString(ast) {
   return out;
 }
 
-// PERSISTED-QUERY TABLES. A GraphQL client that uses persisted queries does not send the document — it
+// PERSISTED-QUERY TABLES. A GraphQL client that uses persisted queries does not send the document, it
 // sends an id the server already knows, so the request on the wire is
 // `/i/api/graphql/<queryId>/<OperationName>` and the DOCUMENT appears nowhere in the bundle. Every
 // collector in this file that recovers GraphQL works from the document text, so all of them are blind to
@@ -6947,17 +6947,17 @@ function collectGraphqlString(ast) {
 //
 // The table itself does ship, as a plain array of {queryId, operationName, operationType} objects. On x
 // that is 289 operations across 13 files against the 39 the document-based collectors found, and the 250
-// missing ones include the whole write surface — CreateTweet, DeleteTweet, FavoriteTweet, CreateDm.
+// missing ones include the whole write surface, CreateTweet, DeleteTweet, FavoriteTweet, CreateDm.
 //
 // The id is not decoration: without it the endpoint cannot be called at all, because the path contains it.
 // So it is recorded on the record rather than dropped, and the template is built from both parts.
 // THE CLIENT'S ENCODING RULE, read rather than guessed.
 //
-// `client.post("/auth/session/redeem", {code: f})` says nothing about Content-Type, and the usual answer —
-// "axios defaults to JSON" — is a guess about which library this is. It does not have to be. The rule is
+// `client.post("/auth/session/redeem", {code: f})` says nothing about Content-Type, and the usual answer,
+// "axios defaults to JSON", is a guess about which library this is. It does not have to be. The rule is
 // written in the client's own request builder, and that is where it can be read:
 //
-//     // shape only — a request builder that decides the encoding from the body's type
+//     // shape only, a request builder that decides the encoding from the body's type
 //     buildOptions(body, headers) {
 //       if (!(body instanceof FormData)) headers["Content-Type"] = "application/json";
 //       return { ...headers, body: body instanceof FormData ? body : JSON.stringify(body) };
@@ -6967,8 +6967,8 @@ function collectGraphqlString(ast) {
 // one target's 195 unresolved write bodies is answered by those two lines.
 //
 // So: find the functions that actually call fetch() and decide a body, and report the rule with the
-// evidence. This does NOT attach the rule to call sites — the link from `L().post` to this class is
-// cross-module and unproven — it records what the application's HTTP layer does, which is a fact about the
+// evidence. This does NOT attach the rule to call sites, the link from `L().post` to this class is
+// cross-module and unproven, it records what the application's HTTP layer does, which is a fact about the
 // app and is exactly what a reader needs to interpret every `body[?]` row.
 function collectClientEncoding(ast) {
   const out = [], seen = new Set();
@@ -6977,7 +6977,7 @@ function collectClientEncoding(ast) {
     while (p) {
       const n = p.node;
       // ClassMethod and ObjectMethod are function-like but their type does not contain "Function", so a
-      // /Function/ test walks straight past a class method and reports no name for it — which is most of
+      // /Function/ test walks straight past a class method and reports no name for it, which is most of
       // the real cases, since a client is usually a class.
       if (n && n.type === "ClassMethod" && n.key) return n.key.name ?? n.key.value;
       if (n && n.type === "ObjectMethod" && n.key) return n.key.name ?? n.key.value;
@@ -6995,7 +6995,7 @@ function collectClientEncoding(ast) {
     return null;
   };
   // Anchored on the SHAPE of a request-options object, not on fetch being the next token. A real client
-  // builds `{method, headers, body}` in one function and hands it to fetch in another — one target's
+  // builds `{method, headers, body}` in one function and hands it to fetch in another, one target's
   // createRequestOptions is called as `this.createRequestOptions(...)`, so a fetch-anchored scan sees a
   // CallExpression it cannot resolve and finds nothing. An object carrying `body` alongside `method` or
   // `headers` IS a request being built, wherever it is.
@@ -7031,7 +7031,7 @@ function collectClientEncoding(ast) {
     } catch {}
   } });
   // The ASSIGNMENT form, which is what a real client does: build `{method, headers}` first, decide the body
-  // after. one target's builder is exactly this — `const s={method:e,headers:a}; … s.body=JSON.stringify(r)` —
+  // after. one target's builder is exactly this, `const s={method:e,headers:a}; … s.body=JSON.stringify(r)`,
   // so requiring `body` in the object literal found nothing in the file that answers the question.
   traverse(ast, { AssignmentExpression(path) {
     try {
@@ -7051,7 +7051,7 @@ function collectClientEncoding(ast) {
       if (!rule) return;
       // Is this assignment the ELSE of a FormData test? Then the rule is conditional, not flat:
       //     r instanceof FormData ? s.body = r : s.body = JSON.stringify(r)
-      // Read the enclosing conditional rather than regenerating the whole function's source — on a minified
+      // Read the enclosing conditional rather than regenerating the whole function's source, on a minified
       // bundle that is a megabyte of codegen per call site, and it was throwing into the catch below, which
       // is why the real client came back with nothing while a toy fixture worked.
       let cond = path.parentPath, depth = 0;
@@ -7068,7 +7068,7 @@ function collectClientEncoding(ast) {
       out.push({ _kind: "client-encoding", name: fname, rule,
                  note: "the app's HTTP layer builds its body this way: " + src.slice(0, 120) +
                        (rule === "json-unless-multipart"
-                        ? " — multipart when the caller passes a FormData, JSON otherwise" : "") });
+                        ? ": multipart when the caller passes a FormData, JSON otherwise" : "") });
     } catch {}
   } });
   return out;
@@ -7141,7 +7141,7 @@ function collectFirebase(ast) {
 // Supabase JS (PostgREST): `supabase.from("table").select("a,b").eq(...).insert(...)` compiles to a URL built
 // imperatively (opaque to fetch-sink extraction). Recover it by walking the method CHAIN: table from .from()'s
 // string arg, method from the mutation verb present (insert/upsert→POST, update→PATCH, delete→DELETE, else GET),
-// columns from .select(). Recovers real DB TABLE + COLUMN names — high-value for authz/RLS. Literal args only.
+// columns from .select(). Recovers real DB TABLE + COLUMN names, high-value for authz/RLS. Literal args only.
 function collectSupabase(ast) {
   const out = [], seen = new Set();
   const VERB = { insert: "POST", upsert: "POST", update: "PATCH", delete: "DELETE", select: "GET" };
@@ -7152,8 +7152,8 @@ function collectSupabase(ast) {
       const a0 = path.node.arguments[0];
       const table = a0 && a0.type === "StringLiteral" ? a0.value : null;
       if (!table || !/^[A-Za-z_][\w.]*$/.test(table)) return;      // literal, identifier-ish table name
-      // `.from("X")` is not enough on its own. ConfigCat's logger is `em.from("VARIATION_ID")(template, e)` —
-      // a tagged-template factory — and matching the method NAME turned eleven of its enum constants into
+      // `.from("X")` is not enough on its own. ConfigCat's logger is `em.from("VARIATION_ID")(template, e)`,
+      // a tagged-template factory, and matching the method NAME turned eleven of its enum constants into
       // phantom tables on supabase.com: /rest/v1/VARIATION_ID, /SDK_KEY, /EVALUATE_LOG. Anchoring on the name
       // again, and wrong again. A real PostgREST query CHAINS a query method off the result; the impostor
       // INVOKES the result. Require at least one recognised link in the chain.
@@ -7185,7 +7185,7 @@ function collectSupabase(ast) {
 
 try {
   // Strip flags before treating argv as a file list. `--config x.json` was being read as two input files,
-// which fed JSON to Babel and returned [] for the entire batch — the same silent-empty failure mode this
+// which fed JSON to Babel and returned [] for the entire batch, the same silent-empty failure mode this
 // tool keeps producing whenever a bad input reaches the parser.
 const _argv = process.argv.slice(2);
 const _files = [];
@@ -7202,7 +7202,7 @@ const src = readAll(_files);
   const results = [];
   // Files are passed in BATCHES rather than one per process. Node costs ~110ms to start and a typical file
   // costs ~54ms to parse, so one-file-per-process spent roughly twice as long starting interpreters as it
-  // did doing the work — 44,305 spawns is over an hour of pure startup. Each record is tagged with the
+  // did doing the work, 44,305 spawns is over an hour of pure startup. Each record is tagged with the
   // chunk it came from so per-file provenance survives batching.
   // PRE-PASS. Build the cross-file property index before extracting anything, because the line that
   // assigns a value and the line that reads it are routinely in different chunks.
@@ -7211,7 +7211,7 @@ const src = readAll(_files);
     const path_ = require("path");
     // EVERY file in the corpus, not just this batch. `_resolveSpec` maps `./defs.js` onto a real path by
     // membership in this set, so a batch that does not happen to contain the imported file cannot resolve
-    // the import — which made the answer depend on how the work was divided.
+    // the import, which made the answer depend on how the work was divided.
     const _allFiles = (() => {
       if (!_filesetIn) return _files;
       try {
@@ -7237,7 +7237,7 @@ const src = readAll(_files);
         for (const [k, v] of (j.propvals || [])) if (!_PROPVALS.has(k)) _PROPVALS.set(k, v);
         for (const [k, v] of (j.callargs || [])) if (!_CALLARGS.has(k)) _CALLARGS.set(k, v);
         // The corpus-wide tRPC verdict, settled by pass one over EVERY file. Without it each batch
-        // asked the question of its own files and cal.com — whose marker is in 1 file of 79 — lost
+        // asked the question of its own files and cal.com, whose marker is in 1 file of 79, lost
         // its 42 real tRPC endpoints in every other batch.
         if (typeof j.trpc === "boolean") _IS_TRPC = j.trpc;
         if (j.routing === "hash" || j.routing === "path") _ROUTING = j.routing;
@@ -7248,7 +7248,7 @@ const src = readAll(_files);
     // Only when there is no corpus-wide index. With one, re-indexing this batch's files ADDS
     // nondeterminism rather than information: indexPropertyValues keeps a value only where the bundle is
     // unanimous about it, so a batch that happens to contain a conflicting assignment demotes an entry the
-    // full-corpus pass had already settled — and which files share a batch is exactly what must not matter.
+    // full-corpus pass had already settled, and which files share a batch is exactly what must not matter.
     // The index pass already read every file; this loop can only disagree with it.
     if (!_indexIn) {
       for (let i = 0; i < _chunks.length; i++) {
@@ -7286,7 +7286,7 @@ const src = readAll(_files);
       for (const r of extract(chunk)) { r._chunk = myIdx; results.push(r); }
     } catch (e) {
       // Swallowing this silently makes a crashed extraction indistinguishable from a file that genuinely
-      // has no endpoints — it hid a thrown error on a 3MB bundle and simply reported "[]".
+      // has no endpoints, it hid a thrown error on a 3MB bundle and simply reported "[]".
       process.stderr.write("static_ast extract failed: " + (e && e.stack ? e.stack : e) + "\n");
     }
   }
@@ -7304,10 +7304,10 @@ const src = readAll(_files);
     if (f._kind === "gql-endpoint") { gqleps.set(f.uri, f); continue; }         // dedupe graphql endpoints by uri
     // ITS OWN BUCKET, for the reason the serializer comment below states: a sibling record has no method
     // and no template, so without one every sibling keyed to "undefined undefined" and exactly one of
-    // them survived — twenty's /metadata and /admin-panel vanished and only /rest came out.
+    // them survived, twenty's /metadata and /admin-panel vanished and only /rest came out.
     if (f._kind === "gql-endpoint-sibling") { gqlsib.set(f.uri, f); continue; }
     if (f._kind === "relay") { if (!relay.has(f.op) || (!relay.get(f.op).text && f.text)) relay.set(f.op, f); continue; }
-    // client-level headers have no method/template — without their own bucket they'd all collapse into a
+    // client-level headers have no method/template, without their own bucket they'd all collapse into a
     // single "undefined undefined" key and only one would survive.
     if (f._kind === "config-url") { const kk = f.name + "|" + f.value; if (!cfgs.has(kk)) cfgs.set(kk, f); continue; }
     if (f._kind === "client") { if (!clients2.has(f.name)) clients2.set(f.name, f); continue; }
@@ -7324,31 +7324,31 @@ const src = readAll(_files);
     }
     // `method template` is the endpoint's identity for a REST call and is NOT unique for anything whose
     // identity is an operation name. A GraphQL op and a WebSocket message both have one URL and many
-    // operations — every socket message came out as `WS null`, so all of them merged into a single record
+    // operations, every socket message came out as `WS null`, so all of them merged into a single record
     // whose body was the union of every payload in the bundle. Include `op` wherever it is what
     // distinguishes them.
-    // Records carry their type in `kind` OR `_kind` depending on which collector built them — a sink says
+    // Records carry their type in `kind` OR `_kind` depending on which collector built them, a sink says
     // {kind:"xhr"}, a server action says {_kind:"server-action"}. This test read only `kind`, so server
     // actions never qualified for the op-in-key rule, every one of them keyed as `POST null`, and a bundle
     // declaring setBirthDate and deleteAccount emitted ONE record. Read both.
     const fkind = f.kind || f._kind;
     // A record that is not an endpoint has neither a method nor a template, so keying on those two alone
     // gives EVERY one of them the key "undefined undefined" and collapses them into a single survivor. The
-    // per-file merge learned this already — it is the reason 4 serializers in a chunk became 1 — and this
+    // per-file merge learned this already, it is the reason 4 serializers in a chunk became 1, and this
     // merge, which runs across chunks and is the last word, never got the same guard. It cost every
     // client-encoding record but the first: a bundle whose HTTP layer both JSON-stringifies and branches on
     // FormData reported one of the two and dropped the other.
     // AND THE FILE, for anything with a template. This merge runs across every file in the batch and
-    // unions their bodies, but a template alone does not identify an endpoint — only (host, method, path)
+    // unions their bodies, but a template alone does not identify an endpoint, only (host, method, path)
     // does, and this process does not know hosts. analyze.py assigns them afterwards from the origin map.
     //
     // So two files loaded by DIFFERENT documents that both POST to /api/shared produced ONE record: the
-    // second host's endpoint vanished, and the survivor's body became the union of both — a contract
+    // second host's endpoint vanished, and the survivor's body became the union of both, a contract
     // claiming a field only the other host's code sends. Fabricated, not merely missing, and it fires
     // exactly where this tool normally operates: one bodies directory holding several hosts' bundles.
     //
     // Keeping the file in the key means no cross-file merging happens HERE. The union is still worth
-    // having, so analyze.py performs it after attribution, keyed by (host, method, template, op) —
+    // having, so analyze.py performs it after attribution, keyed by (host, method, template, op),
     // see _merge_by_endpoint there.
     const k = (f._kind && !f.template)
       ? `${f._kind} ${f.name || f.op || ""}`
@@ -7365,13 +7365,13 @@ const src = readAll(_files);
   // CROSS-FILE SUPPRESSION of path literals a call site already explained.
   //
   // collectPathLiterals is a blind sweep: it walks every string in a file and keeps anything path-shaped,
-  // with no idea what the string is for. That is deliberate — a route table declares routes as bare
-  // strings with no call site anywhere — and it is why those records carry method UNKNOWN.
+  // with no idea what the string is for. That is deliberate, a route table declares routes as bare
+  // strings with no call site anywhere, and it is why those records carry method UNKNOWN.
   //
   // It already takes a `claimed` set so it can stay quiet about paths another collector explained. But
   // `claimed` is built from the records of THE SAME FILE, so the suppression is per-file by construction.
   // x declares its routes in one chunk and calls them from another: /rest/issue-report is a bare literal in
-  // chunk 11 and a POST with an operation name in chunk 18, and the store ends up with both — one row that
+  // chunk 11 and a POST with an operation name in chunk 18, and the store ends up with both, one row that
   // says "POST /rest/issue-report [settingsUserIssueReportRaw]" and one that says "UNKNOWN, no call site
   // attributed". The second is not merely redundant, it is misleading: it reads as a gap we have.
   //

@@ -15,6 +15,7 @@ import os
 import sys
 
 from . import __version__
+from .fetch import MAX_CHUNKS as _MAX_CHUNKS
 
 
 def _hosts_fetched(corpus):
@@ -224,6 +225,10 @@ def cmd_map(a):
             if rep.get("chunks_unreachable"):
                 print(f"{pad}{rep['chunks_unreachable']} declared chunk(s) could not be fetched",
                       file=sys.stderr)
+            if rep.get("files_unscanned"):
+                print(f"{pad}! {rep['files_unscanned']} file(s) could not be scanned for the chunks and "
+                      f"imports they declare (a parse failure or a {_fetch.SCAN_TIMEOUT}s timeout), "
+                      f"so whatever they lead to is missing", file=sys.stderr)
             for ln in log.getvalue().splitlines():
                 if ln.lstrip().startswith(("!", "!!")):
                     print(f"{pad}{ln.strip()}", file=sys.stderr)
@@ -261,8 +266,8 @@ def _add_run_args(p):
                    help="where results go (default: .jshound/<name>)")
     p.add_argument("-q", "--quiet", action="store_true", help="do not print each request")
     p.add_argument("-v", "--verbose", action="store_true", help="also print the analysis log")
-    p.add_argument("--max-chunks", type=int, default=5000, metavar="N",
-                   help="stop after this many lazy chunks (default 5000)")
+    p.add_argument("--max-chunks", type=int, default=_MAX_CHUNKS, metavar="N",
+                   help=f"stop after this many lazy chunks and imports (default {_MAX_CHUNKS})")
     p.add_argument("--no-chunks", action="store_true", help="do not follow lazy chunks")
     p.add_argument("--proxy", metavar="URL", help="send every request through this proxy "
                                                   "(or set JSHOUND_PROXY)")

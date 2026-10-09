@@ -1,10 +1,10 @@
-"""urls.py — one absolute URL per line, for the tools that take a list.
+"""urls.py: one absolute URL per line, for the tools that take a list.
 
 Only the requests whose host is known are listed; the table and requests.jsonl carry the rest.
 
 nuclei, ffuf, httpx, feroxbuster and every `while read` loop ever written want exactly this and
 nothing else. The method and the body cannot survive the format, so this is a projection, not an
-export — reach for OpenAPI or HAR when the consumer can hold more.
+export, reach for OpenAPI or HAR when the consumer can hold more.
 
 Paths that still contain an unresolved placeholder are omitted by default: a line reading
 `https://x.com/api/users/{param1}` is not a URL, and feeding it to a fuzzer produces a 404 that
@@ -18,8 +18,8 @@ def build(records, include_unresolved=False, with_method=False):
     out, seen = [], set()
     for rec in records:
         # `doc-state` belongs here and nowhere else. These are URLs the SERVER serialised into the
-        # document — Datadog's `login_url`, `forgot_password_url` and `recaptcha_login_url`, Slack's
-        # three OAuth entry points — so they are declared request targets, which is exactly what a
+        # document, Datadog's `login_url`, `forgot_password_url` and `recaptcha_login_url`, Slack's
+        # three OAuth entry points, so they are declared request targets, which is exactly what a
         # URL list is for. They carry no method, and this projection does not need one: that is why
         # they are not in the OpenAPI export, where a path without a verb would have to invent one.
         if (rec.get("_kind") or "endpoint") not in ("endpoint", "route", "doc-state"):

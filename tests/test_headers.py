@@ -42,7 +42,7 @@ def test_xhr_set_request_header():
 
 
 def test_req_headers_may_be_a_list_of_names():
-    """req_headers is a dict when the values are known and a LIST OF NAMES when only the names are —
+    """req_headers is a dict when the values are known and a LIST OF NAMES when only the names are,
     rtk-query reports the second shape. Assuming the dict raised AttributeError and crashed the
     whole HAR export on Grafana, so nothing was written at all."""
     import sys as _s
@@ -98,7 +98,7 @@ def test_a_css_ish_lowercase_key_is_still_not_a_header():
 
 
 def test_a_dom_attribute_write_is_not_a_header():
-    """Popper.js does `e.attributes["x-out-of-boundaries"] = ""` on a tooltip element — markup, not a
+    """Popper.js does `e.attributes["x-out-of-boundaries"] = ""` on a tooltip element, markup, not a
     request. `attributes`/`dataset`/`style`/`classList` are DOM-fixed property names a minifier cannot
     rename, which is what makes the receiver usable here where a name test is not."""
     got = _xh_names()

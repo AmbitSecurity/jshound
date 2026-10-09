@@ -1,4 +1,4 @@
-"""jshound — recover a SPA's API contracts from the JavaScript it ships.
+"""jshound, recover a SPA's API contracts from the JavaScript it ships.
 
 Library use mirrors the CLI, because the CLI is a thin shell over exactly these calls:
 
@@ -14,8 +14,8 @@ Library use mirrors the CLI, because the CLI is a thin shell over exactly these 
     tree    = jshound.unbundle("./out", ["main.js"])        # webpack registry -> module tree
 
 `analyze` reads a directory of already-downloaded bodies and makes NO network requests. That is a
-deliberate split, not an omission: fetching belongs to whatever already does it well for you — a
-crawler, a proxy export, curl — and duplicating a worse copy of it inside the analyser is how the
+deliberate split, not an omission: fetching belongs to whatever already does it well for you, a
+crawler, a proxy export, curl, and duplicating a worse copy of it inside the analyser is how the
 original tool got blocked by three hosts' edge protection. `jshound.fetch` is a convenience for the standalone
 case and is the only part that touches the network.
 """
@@ -56,7 +56,7 @@ def read_records(path):
     """Records from a file written by `analyze -f jsonl`, or any earlier JSON array of them.
 
     `-f jsonl` emits one object per line, as the name says. It used to emit a pretty-printed JSON
-    ARRAY, so files written before that are still read here rather than rejected — and an OpenAPI or
+    ARRAY, so files written before that are still read here rather than rejected, and an OpenAPI or
     HAR document is not records, so saying so beats a KeyError three frames down.
     """
     import json
@@ -71,8 +71,8 @@ def read_records(path):
             doc = json.loads(text)                  # a single object spanning many lines
             if isinstance(doc, dict) and {"log", "openapi", "paths"} & set(doc):
                 raise ValueError(
-                    f"{path} is an exported document (OpenAPI or HAR), not records — pass the file "
-                    "written by `analyze -f jsonl`") from None
+                    f"{path} is an exported document (OpenAPI or HAR), not records: read_records takes "
+                    "what jshound.analyze() returns, saved as JSON or JSON lines") from None
             data = doc
     if not isinstance(data, list):
         raise ValueError(f"{path} does not hold a list of records")
@@ -82,6 +82,11 @@ def read_records(path):
     if any(isinstance(r, dict) and ("openapi" in r or "log" in r) for r in data):
         raise ValueError(f"{path} is an exported document (OpenAPI or HAR), not records")
     return data
+
+
+# How long one file may take to scan for what it declares. The largest real chunk measured is under
+# 12 MB and scans in seconds; this only stops a file built to hang the parser, and a stop is counted.
+SCAN_TIMEOUT = 600
 
 
 def chunk_map(js_source):
@@ -101,12 +106,12 @@ def chunk_map(js_source):
     try:
         r = subprocess.run(["node", os.path.join(here, "js", "chunkmap.js")],
                            input=js_source, capture_output=True, text=True,
-                           env=env, timeout=120)
+                           env=env, timeout=SCAN_TIMEOUT)
     except FileNotFoundError:
-        raise RuntimeError("node is not on PATH — the extractors are JavaScript, so this needs "
+        raise RuntimeError("node is not on PATH. The extractors are JavaScript, so this needs "
                            "Node 18 or newer") from None
     except subprocess.TimeoutExpired:
-        raise RuntimeError("the chunk extractor did not finish within 120s on this bundle") from None
+        raise RuntimeError(f"the chunk extractor did not finish within {SCAN_TIMEOUT}s on this bundle") from None
     # `json.loads(r.stdout or "{}")` is what this used to be, and it turned every failure into a
     # bundle that declares no chunks: a missing `@babel/parser` printed `{}` with exit 0 and an empty
     # stderr. The docstring above promises the caller can tell those two apart, so the exit code and
@@ -121,7 +126,7 @@ def unfetched(bodies, manifest=None):
     """-> (chunk URLs the corpus declares but does not contain, count that could not be resolved).
 
     For a caller that has its own fetcher. `jshound.fetch.collect` does this and the downloading in
-    one pass; this is the half to use when something else — a crawler with a session, a browser —
+    one pass; this is the half to use when something else, a crawler with a session, a browser,
     should make the requests.
     """
     from .fetch import unfetched as _u

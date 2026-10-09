@@ -1,4 +1,4 @@
-"""paths.py — turn an extracted template into something a tool can actually request.
+"""paths.py: turn an extracted template into something a tool can actually request.
 
 The extractor emits a template, not a URL, and the difference matters. `{EXPR}` marks a slice the
 analysis could not resolve; `{id}` marks one it resolved to a NAME. Both are placeholders, but only
@@ -12,13 +12,13 @@ with a unique name, which is the only reason `{EXPR}` gets renamed at all.
 import re
 from urllib.parse import urlsplit
 
-# `{location.origin}`, `{window.location.host}` — the app asking for its own deployment URL. That is a
+# `{location.origin}`, `{window.location.host}`, the app asking for its own deployment URL. That is a
 # SERVER, not a path segment, and leaving it inline produces paths no tool can request.
 _ORIGIN = re.compile(r"^\{(?:window\.)?(?:location\.(?:origin|host|href)|origin)\}", re.I)
 _PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
 # Rails/Express templates ship their params as `:name`, and they survive into the recovered path
-# (`/api/:version/projects/:id`). A spec cannot carry them literally — `:id` would be requested as the
-# four characters — so they become placeholders like any other slot. A colon only marks a param when it
+# (`/api/:version/projects/:id`). A spec cannot carry them literally, `:id` would be requested as the
+# four characters, so they become placeholders like any other slot. A colon only marks a param when it
 # OWNS the segment: Google-style custom methods put one mid-segment (`/v1/accounts:signUp`) and those
 # are part of the path, not a slot.
 _COLON_PARAM = re.compile(r"(?<=/):([A-Za-z_][A-Za-z0-9_]*)(?=/|$)")
@@ -83,8 +83,8 @@ def split_query(path):
 
 # A VALUE THAT CANNOT BE A PATH SEGMENT. Resolution sometimes substitutes a string that is real in the
 # source but is not a URL component: Grafana's `"-- Mixed --"` is a dropdown placeholder, and it landed
-# in 20 paths as `/cloudmigration/migration/-- Mixed --/snapshot`. Whitespace settles it — no server
-# routes on a segment with a space in it — and so does a segment made only of punctuation (`--`).
+# in 20 paths as `/cloudmigration/migration/-- Mixed --/snapshot`. Whitespace settles it, no server
+# routes on a segment with a space in it, and so does a segment made only of punctuation (`--`).
 # Turning these back into slots is not a cosmetic filter: `/cloudmigration/migration/{param1}/snapshot`
 # is the correct endpoint, and the literal was the error.
 _NOT_A_SEGMENT = re.compile(r"\s|^[^A-Za-z0-9_%]+$")
@@ -136,7 +136,7 @@ def normalize(template):
     return path, params, fully
 
 
-# A router config is read out of the bundle, and some apps keep their ORIGINAL source paths in it —
+# A router config is read out of the bundle, and some apps keep their ORIGINAL source paths in it,
 # `/src/command-menu-items/book-slot.command-menu-item.ts` is a build artifact, not a route anyone can
 # request. Letting those through turns a precise contract list into something that reads like a grep,
 # which is the exact failure this tool exists to avoid, so the exporters drop them.

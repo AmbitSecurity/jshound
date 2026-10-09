@@ -1,16 +1,16 @@
-"""classify.py — sort extracted paths into what a tester can actually use.
+"""classify.py: sort extracted paths into what a tester can actually use.
 
 A raw count rewards noise, and that makes the obvious benchmark backwards. Run LinkFinder over a
 webpack bundle and it reports 314 "endpoints"; read them and they are documentation links plus
-strings like `/VwdtK` and `/+U0Y/` — minifier output that happens to contain a slash. A table with a
+strings like `/VwdtK` and `/+U0Y/`, minifier output that happens to contain a slash. A table with a
 single `paths` column scores that above a tool that found four real contracts.
 
 So every tool's output is bucketed the same way, by the same rules, and the buckets are reported
 separately:
 
-    api        requestable and API-shaped — /api/..., /v2/..., /graphql, /auth/...
+    api        requestable and API-shaped, /api/..., /v2/..., /graphql, /auth/...
     content    a real URL, but a page: /user-guide/..., /blog/..., /pricing
-    asset      /static/..., /_next/..., *.css — real, rarely interesting
+    asset      /static/..., /_next/..., *.css, real, rarely interesting
     fragment   minifier debris: short, consonant-dense, base64-ish. Not a path at all.
 
 `fragment` is the column that matters when comparing against string extractors, because it is the
@@ -36,7 +36,7 @@ def is_fragment(p):
     short = [x for x in segs if len(x) <= 8]
     if len(short) != len(segs):
         return False
-    # Debris is short, mixed-case or symbol-bearing, and vowel-poor — `VwdtK`, `+U0Y`, `nv0ml`.
+    # Debris is short, mixed-case or symbol-bearing, and vowel-poor, `VwdtK`, `+U0Y`, `nv0ml`.
     odd = 0
     for x in segs:
         if re.search(r"[+=]", x) or (len(_VOWEL.findall(x)) == 0) or (

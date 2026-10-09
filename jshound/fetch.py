@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""fetch.py — collect a page's JavaScript so `analyze` has something to read.
+"""fetch.py: collect a page's JavaScript so `analyze` has something to read.
 
     jshound fetch https://app.example.com -o ./bodies
 
 The deliberately small one. `analyze` does not fetch, for good reasons recorded in its own
-docstring, but a standalone tool still needs a way to get started — so this does the simplest honest
+docstring, but a standalone tool still needs a way to get started, so this does the simplest honest
 version: load the document, take the `<script src>` tags and inline scripts, save them, and write
 the `_origin.jsonl` that lets analysis attribute an endpoint to the host that serves it.
 
 It is NOT a crawler. It does not render, click, log in, follow links or execute anything, so a page
 that builds its script tags at runtime will give up less than a real browser would. When that
-matters — and on a serious target it does — drive a real crawler or export from your proxy, point
+matters, and on a serious target it does, drive a real crawler or export from your proxy, point
 this at nothing, and run `analyze` over what that produced. The `--chunks` pass closes part of the
 gap by asking each bundle which lazy chunks it declares and fetching those too, which is where most
 of a code-split app's code lives.
@@ -35,7 +35,7 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 # AN SPA ANSWERS 200 TO EVERYTHING. Asking excalidraw.com for a chunk that does not exist returns
 # index.html with a 200, and saving that as `.js` put 46 copies of the same document into a corpus
-# of 102 — polluting the analysis, inflating the fetched count, and making a 404 look like a hit.
+# of 102, polluting the analysis, inflating the fetched count, and making a 404 look like a hit.
 # A JavaScript response does not begin with a tag.
 _LOOKS_HTML = re.compile(r"^\s*(<!doctype|<html|<\?xml)", re.I)
 
@@ -167,7 +167,7 @@ MAX_BODY = 64 * 1024 * 1024
 def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
     """(status, text), or (status, text, final_url) with `with_url`.
 
-    curl_cffi when installed — its TLS fingerprint gets past more WAFs.
+    curl_cffi when installed, its TLS fingerprint gets past more WAFs.
 
     `final_url` is the URL AFTER redirects, and callers that resolve relative references against a
     document must use it. kit.svelte.dev redirects to svelte.dev and its markup links `./_app/...`;
@@ -182,7 +182,7 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
     except ImportError:
         pass
     else:
-        # Any transport failure — DNS, TLS, connection reset, timeout — is a normal outcome when
+        # Any transport failure, DNS, TLS, connection reset, timeout, is a normal outcome when
         # pointing at the open internet, not a reason to abort the run with a traceback.
         try:
             kw = {}
@@ -243,8 +243,8 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
 
 # WHAT A TARGET IS ALLOWED TO MAKE THIS FETCH.
 #
-# Only the first URL is the user's. Everything after it — script srcs, `import()` specifiers, and
-# every chunk URL built out of a bundle's own runtime — is named by the target, and a chunk URL that
+# Only the first URL is the user's. Everything after it, script srcs, `import()` specifiers, and
+# every chunk URL built out of a bundle's own runtime, is named by the target, and a chunk URL that
 # starts with `http` was fetched verbatim. So a page declaring
 # `http://169.254.169.254/latest/meta-data/iam/security-credentials/` as one of its chunks had that
 # fetched and written into the corpus directory, which is a credential read performed by whoever ran
@@ -257,7 +257,7 @@ def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
 # per chunk URL was most of the wall clock in the scope tests.
 @functools.lru_cache(maxsize=4096)
 def host_is_private(host):
-    """True for loopback, link-local, RFC1918 and the other reserved ranges. Unresolvable is False —
+    """True for loopback, link-local, RFC1918 and the other reserved ranges. Unresolvable is False,
     the transport will fail and say so, and guessing here would hide a real DNS problem."""
     if not host:
         return True
@@ -276,11 +276,11 @@ def host_is_private(host):
     return False
 
 
-class _Scripts(HTMLParser):  # noqa: D101 — docstring below
+class _Scripts(HTMLParser):  # noqa: D101, docstring below
     """`<script src>`, inline scripts, and the preload hints modern builds use instead.
 
     Vite and friends emit `<link rel="modulepreload" href="/main.js">` with no `<script src>` for
-    those modules at all — Home Assistant's whole frontend loads that way, and reading only script
+    those modules at all, Home Assistant's whole frontend loads that way, and reading only script
     tags found none of it.
     """
 
@@ -320,7 +320,7 @@ class _Refs(HTMLParser):
     """Every `src`/`href` on a `<script>` or `<link>`, unfiltered by `rel`.
 
     Separate from `_Scripts` above, which decides what is WORTH FETCHING as JavaScript and so filters
-    on `rel`. This one is for callers that select on the URL itself — the manifest readers look for an
+    on `rel`. This one is for callers that select on the URL itself, the manifest readers look for an
     exact filename, and builds link those files as `<script src>`, as `<link rel=preload as=script>`
     and as `rel=prefetch` depending on the version.
     """
@@ -358,8 +358,8 @@ def inline_imports(doc_url, sources):
     """The same thing, for a caller that has already parsed the document.
 
     Two things keep this cheap on a server-rendered page, which can carry thousands of inline scripts.
-    A source with no `import` token anywhere cannot contain an import — the keyword is required for one
-    to exist — so it is skipped before anything is written, and the scratch directory is removed when
+    A source with no `import` token anywhere cannot contain an import, the keyword is required for one
+    to exist, so it is skipped before anything is written, and the scratch directory is removed when
     the call returns instead of being left behind once per document.
     """
     candidates = [src for src in (sources or []) if "import" in src]
@@ -395,16 +395,20 @@ def document_refs(doc_url, html):
     p = _Refs()
     try:
         p.feed(html or "")
-    except Exception:                                      # noqa: BLE001 — malformed markup is normal
+    except Exception:                                      # noqa: BLE001, malformed markup is normal
         pass
     return [urljoin(doc_url, r) for r in p.refs]
 
 
-def js_imports(paths):
-    """{path: [module specifier, ...]} by PARSING each file — see js/imports.js.
+def js_imports(paths, failed=None):
+    """{path: [module specifier, ...]} by PARSING each file, see js/imports.js.
 
     Replaces a regex that both invented specifiers out of comments and strings and missed any that did
     not end in `.js`. Measured on one file holding every import form: 2 invented, 2 missed.
+
+    Files are parsed 40 to a process. A batch that fails is retried one file at a time, so one file
+    that crashes the parser costs that file and not the 39 beside it, and any file that still fails is
+    appended to `failed` when the caller passes a list, rather than disappearing.
     """
     if not paths:
         return {}
@@ -414,15 +418,35 @@ def js_imports(paths):
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "node_modules"))
     out = {}
     import subprocess
+
+    def run(batch):
+        r = subprocess.run(["node", "--max-old-space-size=4096", js] + list(batch),
+                           capture_output=True, env=env, timeout=SCAN_TIMEOUT)
+        if r.returncode != 0:
+            raise RuntimeError(f"imports.js exited {r.returncode}")
+        return {k: (v or {}).get("specifiers") or [] for k, v in json.loads(r.stdout or b"{}").items()}
+
     for i in range(0, len(paths), 40):            # batched so one huge file cannot blow the heap
+        batch = list(paths[i:i + 40])
         try:
-            r = subprocess.run(["node", "--max-old-space-size=4096", js] + list(paths[i:i + 40]),
-                               capture_output=True, env=env, timeout=180)
-            for k, v in (json.loads(r.stdout or b"{}")).items():
-                out[k] = (v or {}).get("specifiers") or []
-        except Exception:                          # noqa: BLE001 — a parse batch failing is not fatal
-            pass
+            out.update(run(batch))
+        except Exception:                          # noqa: BLE001
+            for one in batch:
+                try:
+                    out.update(run([one]))
+                except Exception:                  # noqa: BLE001
+                    if failed is not None:
+                        failed.append(one)
     return out
+
+
+def _chunk_map_or_none(path):
+    """What one file declares, or None when it could not be read (and the caller counts that)."""
+    from . import chunk_map
+    try:
+        return chunk_map(open(path, errors="replace").read())
+    except Exception:                              # noqa: BLE001
+        return None
 
 
 def _aligned(declaring_url, chunk_path):
@@ -436,7 +460,7 @@ def _aligned(declaring_url, chunk_path):
 
     and declares `static/chunks/1gdj.js` with an empty `publicPath`. Joining against the declaring
     file gives `.../_next/static/chunks/static/chunks/1gdj.js` and joining against the document gives
-    `https://supabase.com/static/chunks/1gdj.js` — both 404. 126 declared chunks fetched 0.
+    `https://supabase.com/static/chunks/1gdj.js`, both 404. 126 declared chunks fetched 0.
 
     The build root is recoverable without knowing the framework, because the declared path and the
     declaring URL OVERLAP: the URL already contains `static/chunks/`, so cutting it at that segment
@@ -459,7 +483,7 @@ def chunk_candidates(declaring_url, chunk_path, public_path="", page_base=""):
     """Every URL a declared chunk path might live at, best guess first.
 
     One function because there are two callers and they must not disagree: `collect` fetches these,
-    and `unfetched` hands them to whatever else is doing the fetching — a browser, usually. When the
+    and `unfetched` hands them to whatever else is doing the fetching, a browser, usually. When the
     two had their own copies, the fetcher learned about asset roots and the reporter did not.
 
     Order matters only for speed, since the caller takes whichever answers 200 with JavaScript in it.
@@ -493,14 +517,19 @@ def _name(url):
 #
 # 400 was set when the largest app measured declared about 700 chunks. claude.ai declares about
 # 2,000, and at 400 jshound read 43% of it, which is why `PerformAction`, the endpoint that sends a
-# chat message, was not in the output: it sits in a chunk that was never downloaded. The measured
-# table has Notion at 2,457 and Loom at 2,348, so the cap now clears the largest app measured with
-# room. It is still a cap, and hitting it is reported rather than passed in silence.
+# chat message, was not in the output: it sits in a chunk that was never downloaded. Notion declares
+# 2,457 and Loom 2,348. So the cap is now far past any app measured, and only a runaway (a target
+# that answers every chunk name with a new chunk) ever reaches it. Hitting it is reported.
 #
 # Eight at a time: these are static files, almost always off a CDN, and fetching them one at a time
 # made a 2,000-chunk app take minutes. pentest's own chase runs lower because a self-hosted target is
 # not a CDN; a target that pushes back can be slowed with --max-chunks or pinned with --client.
-MAX_CHUNKS = 5000
+#
+# Scanning a fetched file for what it declares is a node process per file, run SCAN_WORKERS at once.
+# One at a time, claude.ai's 1,258 files kept a single core busy for minutes while the rest sat idle.
+MAX_CHUNKS = 50000
+SCAN_WORKERS = max(2, min(16, os.cpu_count() or 4))
+from . import SCAN_TIMEOUT  # noqa: E402
 CHUNK_WORKERS = 8
 
 
@@ -508,7 +537,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
             report=None):
     os.makedirs(outdir, exist_ok=True)
     # The user named this one, so it is fetched whatever it resolves to. Every URL after it was named
-    # by the target — see `host_is_private` — and is refused if it points into private space, unless
+    # by the target, see `host_is_private`, and is refused if it points into private space, unless
     # the target itself does, which is what scanning a local or internal app looks like.
     private_ok = bool(allow_private) or host_is_private(urlsplit(url).hostname)
     refused = set()
@@ -573,12 +602,12 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
 
     # WHERE EACH FILE CAME FROM. Angular's esbuild build declares its chunks as modulepreload links
     # and ships no JS chunk table at all, so `chunks` correctly reports 0 while 21 of 27 files are
-    # chunks — a total alone makes that look like a failure. Counting by discovery path is what
+    # chunks, a total alone makes that look like a failure. Counting by discovery path is what
     # distinguishes "this build has no chunk table" from "we did not find it", and the counts must
     # sum to the total or the breakdown is just decoration.
     seen = set()
     # An inline script's dynamic `import()` is a real fetch the browser performs, and on SvelteKit it
-    # is the ONLY reference to the entry module — nothing links it as a `src`. Counted under its own
+    # is the ONLY reference to the entry module, nothing links it as a `src`. Counted under its own
     # discovery path so the breakdown still sums to the total.
     bootstrap = [u for u in inline_imports(url, p.inline) if u.startswith("http")]
     todo = [urljoin(url, s) for s in p.srcs] + bootstrap
@@ -602,89 +631,68 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
         else:
             how[p.origin.get(raw, "script-src")] += 1
 
-    # STATIC ES IMPORTS. An entry module built by Vite/Rollup is often a few lines of re-exports;
-    # everything real is in the modules it imports, and those are named right there in the source.
-    # Bounded to one extra round so this stays a fetcher and does not become a crawler by accident.
-    if with_chunks and seen:
-        imports = set()
-        by_path = {}
-        for u in list(seen):
-            fp = os.path.join(outdir, _name(u))
-            if os.path.exists(fp):
-                by_path[fp] = u
-        for fp, specs in js_imports(sorted(by_path)).items():
-            u = by_path.get(fp)
-            if not u:
-                continue
-            for spec in specs:
-                # A bare or scoped package name is a build-time specifier with no URL to resolve.
-                if not spec.startswith((".", "/", "http:", "https:", "//")):
-                    continue
-                tgt = urljoin(u, spec)
-                if tgt not in seen:
-                    imports.add(tgt)
-        for u in sorted(imports)[:max_chunks]:
-            if u in seen:
-                continue
-            seen.add(u)
-            if not in_scope(u):
-                continue
-            st, body = http_get(u, timeout)
-            if st != 200 or not body or not is_javascript(body):
-                continue
-            n = _name(u)
-            open(os.path.join(outdir, n), "w", errors="replace").write(body)
-            rows.append({"f": n, "u": u, "d": url})
-            saved += 1
-            how["es-import"] += 1
-        if imports:
-            print(f"  {len(imports)} static ES import(s) followed", file=sys.stderr)
-
-    # CHUNK ENUMERATION IS A FIXPOINT, NOT A PASS.
+    # ONE FIXPOINT FOR EVERYTHING A FILE DECLARES.
     #
-    # A bundle that declares chunks can itself be a chunk. Measured on Grafana: the runtime declares
-    # 694, and two of the files beside it declare 6 more between them — a single pass over the
-    # initially-loaded scripts finds 694 and stops, and nobody is told the other 6 exist. So each
-    # round re-scans everything newly written and keeps going until a round adds nothing, which is
-    # the only terminating condition that can honestly claim to be complete.
+    # A file names more code in two ways: a lazy chunk whose URL the bundler's runtime builds, and a
+    # static `import` of another module. Both used to be followed, but separately, and imports only
+    # from the scripts the page itself loaded, so a lazy chunk importing a shared module of its own,
+    # which is how Vite and Rollup split code, had that module skipped without a word. Now every file
+    # fetched, whatever found it, is scanned for both, and the loop runs until a round adds nothing,
+    # the only stopping rule that can claim to be complete. Measured on Grafana back when this was
+    # one pass over the initial scripts: the runtime declares 694 chunks, and two files beside it
+    # declare 6 more that the single pass never saw.
     #
-    # Resolution of a chunk's base stays ambiguous (Grafana's live on a CDN, Element's are
-    # root-relative with an empty publicPath), so every candidate is tried and whichever answers 200
-    # wins. The counts of declared / fetched / unreachable are reported, because "declared 694,
-    # fetched 681, 13 gone" is the difference between enumeration working and enumeration lying.
+    # A chunk's base stays ambiguous (Grafana's live on a CDN, Element's are root-relative with an
+    # empty publicPath), so every candidate is tried and whichever answers 200 wins. Declared,
+    # fetched, unreachable and unscannable are all counted, because "declared 694, fetched 681, 13
+    # gone" is the difference between enumeration working and enumeration lying.
     declared, fetched_ok, unreachable, already, rounds = set(), 0, 0, 0, 0
+    unscanned = set()
     capped = False
+    candidates = {}
     if with_chunks and seen:
-        from . import chunk_map
+        from concurrent.futures import ThreadPoolExecutor
         page_base = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
-        scanned, frontier = set(), [u for u in seen]
+        scanned, frontier = set(), sorted(seen)
         while frontier and fetched_ok < max_chunks:
             rounds += 1
-            candidates = {}
+            files = []
             for u in frontier:
                 if u in scanned:
                     continue
                 scanned.add(u)
                 fp = os.path.join(outdir, _name(u))
-                if not os.path.exists(fp):
-                    continue
-                try:
-                    res = chunk_map(open(fp, errors="replace").read())
-                except Exception:                           # noqa: BLE001
+                if os.path.exists(fp):
+                    files.append((u, fp))
+            candidates = {}
+            with ThreadPoolExecutor(SCAN_WORKERS) as ex:
+                maps = list(ex.map(lambda f: _chunk_map_or_none(f[1]), files))
+            for (u, fp), res in zip(files, maps):
+                if res is None:
+                    unscanned.add(fp)
                     continue
                 pub = res.get("publicPath") or ""
                 for c in (res.get("chunks") or []):
                     cands = chunk_candidates(u, c, pub, page_base)
-                    if not cands:
+                    if cands and cands[0] not in candidates:
+                        candidates[cands[0]] = (cands, "chunk-table")
+            by_path = {fp: u for u, fp in files}
+            failed = []
+            for fp, specs in js_imports(sorted(by_path), failed=failed).items():
+                u = by_path.get(fp)
+                for spec in specs:
+                    # A bare or scoped package name is a build-time specifier with no URL to resolve.
+                    if not u or not spec.startswith((".", "/", "http:", "https:", "//")):
                         continue
-                    key = cands[0]
-                    if key not in candidates:
-                        candidates[key] = cands
+                    tgt = urljoin(u, spec)
+                    if tgt not in candidates:
+                        candidates[tgt] = ([tgt], "es-import")
+            unscanned.update(failed)
             frontier = []
             # Decide this round's work in one thread, fetch it in several, apply it in one. The
             # fetch is the only slow part, and it is the only part that touches nothing shared.
             work = []
-            for key, cands in sorted(candidates.items()):
+            for key, (cands, kind) in sorted(candidates.items()):
                 if key in declared:
                     continue
                 if fetched_ok + len(work) >= max_chunks:
@@ -696,29 +704,29 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
                     continue
                 todo = [cu for cu in cands if in_scope(cu)]
                 seen.update(cands)
-                work.append(todo)
+                work.append((todo, kind))
 
-            def fetch_one(todo):
+            def fetch_one(item):
+                todo, kind = item
                 for cu in todo:
                     st, body = http_get(cu, timeout)
                     if st == 200 and body and is_javascript(body):
-                        return cu, body
+                        return cu, body, kind
                 return None                   # an SPA catch-all is a 404 wearing a 200
 
-            from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(CHUNK_WORKERS) as ex:
                 for got in ex.map(fetch_one, work):
                     if not got:
                         unreachable += 1
                         continue
-                    cu, body = got
+                    cu, body, kind = got
                     n = _name(cu)
                     open(os.path.join(outdir, n), "w", errors="replace").write(body)
                     rows.append({"f": n, "u": cu, "d": url})
                     saved += 1
-                    how["chunk-table"] += 1
+                    how[kind] += 1
                     fetched_ok += 1
-                    frontier.append(cu)       # a chunk can declare chunks: keep going
+                    frontier.append(cu)       # what it declares is the next round
         if declared:
             # Every declared chunk is accounted for, because an unexplained remainder is exactly
             # where a quiet failure hides: 142 declared and 20 fetched reads like a 86% miss until
@@ -727,10 +735,14 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
                 report.update(chunks_declared=len(declared) + (len(candidates) if capped else 0),
                               chunks_fetched=fetched_ok, chunks_unreachable=unreachable,
                               chunks_capped=capped)
-            print(f"  chunks: {len(declared)} declared over {rounds} round(s), "
+            print(f"  chunks and imports: {len(declared)} declared over {rounds} round(s), "
                   f"{fetched_ok} fetched, {already} already had, {unreachable} unreachable"
                   + (f", capped at --max-chunks {max_chunks}"
                      if fetched_ok >= max_chunks else ""), file=sys.stderr)
+        # A file that could not be scanned is a hole of unknown size: whatever it declares is missing,
+        # and nothing else would say so.
+        if report is not None:
+            report["files_unscanned"] = len(unscanned)
 
     # Named and counted, not silently dropped: a refusal here is the one case where the target has
     # surface this did not read, and the fix is a flag rather than a mystery.
@@ -770,7 +782,7 @@ def unfetched(bodies, manifest=None):
     """Chunk URLs the bundles in `bodies` declare that are not on disk there.
 
     This prints rather than downloads, because the thing that already has a session, a stealth
-    browser and an egress the target answers is whatever collected the corpus — not this. The
+    browser and an egress the target answers is whatever collected the corpus, not this. The
     standalone path is `collect`, which fetches them itself; the integration path is this, handing
     the list back to a crawler.
 

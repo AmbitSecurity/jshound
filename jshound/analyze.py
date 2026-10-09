@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""analyze.py — read the JavaScript the crawler already downloaded. Touch nothing.
+"""analyze.py: read the JavaScript the crawler already downloaded. Touch nothing.
 
 **This tool makes no network requests.** That is the whole point of it.
 
@@ -10,18 +10,18 @@ hindsight:
   - it fetched from a different egress than the crawler used, so one channel got blocked by three
     hosts' edge protection while the other kept working
   - it worked to a deadline, and on a 643 KB page it spent the entire budget walking 1271 links and fetched
-    ZERO scripts — then reported "0 endpoints", which reads exactly like "this host has no API"
+    ZERO scripts, then reported "0 endpoints", which reads exactly like "this host has no API"
   - it re-downloaded bundles the crawler had already saved to disk minutes earlier
 
 So this tool does one job: analysis. Fetching is the crawler's job because the crawler is already good at
-it — it follows what a page actually loads, handles SPAs, and goes through a stealth browser. Duplicating a
+it, it follows what a page actually loads, handles SPAs, and goes through a stealth browser. Duplicating a
 worse version of that inside the JS tooling bought nothing and cost us three hosts.
 
 This is a division of labour between two tools, not a rule about how the target may be reached. Curl it,
-probe it, open a browser and click around — whatever the situation calls for.
+probe it, open a browser and click around, whatever the situation calls for.
 
 Chunk enumeration still matters: a bundle names lazy chunks the browser never loaded, and those are real
-surface. `--unfetched` prints them so they can be collected — usually by pointing the crawler at them,
+surface. `--unfetched` prints them so they can be collected, usually by pointing the crawler at them,
 since that is the path already set up for it.
 
   python analyze.py raw/bodies --host help.example.com --out raw/help.static.json
@@ -45,20 +45,20 @@ AST = os.path.join(HERE, "js", "static_ast.js")
 CHUNKMAP = os.path.join(HERE, "js", "chunkmap.js")
 
 # Parsing is bounded by BYTES, not by file count. A batch of 40 tiny chunks is nothing; a batch of 40
-# 2 MB bundles is 80 MB into one node process, which dies with an empty stdout and no error — a crash that
+# 2 MB bundles is 80 MB into one node process, which dies with an empty stdout and no error, a crash that
 # looks exactly like a file with no endpoints in it.
-BATCH_BYTES = 6 * 1024 * 1024        # ceiling; the real size is computed per run — see plan_parallelism
+BATCH_BYTES = 6 * 1024 * 1024        # ceiling; the real size is computed per run, see plan_parallelism
 
 
 # Fixed, so the split is a property of the INPUT and not of the box it ran on.
 #
-# And FEW, because batch size is not neutral. Cross-file resolution that needs AST nodes — a wrapper's
-# callers, a URL assembled through a helper — can only work inside one node process, so a bigger batch
+# And FEW, because batch size is not neutral. Cross-file resolution that needs AST nodes, a wrapper's
+# callers, a URL assembled through a helper, can only work inside one node process, so a bigger batch
 # resolves strictly MORE and never resolves anything wrongly. Measured on one target: with 8MB batches the
 # extractor recovers /projects/{projectId}/sandbox/start and /projects/{call:Ge}/commits/{hash}/diff, which
 # with 0.3MB batches remain unresolved path literals. Small batches produce MORE rows and WORSE ones.
 #
-# The corpus-wide module index (see _build_module_index) removed the other half of this — exported
+# The corpus-wide module index (see _build_module_index) removed the other half of this, exported
 # constants and property values now resolve regardless of the split. What is left needs the nodes
 # themselves, so the answer is to keep batches large, bounded by BATCH_BYTES for memory.
 DETERMINISTIC_BATCHES = 6
@@ -69,7 +69,7 @@ def plan_parallelism(paths):
 
     Both numbers were fixed constants and the pair of them was self-defeating: four workers against a
     6 MB batch size meant a 14 MB corpus formed three batches, so at most three parsers ever ran and
-    raising the worker count changed nothing — measured at 19.8s with 4 workers and 19.4s with 15.
+    raising the worker count changed nothing, measured at 19.8s with 4 workers and 19.4s with 15.
 
     Batches exist to amortise node's ~110 ms startup over files that parse in ~54 ms each, so they must not
     become one-file-per-process. Aim for a few batches per worker, floor them at 1 MB so startup stays
@@ -86,13 +86,13 @@ def plan_parallelism(paths):
         2, min(cpu - 1, max(2, int(gb // 3)), 16))
     total = sum(_os.path.getsize(x) for x in paths if _os.path.exists(x))
     # BATCH SIZE MUST NOT DEPEND ON THE MACHINE. It was derived from the worker count, which is derived
-    # from cores and RAM — so the same bundle analysed on two boxes was split differently, and the split
+    # from cores and RAM, so the same bundle analysed on two boxes was split differently, and the split
     # changes the ANSWER: cross-file resolution only works when the importer and its import land in the
     # same node process. Measured on one target, 4 workers, only the batch size varied: 32 endpoints differed,
     # including `/projects/{call:Ge}/commits/{hash}/diff` which resolves only when its defining file shares
     # the batch, and 29 path literals that a call site in the same batch explained away.
     #
-    # That is a real completeness gap and it is NOT fixed here — a batch-independent module index is the
+    # That is a real completeness gap and it is NOT fixed here, a batch-independent module index is the
     # fix. What is fixed here is that the result no longer depends on the hardware: same input, same split,
     # same answer, so a run is comparable with the run before it and a regression is a regression.
     target = max(1, DETERMINISTIC_BATCHES)
@@ -117,12 +117,12 @@ _ASSET_EXT = re.compile(r"\.(png|jpe?g|gif|svg|webp|avif|ico|mp4|webm|mp3|wav|wo
 # nothing. Measured over 110 saved documents, this is worth exactly one narrow rule.
 #
 # Why it matters, with the decisive case first. Slack's `<div data-props="{...}">` carries three auth-flow
-# entry points — `https://slack.com/signin/oauth/{apple,google,microsoft}/start?email_first=1&...` — and
+# entry points, `https://slack.com/signin/oauth/{apple,google,microsoft}/start?email_first=1&...`, and
 # `grep -rF 'signin/oauth'` over the whole corpus, HTML and all 121 scripts, finds them in ZERO files,
 # because JSON escapes `/` as `\/`. No text-based tool reaches these; only a parse does. Datadog's
-# `<input type="hidden" id="auth_settings">` declares its entire login surface in 688 bytes —
+# `<input type="hidden" id="auth_settings">` declares its entire login surface in 688 bytes,
 # `login_url`, `openid_login_url=/account/oauth2?provider=google`, `forgot_password_url`,
-# `recaptcha_login_url`, the TOTP and MFA-recovery URLs, and `allowed_login_methods` — in a document with
+# `recaptcha_login_url`, the TOTP and MFA-recovery URLs, and `allowed_login_methods`, in a document with
 # ZERO `<form>` tags, so `markup_records` never sees it either. Asana's is a 17 KB `<meta content>` naming
 # its own `/-/oauth` endpoint and the IdP authorize URLs it accepts.
 #
@@ -130,14 +130,14 @@ _ASSET_EXT = re.compile(r"\.(png|jpe?g|gif|svg|webp|avif|ico|mp4|webm|mp3|wav|wo
 # preference. No test on the VALUE can separate state from a rendered code sample: deno.com puts a
 # `deno.json` snippet in a `code` attribute whose `workspaces: ["./api","./core","./web"]` are directory
 # names that satisfy every URL-shape test and are not requests. Taking any JSON-valued attribute yields 71
-# leaves across 6 sites; this allowlist keeps 24, and all 19 dropped are noise or navigation — GitLab's
+# leaves across 6 sites; this allowlist keeps 24, and all 19 dropped are noise or navigation, GitLab's
 # serialised sidebar menu (13), Hex's 100 KB of LaunchDarkly flags (3 URLs, one already in the bundle),
 # and that deno code sample (3).
 _JSON_STATE_ATTRS = {"data-page", "data-props", "data-react-props", "data-config",
                      "data-settings", "data-state", "data-initial-state", "data-bootstrap"}
 
 # `.js`/`.mjs` belong in the asset gate ON THIS PATH, where a third-party bundle URL is all a CDN config
-# leaf ever is — Datadog's four `bundle_url` entries and its `rum_snippet_url` are exactly that. They are
+# leaf ever is, Datadog's four `bundle_url` entries and its `rum_snippet_url` are exactly that. They are
 # NOT in `_ASSET_EXT` itself, because elsewhere a `.js` URL is the thing this tool is built to fetch.
 _STATE_ASSET_EXT = re.compile(r"\.(m?js)$", re.I)
 
@@ -145,11 +145,11 @@ _STATE_ASSET_EXT = re.compile(r"\.(m?js)$", re.I)
 class _Doc(HTMLParser):
     """Parse saved HTML properly instead of regexing it.
 
-    This was a regex — `<script(?![^>]*\\bsrc=)[^>]*>(.*?)</script\\s*>` — and regexing HTML fails the
+    This was a regex, `<script(?![^>]*\\bsrc=)[^>]*>(.*?)</script\\s*>`, and regexing HTML fails the
     way it always fails: an attribute value containing `>` ends the tag early, casing and quoting variants
     slip through, and malformed markup produces silent nonsense. Concretely it also could not read the
     `type` attribute, so a `<script type="application/json">` config blob was extracted, written out as a
-    .js file, handed to Babel, and rejected as a syntax error — the base URL for an entire admin API,
+    .js file, handed to Babel, and rejected as a syntax error, the base URL for an entire admin API,
     thrown away at the parse step.
 
     HTMLParser puts script/style into CDATA mode itself, so the body comes back intact and the end tag is
@@ -161,7 +161,7 @@ class _Doc(HTMLParser):
         self.scripts = []          # (attrs dict, body) for every inline <script>
         self.links = []            # href/action/src targets declared in markup
         self.metas = []            # (name, content)
-        self.forms = []            # {method, action, fields:[{name,type,value}]} — declared contracts
+        self.forms = []            # {method, action, fields:[{name,type,value}]}, declared contracts
         self.partials = []         # URL-bearing attributes on elements no fixed tag list covers
         self.json_state = []       # (tag, attr, name/id, parsed JSON) for serialised server state
         self._cur = None
@@ -186,7 +186,7 @@ class _Doc(HTMLParser):
             # enctype too. For a form the body encoding is not an inference, it is the HTML spec:
             # application/x-www-form-urlencoded unless enctype says otherwise, and multipart/form-data is
             # how a file gets uploaded. The crawler already read this attribute; the markup path did not,
-            # and neither turned it into an encoding — 117 forms across the corpus, not one with an encoding
+            # and neither turned it into an encoding, 117 forms across the corpus, not one with an encoding
             # recorded, for a fact that is written in the tag.
             self._form = {"method": (a.get("method") or "GET").upper(),
                           "enctype": (a.get("enctype") or "").lower() or None,
@@ -195,7 +195,7 @@ class _Doc(HTMLParser):
             if a.get("name") and "disabled" not in a:
                 self._form["fields"].append({
                     "name": a["name"], "type": a.get("type") or tag,
-                    # a hidden field's VALUE is state the server round-trips — csrf tokens, ids, prices
+                    # a hidden field's VALUE is state the server round-trips, csrf tokens, ids, prices
                     "value": a.get("value") if (a.get("type") or "").lower() == "hidden" else None})
         if tag in ("a", "area", "form", "iframe", "link"):
             for k in ("href", "action", "src"):
@@ -207,19 +207,19 @@ class _Doc(HTMLParser):
         # A URL IS A URL WHATEVER ELEMENT CARRIES IT.
         #
         # The list above is the 1999 set of tags. A server-rendered app addresses its own fragments through
-        # custom elements, and those are endpoints in every sense — they answer requests and return markup.
+        # custom elements, and those are endpoints in every sense, they answer requests and return markup.
         # Reddit's shreddit ships `<faceplate-partial src="/svc/shreddit/partial/fKScTR/login-step">`, and
         # 24 of them sat in HTML we had already saved, unread: login-step, register-step, phone-auth,
         # username-step, magic-link-register-step, onboarding-flow. The entire authentication flow.
         #
         # htmx is the same idea with the METHOD stated outright, which makes it strictly better evidence
-        # than a bare href — `hx-post="/x"` is a declared POST endpoint. Turbo, Unpoly and Hotwire all put
+        # than a bare href, `hx-post="/x"` is a declared POST endpoint. Turbo, Unpoly and Hotwire all put
         # a URL on an attribute of a tag no fixed list will ever contain.
         for k, v in a.items():
             # Serialised server state, collected before the URL-shape gate below rejects it for
             # starting with a brace. Three carriers, each the one its framework actually uses:
             # an allowlisted `data-*` attribute, a hidden input's `value` (Datadog), and `<meta
-            # content>` (Asana). The value must parse as an object or an array — which is also what
+            # content>` (Asana). The value must parse as an object or an array, which is also what
             # keeps Radix UI's `data-state="closed"` out, since a bare word is neither.
             if v and v[0] in "{[" and (
                     k in _JSON_STATE_ATTRS
@@ -227,7 +227,7 @@ class _Doc(HTMLParser):
                     or (tag == "meta" and k == "content")):
                 try:
                     parsed = json.loads(v)
-                except Exception:                      # noqa: BLE001 — not JSON is the common case
+                except Exception:                      # noqa: BLE001, not JSON is the common case
                     parsed = None
                 if isinstance(parsed, (dict, list)):
                     self.json_state.append({"tag": tag, "attr": k,
@@ -237,7 +237,7 @@ class _Doc(HTMLParser):
             # hits on one corpus, almost all of them noise: `<faceplate-tracker action="click">` where
             # `action` is an event name, and `<faceplate-loader src="concat:a,b,c">` where `src` is a
             # module list behind a pseudo-scheme. Neither is a request. A path starts with `/`, or `./`,
-            # or a scheme we can actually fetch — anything else is a word that happens to sit on an
+            # or a scheme we can actually fetch, anything else is a word that happens to sit on an
             # attribute with a URL-ish name.
             if not v or not _LOOKS_URL.match(v):
                 continue
@@ -250,7 +250,7 @@ class _Doc(HTMLParser):
             if m:
                 self.partials.append({"tag": tag, "attr": k, "url": v,
                                       "method": m.group(1).upper(), "name": a.get("name") or a.get("id")})
-            # `<use href="/assets/icons-<hash>#pencil">` is an SVG sprite reference, not a request — and
+            # `<use href="/assets/icons-<hash>#pencil">` is an SVG sprite reference, not a request, and
             # it is everywhere: 1,888 of 1,946 hits on GitLab were this one element. SVG's own URL-bearing
             # tags are excluded alongside the media ones for the same reason.
             elif k in _URL_ATTRS and tag not in ("a", "area", "form", "iframe", "link", "script",
@@ -287,7 +287,7 @@ def parse_html(text):
     return d
 
 
-# A script block is JAVASCRIPT unless its type says otherwise. Everything else in this set is data —
+# A script block is JAVASCRIPT unless its type says otherwise. Everything else in this set is data,
 # usually the runtime config an SPA cannot bake in at build time, which is exactly the value that makes
 # `{EXPR}` unresolvable.
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module",
@@ -304,8 +304,8 @@ def inline_scripts(d, tmp=None):
     the first are picked up by the directory walk AND extracted again, so every inline script counts twice.
     An analysis pass should not modify the thing it is analysing.
 
-    A page's own inline JavaScript is JavaScript. one scanner service's entire API — POST /api/queue with
-    a {url} body, a 201-means-still-scanning poll, a redirect to /results/{uuid} — lives in one inline
+    A page's own inline JavaScript is JavaScript. one scanner service's entire API, POST /api/queue with
+    a {url} body, a 201-means-still-scanning poll, a redirect to /results/{uuid}, lives in one inline
     jQuery block on the landing page, and analysing only .js FILES walked straight past it. The agent had
     to open the HTML itself and hand-write the records, which is the tool failing, not the agent excelling.
 
@@ -331,7 +331,7 @@ def inline_scripts(d, tmp=None):
                     continue          # a few characters is an analytics ping, not a program
                 t = (attrs.get("type") or "").split(";")[0].strip().lower()
                 if t and t not in _JS_TYPES:
-                    continue          # data, not code — handled by config_values()
+                    continue          # data, not code, handled by config_values()
                 out = os.path.join(tmp, f"{n}.inline{i}.js")
                 open(out, "w", errors="ignore").write(body)
                 made.append(out)
@@ -339,7 +339,7 @@ def inline_scripts(d, tmp=None):
 
 
 
-# `window.X = "..."`, `var X = "..."`, `X = "..."` — the shapes a server uses to inject a base URL.
+# `window.X = "..."`, `var X = "..."`, `X = "..."`, the shapes a server uses to inject a base URL.
 _CFG_ASSIGN = re.compile(r"""(?:window|globalThis|self)\s*\.\s*([A-Za-z_$][\w$]*)\s*=\s*['"]([^'"]{1,300})['"]"""
                          r"""|(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*['"]([^'"]{1,300})['"]""")
 # A host or an origin: protocol-relative, absolute, or a bare dotted name. Never a path, never prose.
@@ -351,7 +351,7 @@ def config_values(d):
     """Runtime config an SPA cannot bake in at build time, harvested from the HTML it was injected into.
 
     A static bundle has no way to know its own deployment's base URL, so the server writes it into the page
-    and the bundle reads it back. That is why `${k(c.baseUrl)}admin/realms/...` resolves to `{EXPR}` — the
+    and the bundle reads it back. That is why `${k(c.baseUrl)}admin/realms/...` resolves to `{EXPR}`, the
     value was never in any JavaScript file. On auth.example.com it is sitting in
 
         <script id="environment" type="application/json">
@@ -403,8 +403,8 @@ def config_values(d):
             #     window._reportHost / _docHost / _syncHost
             #
             # Five backend hosts, declared by the application, while the map filed that application's API
-            # under the frontend. A static bundle cannot bake in its own deployment's base URL — that is
-            # precisely why the server injects it — so this is the canonical source and it was unread.
+            # under the frontend. A static bundle cannot bake in its own deployment's base URL, that is
+            # precisely why the server injects it, so this is the canonical source and it was unread.
             #
             # Kept narrow deliberately: a bare identifier assigned a STRING that looks like a URL or a
             # host. Not every assignment in every inline script; those are a program, not configuration.
@@ -430,11 +430,11 @@ def _form_target(action, src_url, src_host, method="GET"):
     """Where a <form> actually submits.
 
     An absent `action` does NOT mean "/". HTML says a form with no action submits to the document's own URL,
-    and the same is true of `action="#"` and of any relative action — all three resolve against the page.
+    and the same is true of `action="#"` and of any relative action, all three resolve against the page.
     Recording them as "/" invented a root endpoint that nothing posts to, and did it for 88 of 462 forms
     measured across 64 corpora (15% no action, 4% fragment-only), plus mis-filed the relative ones.
 
-    We already know the serving URL — it was being read only to pull the hostname out of it — so resolve
+    We already know the serving URL, it was being read only to pull the hostname out of it, so resolve
     properly. Same-origin targets stay paths, which is what the rest of the pipeline stores; cross-origin
     ones keep their absolute form, because a form posting to another host is exactly the fact worth keeping.
     `method` matters because a GET submission overwrites the page's query string and a POST does not.
@@ -463,7 +463,7 @@ def _form_target(action, src_url, src_host, method="GET"):
 # A RELATIVE path is only admitted as a whole string value. `"/v1/embeddings"` is a reference; the same
 # characters inside a sentence are prose, and anchoring to the quotes is what keeps this channel precise.
 _JSON_STR = re.compile(r'"((?:https?://[^"\s\\]{1,180})?/[A-Za-z0-9._~\-/{}$:%]{2,120})"')
-# An ABSOLUTE url needs no such anchor — it names its scheme, its host and its path, and nothing else looks
+# An ABSOLUTE url needs no such anchor, it names its scheme, its host and its path, and nothing else looks
 # like one. This is how documentation code samples get read: an RSC payload renders
 # `"children":"curl https://api.x.ai/v1/chat/completions"`, where the URL sits mid-string behind a shell
 # command and the anchored pattern above cannot see it. Trailing punctuation is trimmed because a URL at
@@ -472,7 +472,7 @@ _JSON_URL = re.compile(r'https?://[A-Za-z0-9.\-]+\.[A-Za-z]{2,}(?:/[A-Za-z0-9._~
 _JSON_ASSET = re.compile(r"\.(js|mjs|css|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot|otf|map|mp4|webm|"
                          r"mp3|wav|pdf|wasm|zip|csv)(\?|$)", re.I)
 # Segments that are an INSTANCE rather than a route: long digit runs, uuids, hashes, locale codes, and the
-# id-plus-slug form every help centre uses — `360043066492-Quanti-anni-devo-avere-per-usare-Reddit`. That
+# id-plus-slug form every help centre uses, `360043066492-Quanti-anni-devo-avere-per-usare-Reddit`. That
 # last one is why the first version of this still emitted 22,051 reddit paths: collapsing bare digit runs
 # left the slug making each URL unique, so /hc/{locale}/articles/{id}-{slug} never grouped.
 _INST = re.compile(r"^(?:\d{3,}(?:[-.][\w%.-]*)?"       # 15483130362132, 360043513931.json,
@@ -483,10 +483,10 @@ _INST = re.compile(r"^(?:\d{3,}(?:[-.][\w%.-]*)?"       # 15483130362132, 360043
                    r"|[\w%.-]{40,})$", re.I)            # any very long segment is a slug or a token
 _JSON_MAX_PER_SHAPE = 3
 # A backstop, because a content site will always find a shape nobody predicted. Per host, and it emits a
-# record rather than passing in silence — same rule as every other cap in this tool.
+# record rather than passing in silence, same rule as every other cap in this tool.
 _JSON_MAX_PER_HOST = 2000
-# Only API-SHAPED paths. This channel was justified by a measurement — 61 paths on one scope and 53
-# on x that no other channel produced — and every one of those was an API path. Emitting every path-shaped
+# Only API-SHAPED paths. This channel was justified by a measurement, 61 paths on one scope and 53
+# on x that no other channel produced, and every one of those was an API path. Emitting every path-shaped
 # string in every saved JSON instead pulls in the content of whatever the app renders: 3,542 api.github.com
 # instances from supabase's docs, 2,002 Zendesk article URLs from reddit. That is a third party's content
 # enumerated, not our target's surface, and the shape cap cannot fix it because each one genuinely is a
@@ -496,7 +496,7 @@ _JSON_APIISH = re.compile(r"^/(api|v\d+|graphql|rest|auth|oauth|admin|internal|s
 
 
 def _shape(path):
-    """A path with its instance segments collapsed — used ONLY to group, never emitted as a template."""
+    """A path with its instance segments collapsed, used ONLY to group, never emitted as a template."""
     return "/".join("*" if _INST.match(seg) else seg for seg in path.split("/"))
 
 
@@ -515,10 +515,10 @@ def _corpus_walk(d):
 
 
 def json_records(d, origins=None, documents=None):
-    """Endpoint references inside captured RESPONSE bodies — JSON and RSC.
+    """Endpoint references inside captured RESPONSE bodies, JSON and RSC.
 
     `js_files()` reads .js, .mjs, .rsc and inline scripts. It has never read .json, so every API response the
-    crawler saved went unanalysed — and some of them describe the API. xAI's status endpoint returns one
+    crawler saved went unanalysed, and some of them describe the API. xAI's status endpoint returns one
     object per model naming `base_url` and `uri`, which is an inventory of the inference API; claude.ai's
     docs data carries /v1/sessions/{session_id}/archive, /threads and /resources. Measured before building
     this: 61 paths on one scope and 53 on another that no other channel produced.
@@ -526,8 +526,8 @@ def json_records(d, origins=None, documents=None):
     These are responses we RECEIVED. Reading one is recon; nothing here infers a response we did not get.
 
     The reason this needs care rather than a grep is that one route repeats. Reddit's saved JSON yields
-    17,678 "api-ish" strings which are two Zendesk routes —
-    /api/v2/help_center/{locale}/articles/{id}.json — enumerated over every locale and article. Emitting
+    17,678 "api-ish" strings which are two Zendesk routes,
+    /api/v2/help_center/{locale}/articles/{id}.json, enumerated over every locale and article. Emitting
     them would bury the map in instances of one endpoint. So instances are GROUPED by shape (long digit
     runs, uuids, hashes and locale codes collapsed) and at most three per shape are kept, with a record
     saying how many there were. The kept paths stay literal, because the store's paths are literal; the
@@ -542,7 +542,7 @@ def json_records(d, origins=None, documents=None):
     for root, _, names in _corpus_walk(d):
         for n in names:
             # .rsc as well as .json. RSC flight payloads are passed to the JS extractor by js_files() and
-            # come back with ZERO records — Babel accepts the file and finds nothing in it, which is the
+            # come back with ZERO records, Babel accepts the file and finds nothing in it, which is the
             # silent-failure shape this codebase keeps meeting: it looks exactly like success. 898 files on
             # the one scope produced nothing that way, and they carry 106 API paths no other channel has.
             # They are read here as TEXT, which is all that is needed to see a path in one.
@@ -624,7 +624,7 @@ def doc_state_records(d, origins=None):
     """Request surface the server SERIALISED INTO AN ATTRIBUTE, which no other channel here reads.
 
     `_LOOKS_URL` rejects a value beginning `{` before any other gate, so a JSON document carried in an
-    attribute reaches nothing — and what it carries is routinely the application's declared auth
+    attribute reaches nothing, and what it carries is routinely the application's declared auth
     surface. Datadog's hidden `auth_settings` input names its login, OIDC, forgot-password, recaptcha,
     TOTP and MFA-recovery endpoints in 688 bytes, in a document with no `<form>` at all. Slack's
     `data-props` names three OAuth entry points that `grep` cannot find in the entire corpus, because
@@ -634,7 +634,7 @@ def doc_state_records(d, origins=None):
     serialised state from a rendered code sample. Emitted as records and deliberately NOT fed into the
     value-resolution map that `--config` builds: that map is keyed by leaf property name and consumed
     as `_CONFIG.get(node.property.name)` bundle-wide, so a wrong entry silently rewrites unrelated
-    URLs — the failure already recorded there, where a borrowed `url` put reddit's ActionCable socket
+    URLs, the failure already recorded there, where a borrowed `url` put reddit's ActionCable socket
     at a Zendesk documentation page. Simulated on these blobs it would add 246 keys, 25 of them
     ambiguous inside a single document. Reporting a value is safe; resolving other code with it is not.
     """
@@ -662,7 +662,7 @@ def doc_state_records(d, origins=None):
                     if not v or len(v) > 400 or not _LOOKS_URL.match(v):
                         continue
                     bare = v.split("?")[0]
-                    # A bare origin is not an endpoint — the same rule the scoreboard applies when it
+                    # A bare origin is not an endpoint, the same rule the scoreboard applies when it
                     # refuses to count `/`. Slack's `geoRootUrl` is `https://slack.com/` and Datadog's
                     # `statuspageio_page_url` is a third-party status page root; neither is surface.
                     if bare.rstrip("/").endswith("//") or not urlparse(bare).path.strip("/"):
@@ -686,13 +686,13 @@ def doc_state_records(d, origins=None):
 def markup_records(d, origins=None):
     """Request contracts declared in SERVED markup.
 
-    A <form> states its method, its target and every field name outright — no inference, no call site to
+    A <form> states its method, its target and every field name outright, no inference, no call site to
     attribute. That makes it the most completely specified contract this tool ever produces, and it was
     being read by the crawler's DOM snapshot only. Pages fetched without a browser get no snapshot,
     and on a server-rendered application the markup IS the surface, so anything that never rendered in a
     browser was invisible.
 
-    Only FORMS. The 6,825 link targets in one Discourse sample are forum threads — following links is the
+    Only FORMS. The 6,825 link targets in one Discourse sample are forum threads, following links is the
     crawler's channel and emitting them here would inflate the map with instances of routes it already
     walks. Hidden field VALUES are kept because they are round-tripped state: csrf tokens, object ids,
     prices. Unfired by construction, so these land with no status and sit in the residual.
@@ -700,7 +700,7 @@ def markup_records(d, origins=None):
     # Attribute every form to the host that SERVED its page. Without this the records came out with no
     # `_host`, which made them orphans: per-file attribution could neither keep them for the right host nor
     # drop them for the wrong one, so a shared bodies directory either leaked another host's forms in or
-    # discarded the real ones. Same fix as the JS records — read the origin map.
+    # discarded the real ones. Same fix as the JS records, read the origin map.
     origins = origins or {}
     out, seen = [], set()
     for root, _, names in _corpus_walk(d):
@@ -729,7 +729,7 @@ def markup_records(d, origins=None):
                 seen.add(key)
                 hidden = {x["name"]: x["value"] for x in f["fields"]
                           if x.get("value") and (x.get("type") or "").lower() == "hidden"}
-                # A GET form has NO BODY — its fields become the query string — so an encoding would be
+                # A GET form has NO BODY, its fields become the query string, so an encoding would be
                 # meaningless there. Only a form that sends a body gets one.
                 enc = None
                 if f["method"] != "GET":
@@ -754,7 +754,7 @@ def markup_records(d, origins=None):
                     rec["body_keys"] = fields
                 if hidden:
                     rec["hidden_values"] = hidden
-                # A <form> STATES its fields outright — no inference — so it has a declared schema like any
+                # A <form> STATES its fields outright, no inference, so it has a declared schema like any
                 # other request. Hidden fields are marked because they are round-tripped state (csrf tokens,
                 # object ids, prices) rather than anything a user types, which is what makes them worth
                 # tampering with.
@@ -762,7 +762,7 @@ def markup_records(d, origins=None):
                 out.append(rec)
 
             # SERVER-RENDERED PARTIALS. A custom element with a URL attribute is an endpoint that answers
-            # requests and returns markup — the same claim a <form action> makes, with the same evidence.
+            # requests and returns markup, the same claim a <form action> makes, with the same evidence.
             # Recorded separately from links because a link is somewhere you navigate and this is something
             # the page FETCHES, which is the distinction that decides whether it belongs in the API surface.
             for pt in getattr(doc, "partials", []):
@@ -791,7 +791,7 @@ def js_files(d, with_inline=True):
             p = os.path.join(root, n)
             # .ts/.tsx are here because a target that ships sourcemaps hands us its ORIGINAL source, and
             # sourcemaps.py writes those into this directory like any other body. The extractor's parser
-            # already enables the typescript plugin (see parse()), so they need no special path — they are
+            # already enables the typescript plugin (see parse()), so they need no special path, they are
             # just the same application with its names and types intact. Without this line they were
             # written, registered, and then walked straight past: 3,412 files, zero records.
             if (n.endswith((".js", ".mjs", ".ts", ".tsx"))
@@ -819,7 +819,7 @@ def _build_module_index(paths, workers, batches):
 
     The extractor's pre-pass builds its export and property index from the files in its own process, which
     means an import resolves only when its defining file happens to share a batch. That is not a module
-    index, it is an accident of scheduling — and it changes the ANSWER, not just the runtime: measured on
+    index, it is an accident of scheduling, and it changes the ANSWER, not just the runtime: measured on
     one target with the worker count held fixed and only the batch size varied, 32 endpoints differed, an
     imported `BASE` resolving to /api/orders in one arrangement and staying {BASE}/orders in the other.
 
@@ -828,13 +828,13 @@ def _build_module_index(paths, workers, batches):
     affordable rather than a doubling.
     """
     # CARRY EVERY FIELD THE INDEX PASS EMITS. This merged exports and propvals and silently dropped
-    # anything else, so `callargs` — the per-batch caller argument shapes the extractor now publishes,
-    # and the only way a wrapper defined in one chunk can learn what another chunk passes it — arrived
+    # anything else, so `callargs`, the per-batch caller argument shapes the extractor now publishes,
+    # and the only way a wrapper defined in one chunk can learn what another chunk passes it, arrived
     # at pass two empty. The extractor produced it, the extractor loaded it, and the merge in between
     # threw it away, which made four separate attempts at the body-parameter gap measure an index that
     # was never there.
     exports, propvals, callargs = {}, {}, {}
-    # OR, not first-wins. The tRPC marker sits in one file of a corpus — cal.com's is 1 of 79 — so any
+    # OR, not first-wins. The tRPC marker sits in one file of a corpus, cal.com's is 1 of 79, so any
     # batch seeing it settles the question for all of them. Merging this with the same "first batch
     # wins" rule as the maps would reinstate the bug it exists to fix.
     trpc = False
@@ -873,7 +873,7 @@ def _build_module_index(paths, workers, batches):
     _INDEX_FILE[0] = fh.name
     # …and the ORIGINAL name of each saved body, which is the only way a relative import can resolve.
     # Bodies are stored by content hash, so `./app-shared-DKk5IE_B.js` matches no path and no basename we
-    # hold — 1,147 distinct specifiers on one target, zero resolvable. The original name is in the URL the
+    # hold, 1,147 distinct specifiers on one target, zero resolvable. The original name is in the URL the
     # crawler fetched it from, and that is recorded; 450 of those 1,147 resolve through it.
     aliases = {}
     for saved, url in (_ORIGINS_FOR_ALIAS[0] or {}).items():
@@ -916,11 +916,11 @@ _AST_OK, _AST_FAILED, _AST_WHY = [0], [0], set()
 
 
 def _run(tool, paths):
-    """One node process per batch, files passed as ARGUMENTS — never concatenated.
+    """One node process per batch, files passed as ARGUMENTS, never concatenated.
 
     Concatenating them into one stdin stream is the obvious optimisation and it is wrong: two independently
     minified modules will both declare a top-level `v`, Babel raises `Duplicate declaration "v"`, and the
-    extractor returns [] for the ENTIRE batch. Which does not look like a crash — it looks like a host with
+    extractor returns [] for the ENTIRE batch. Which does not look like a crash, it looks like a host with
     no API. The extractor already accepts multiple paths and tags each record with the file it came from.
     """
     if not paths:
@@ -946,7 +946,7 @@ def _run(tool, paths):
             return []
         _AST_OK[0] += len(paths)
         # The extractor's own diagnostics are on stderr and capture_output swallows them, so
-        # BP_DEBUG=1 printed nothing when run through here — which is how four attempts at the
+        # BP_DEBUG=1 printed nothing when run through here, which is how four attempts at the
         # body-parameter gap were each evaluated against an invisible pass.
         if os.environ.get("BP_DEBUG") and r.stderr:
             sys.stderr.write(r.stderr.decode(errors="replace"))
@@ -984,7 +984,7 @@ _HEADER_ROUTED = {}          # token -> the header name that carries it
 #
 # One regex for one very specific shape: a list of string literals, `.includes(X)`, and an assignment
 # of that same X to a header-shaped key. Tying the list to the assignment through the SAME identifier
-# is what makes this safe — a bare list of lowercase words is nothing, and a bare header name says
+# is what makes this safe, a bare list of lowercase words is nothing, and a bare header name says
 # which header but not which values go in it.
 _ROUTING_HEADER = re.compile(
     r"""\[((?:\s*["'][a-z0-9_.-]{2,24}["']\s*,?){2,12})\]\s*\.includes\(\s*([A-Za-z_$][\w$]*)\s*\)"""
@@ -996,14 +996,14 @@ _ROUTING_HEADER = re.compile(
 def _find_header_routing(bodies):
     """Which service tokens does this application carry in a HEADER?
 
-    The whole mgmt misattribution turns on one question — when a bundle says `apiHost: APIHost.Mgmt`,
-    is `mgmt` a hostname or a header value? — and the application answers it in as many words:
+    The whole mgmt misattribution turns on one question (when a bundle says `apiHost: APIHost.Mgmt`,
+    is `mgmt` a hostname or a header value?), and the application answers it in as many words:
 
         const {apiGatewayHost: l} = t.session, c = l + a;          // URL is ALWAYS gateway + path
         ["alpha","beta","gamma","delta"].includes(r) && (p["x-service"] = r);
 
     Both facts are in the source and neither needs an observation, which matters because the repair
-    that reads them off the wire cannot run on a first crawl — there is nothing observed yet, and
+    that reads them off the wire cannot run on a first crawl, there is nothing observed yet, and
     that is exactly when a map is most likely to be quoted and least likely to be checked.
 
     That application ALSO publishes `window._adminHost = "//mgmt.app.client.example"`, so the host exists and
@@ -1032,7 +1032,7 @@ def _declared_gateway(declared):
         u = session.apiGatewayHost + url;
         ["alpha","beta","gamma","delta"].includes(apiHost) && (headers["x-service"] = apiHost)
 
-    So `scout` will never appear in the declared-host map, because it is not a host — and before this the
+    So `scout` will never appear in the declared-host map, because it is not a host, and before this the
     row fell through to the loading document, which put 51 API endpoints on a Webflow marketing site. The
     document is not merely a weak guess for these rows, it is a KNOWN-WRONG one: the code said in as many
     words that the base comes from somewhere else.
@@ -1051,7 +1051,7 @@ def _declared_host_map(cfg):
 
     A bundle names its backends with a symbol (`apiHost: APIHost.Mgmt`) and the page injects what those
     symbols mean (`window._adminHost = "//mgmt.app.client.example"`). Both halves are the APPLICATION's
-    own identifiers — this correlates two things the target said, rather than matching a vocabulary we
+    own identifiers, this correlates two things the target said, rather than matching a vocabulary we
     invented, which is why it generalises past one naming convention.
 
     Normalised on both sides by stripping the decoration a config key carries (`_`, `Hostname`, `Host`,
@@ -1067,8 +1067,8 @@ def _declared_host_map(cfg):
             continue
         raw = str(k).strip().lstrip("_").lower()
         # The KEY has to claim to be a base URL. Without this, every host-shaped string in the page
-        # qualifies and JSON-LD walks straight in — `@context=schema.org`, `twitter:image=cdn...`,
-        # `availability=schema.org` — any of which could collide with a service token and send a whole
+        # qualifies and JSON-LD walks straight in, `@context=schema.org`, `twitter:image=cdn...`,
+        # `availability=schema.org`, any of which could collide with a service token and send a whole
         # route family to a host the application never mentioned. 24 candidates became the 5 real ones.
         if not re.search(r"(hostname|host|baseurl|url|origin|endpoint|domain|server|gateway)$", raw):
             continue
@@ -1081,8 +1081,8 @@ def _declared_host_map(cfg):
 def require_corpus(cmd, path):
     """Refuse a path that cannot be a corpus, rather than reporting zero of everything.
 
-    `os.walk` on a path that is not there yields nothing, so a mistyped directory — or a file, or a
-    URL, which is the easy mistake because every FETCHING command takes one — came back as
+    `os.walk` on a path that is not there yields nothing, so a mistyped directory, or a file, or a
+    URL, which is the easy mistake because every FETCHING command takes one, came back as
     `0 scripts -> 0 records` and exit 0. That reads as "this host has no API": a claim about the
     target, made out of a typo. A confident zero is the one output this tool must never produce
     quietly, which is the same reason `residual` and `precision` exist.
@@ -1100,7 +1100,7 @@ def require_corpus(cmd, path):
 
 
 def _readable_non_js(d):
-    """Is there anything here that a non-JavaScript channel reads — a document, or a captured body?"""
+    """Is there anything here that a non-JavaScript channel reads, a document, or a captured body?"""
     for root, _, names in _corpus_walk(d):
         for n in names:
             if n.startswith("_"):
@@ -1120,7 +1120,7 @@ def analyze(bodies, host=None, manifest=None):
     directory per host is correct instead of merely convenient.
 
     USUALLY YOU WANT TO OMIT IT. The origin map places every file on its own, so passing a host mostly
-    just discards the rest of the directory — measured on one corpus, `--host www.example.com` cut
+    just discards the rest of the directory, measured on one corpus, `--host www.example.com` cut
     9,262 records to 1,640 and took every other host's endpoints with it. Pass one only when you are
     deliberately analysing a shared bodies directory one host at a time, and remember that it also claims
     every record whose origin is unknown (those rows say so in their note).
@@ -1138,7 +1138,7 @@ def analyze(bodies, host=None, manifest=None):
     # "0 scripts -> 0 records" while holding the surface in plain sight.
     #
     # The guard still exists, just moved: if there is nothing of ANY kind to read, there is nothing to
-    # do. Everything downstream already tolerates an empty `paths` — the JS passes iterate over it.
+    # do. Everything downstream already tolerates an empty `paths`, the JS passes iterate over it.
     if not paths and not _readable_non_js(bodies):
         return [], paths
     # Harvest the page-injected config BEFORE parsing any JavaScript, so the extractor can resolve values
@@ -1153,7 +1153,7 @@ def analyze(bodies, host=None, manifest=None):
         print(f"  {len(cfg)} runtime config value(s) from injected HTML "
               f"({', '.join(list(cfg)[:5])}…)", file=sys.stderr)
         # Emit them as records too. A template that keeps `{baseUrl}` is only useful if the candidate
-        # values are somewhere a reader can find them — the slot names what is missing, these say what it
+        # values are somewhere a reader can find them, the slot names what is missing, these say what it
         # probably is, and keeping them apart is the difference between evidence and a guess.
         _CONFIG_RECORDS[:] = [
             {"_kind": "config-value", "name": k, "value": v, "source": "injected-html"}
@@ -1183,7 +1183,7 @@ def analyze(bodies, host=None, manifest=None):
     # SAY WHICH SCRIPTS HAVE NO PROVENANCE, BEFORE ANALYSING THEM.
     #
     # A body file with no entry in the origin map has no document and no serving host, so every endpoint
-    # recovered from it is attributed by the `--host` fallback — or by nothing at all. That is survivable
+    # recovered from it is attributed by the `--host` fallback, or by nothing at all. That is survivable
     # when it is a stray; it is not survivable when it is the application bundle. On one corpus the
     # unregistered files were the seven hand-fetched `app_*.js`, and `app_index.js` alone carried 448 of
     # the target's API endpoints: the most important file in the analysis was the one nothing could place.
@@ -1210,7 +1210,7 @@ def analyze(bodies, host=None, manifest=None):
     # The crawler names each body after the hash of its contents, so the same bundle fetched twice is one
     # file. A script fetched by hand lands beside it under a different name, and then it is not one file:
     # it is parsed twice and every endpoint in it is recorded twice. Measured on one corpus, all seven
-    # hand-fetched `app_*.js` were byte-identical to bodies already on disk — 4.5 MB reparsed, and 450
+    # hand-fetched `app_*.js` were byte-identical to bodies already on disk, 4.5 MB reparsed, and 450
     # duplicate endpoint records which, having no registered origin, were then claimed by the --host
     # fallback and filed under a second host.
     #
@@ -1258,7 +1258,7 @@ def analyze(bodies, host=None, manifest=None):
     # never against the origin of the script that contains it, so a bundle served from redditstatic.com
     # that fetches `/svc/shreddit/graphql` is making a request to www.reddit.com.
     #
-    # This was invisible while only same-host bodies were saved — server and document were the same host.
+    # This was invisible while only same-host bodies were saved, server and document were the same host.
     # Once a page's bundles are kept wherever their CDN lives it stops being true: reddit.com's 210 scripts
     # arrive from 47 hosts, and attributing their relative paths to the CDN files the application's entire
     # API under a host that does not serve it. `_document.json` records the loading document; where it is
@@ -1269,7 +1269,7 @@ def analyze(bodies, host=None, manifest=None):
         # AN INLINE SCRIPT'S DOCUMENT IS THE PAGE IT IS INLINE IN.
         #
         # inline_scripts() writes each <script> block to `<htmlname>.inline<N>.js`, and the origin map is
-        # keyed by the HTML file's basename — so this lookup missed every one of them. On one target that
+        # keyed by the HTML file's basename, so this lookup missed every one of them. On one target that
         # was 3,393 of 4,372 scripts: no document, so no host, so the records fell through to the `--host`
         # fallback, which claims them for whatever host that pass happened to name. Run the pass twice for
         # two hosts and the SAME endpoints are confidently filed under both, which is how 857 endpoints
@@ -1288,7 +1288,7 @@ def analyze(bodies, host=None, manifest=None):
             return None
 
     recs = []
-    # Parsing is CPU-bound and embarrassingly parallel — one node process per batch, no shared state — so
+    # Parsing is CPU-bound and embarrassingly parallel, one node process per batch, no shared state, so
     # a hardcoded 4 left twelve cores idle on a sixteen-core machine during the slowest step of the whole
     # pipeline. Scale to the box, leaving one core for everything else. Each node process is given ~3GB, so
     # cap by memory too rather than spawning sixteen parsers on a small container.
@@ -1324,12 +1324,12 @@ def analyze(bodies, host=None, manifest=None):
                 # through to the serving host rather than inventing a hostname with a brace in it.
                 t = str(r.get("template") or "")
                 # PATH-relative is relative too. `account/deactivate` resolves against the document exactly
-                # as `/account/deactivate` does — the browser rule is about the ORIGIN, and a leading slash
+                # as `/account/deactivate` does, the browser rule is about the ORIGIN, and a leading slash
                 # only decides how much of the document's path is kept. Requiring one sent every bare
                 # relative call to the host that served the SCRIPT: x ships its bundles from abs.twimg.com,
                 # so `account/verify_password`, `account/deactivate` and 200 more legacy API calls were
                 # filed under a CDN that serves none of them, while the origin map had recorded the real
-                # document — x.com — for all 1,656 of those files.
+                # document, x.com, for all 1,656 of those files.
                 #
                 # A template whose base is an unresolved slot is NOT relative in this sense: `{apiBase}/foo`
                 # names a host we never resolved, and the document is a guess rather than the browser's
@@ -1339,7 +1339,7 @@ def analyze(bodies, host=None, manifest=None):
                     and not re.match(r"^[a-z][a-z0-9+.\-]*:", t) and not t.startswith("{")
                 # A WRAPPER-COMPOSED URL IS NOT A RELATIVE URL.
                 #
-                # The browser's rule — resolve a relative path against the document origin — applies to a
+                # The browser's rule, resolve a relative path against the document origin, applies to a
                 # string the browser resolves. It does not apply to a fragment handed to a client that
                 # prepends a base, because that string never reaches the URL resolver:
                 #     sendRequest({apiHost: APIHost.Beta, method:"post", url:"/v1/compliance-check"})
@@ -1347,8 +1347,8 @@ def analyze(bodies, host=None, manifest=None):
                 # token it names). Applying the document rule to them filed 821 API endpoints under a
                 # Webflow marketing site on one target and put 857 endpoints under two hosts at once.
                 #
-                # We still have to write SOME host — the column is NOT NULL and a row with no host helps
-                # nobody — so the document remains the best guess. What changes is that it stops being
+                # We still have to write SOME host, the column is NOT NULL and a row with no host helps
+                # nobody, so the document remains the best guess. What changes is that it stops being
                 # recorded as if it were the browser's answer: `unresolved` says out loud that the base was
                 # chosen by application code we could not follow, and `base_hint` carries the service token
                 # so a later pass with evidence can rehome the whole group at once.
@@ -1380,7 +1380,7 @@ def analyze(bodies, host=None, manifest=None):
                         r["unresolved"] = (f"host resolved from the page's own config: "
                                            f"{r.get('base_key')}={r.get('base_hint')} -> {declared}")
                     elif _DECLARED_GATEWAY:
-                        # The token is not a host — this app selects a SERVICE behind one gateway, by
+                        # The token is not a host, this app selects a SERVICE behind one gateway, by
                         # header. The document origin is known-wrong here, and the page named the gateway.
                         r["_resolved_base"] = _DECLARED_GATEWAY
                         r["unresolved"] = (f"{r.get('base_key')}={r.get('base_hint')} is a service token, "
@@ -1413,7 +1413,7 @@ def analyze(bodies, host=None, manifest=None):
                     # THE --host FALLBACK IS A GUESS AND MUST SAY SO.
                     #
                     # This claims every record whose file has no recorded origin. On one target that was
-                    # `app_index.js` — 448 API endpoints, the single most valuable file in the analysis —
+                    # `app_index.js`, 448 API endpoints, the single most valuable file in the analysis,
                     # fetched by hand rather than by the crawler, so it never got an `_origin.jsonl` entry.
                     # The records came out looking exactly as confident as the ones we had observed, and a
                     # second pass for a second host claimed the same records again.
@@ -1421,7 +1421,7 @@ def analyze(bodies, host=None, manifest=None):
                     r["unresolved"] = (f"host is the --host fallback ({host}): this script has no recorded "
                                        f"origin, so nothing established which document loaded it")
                 # The file this record came from. `_chunk` is an index within a BATCH, so it identifies a
-                # file only in combination with that batch — useless downstream and actively misleading if
+                # file only in combination with that batch, useless downstream and actively misleading if
                 # compared across batches. Record the path itself while we still have it.
                 if src:
                     r["_file"] = src
@@ -1436,13 +1436,13 @@ def analyze(bodies, host=None, manifest=None):
     # because JSON escapes the slashes.
     recs.extend(doc_state_records(bodies, origins))
     # Captured JSON response bodies. js_files() has never read .json, so an API response that describes the
-    # API went unread — 61 paths on one scope, 53 on x, produced by no other channel.
+    # API went unread, 61 paths on one scope, 53 on x, produced by no other channel.
     recs.extend(json_records(bodies, origins, documents))
 
     # `gql-endpoint` records pass straight through to ingest, which is where the GraphQL gateway is
     # resolved and always was (see `gql_gw` in ingest.py). A pass lived here that tried to do the same
-    # job over `recs` and matched operations on `kind == "graphql"` — the extractor emits them as
-    # `_kind: "relay"` — so it addressed nothing on real data while its tests, written against the
+    # job over `recs` and matched operations on `kind == "graphql"`, the extractor emits them as
+    # `_kind: "relay"`, so it addressed nothing on real data while its tests, written against the
     # vocabulary it assumed rather than the one the extractor produces, all passed.
     #
     # A file's own request builder answers calls in that file whose construction we could not read.
@@ -1455,12 +1455,12 @@ def analyze(bodies, host=None, manifest=None):
         print(f"  merged {before_merge - len(recs)} duplicate call site(s) into their endpoints "
               f"(per host, which the extractor cannot do)", file=sys.stderr)
 
-    # SUPPRESS path literals that a call site already explained — globally, which is the point.
+    # SUPPRESS path literals that a call site already explained, globally, which is the point.
     #
     # collectPathLiterals is a blind sweep: every string in a file, keep anything path-shaped. That is
     # deliberate, because a route table declares its routes as bare strings with no call site. The cost is a
     # second row for every path some OTHER file also calls properly, and the second row reads worse than
-    # redundant — `UNKNOWN /rest/issue-report, no call site attributed` next to
+    # redundant, `UNKNOWN /rest/issue-report, no call site attributed` next to
     # `POST /rest/issue-report [settingsUserIssueReportRaw]` looks like a gap we do not have.
     #
     # The extractor already does this, twice, and neither reaches far enough: `claimed` is built from ONE
@@ -1500,7 +1500,7 @@ def analyze(bodies, host=None, manifest=None):
     # tldraw reported 74 endpoints while its OpenAPI export had 66 paths, because eight records had
     # a resolved body and an unresolved URL and every exporter silently dropped them.
     #
-    # They are not noise — tldraw's `["token","distinct_id","groups",…]` is PostHog's capture
+    # They are not noise, tldraw's `["token","distinct_id","groups",…]` is PostHog's capture
     # payload and `["method","jsonrpc","id"]` is a JSON-RPC envelope, both worth knowing about. So
     # they keep their contents and get their own kind, which makes the endpoint count match what
     # exports, and makes "something POSTs a JSON-RPC envelope from here" findable instead of
@@ -1544,7 +1544,7 @@ _MERGE_FILL = ("op", "security", "media_type", "req_headers", "query_schema", "b
 def _apply_sole_client_encoding(recs):
     """Adopt a file's encoding rule for calls in that file whose own construction did not say.
 
-    collectClientEncoding reads what a request builder does with a body — one target's says
+    collectClientEncoding reads what a request builder does with a body, one target's says
     `r instanceof FormData ? s.body = r : s.body = JSON.stringify(r)` outright. That is a fact about the
     app, but it is not automatically a fact about a given CALL: `L().post(url, body)` reaches that builder
     through a factory, a class and two hops, and the link is cross-module.
@@ -1554,7 +1554,7 @@ def _apply_sole_client_encoding(recs):
     corpus that covers 208 of claude's 414 unresolved writes, 44 of x's 385, 15 of one target's 285.
 
     It is still an inference, so it is LABELLED as one. `body_encoding_basis` says where the answer came
-    from — a construction we read, a content-type the client declared, the HTML spec for a form, or this —
+    from, a construction we read, a content-type the client declared, the HTML spec for a form, or this,
     and a reader who only trusts the first three can filter on it. Recording the value and hiding its
     provenance is how a guess becomes indistinguishable from a measurement.
     """
@@ -1562,7 +1562,7 @@ def _apply_sole_client_encoding(recs):
 
     def resolved(rule):
         # A conditional rule resolves to json for a body that is not a FormData. We did not see the body's
-        # construction — that is why we are here — so the multipart branch stays named in the basis rather
+        # construction, that is why we are here, so the multipart branch stays named in the basis rather
         # than silently dropped.
         return "json" if rule == "json-unless-multipart" else rule
 
@@ -1576,13 +1576,13 @@ def _apply_sole_client_encoding(recs):
     sole = {f: next(iter(v)) for f, v in rules.items() if len(v) == 1}
     # SECOND TIER: the whole HOST agrees. A file-local rule is the shortest inference, but a modern app
     # puts its HTTP layer in one shared module and calls it from two hundred others, so the file tier
-    # never fires where it is needed most — one target's createRequestOptions is read correctly and sits in a
+    # never fires where it is needed most, one target's createRequestOptions is read correctly and sits in a
     # different file from all 249 of the calls that reach it.
     #
     # Unanimity is what makes this safe, and it is the same test the property index already applies: adopt
     # a value only where the bundle does not contradict itself. Every request builder attributed to this
     # host encodes bodies the same way, so a call on this host whose own construction we could not read
-    # encodes that way too. Where a host's builders DISAGREE it refuses — which is most of x, claude and
+    # encodes that way too. Where a host's builders DISAGREE it refuses, which is most of x, claude and
     # one target, and those hosts genuinely do mix json, multipart and raw. The rule declines to answer
     # exactly where the evidence is mixed.
     host_sole = {h: next(iter(v)) for h, v in byhost.items() if h and len(v) == 1}
@@ -1623,16 +1623,16 @@ def _apply_sole_client_encoding(recs):
     return recs
 
 def _merge_by_endpoint(recs):
-    """Union call sites that describe the SAME endpoint — after the host is known, which is the point.
+    """Union call sites that describe the SAME endpoint, after the host is known, which is the point.
 
     The extractor unions bodies across call sites, which is right: an endpoint described twice, once by a
     call site and once by a declarative table, should end up with both halves. But it keys that union on
-    (method, template) and it does not know hosts — only this module does, from the origin map.
+    (method, template) and it does not know hosts, only this module does, from the origin map.
 
     So two files loaded by DIFFERENT documents that both POST to /api/shared collapsed into one record. The
     second host's endpoint disappeared, and the survivor's body became the union of both: a contract
     claiming a field that only the other host's code sends. That is fabrication, not omission, and it fires
-    exactly where this tool normally runs — one bodies directory holding several hosts' bundles, code served
+    exactly where this tool normally runs, one bodies directory holding several hosts' bundles, code served
     from a CDN under a host that is not the app's.
 
     The extractor now keys its merge per file, so this is where the real union happens, with the host in the
@@ -1655,7 +1655,7 @@ def _merge_by_endpoint(recs):
         # them the same request.
         #
         # This erases only SLOTS. A literal path is untouched, so `/server/19/` and `/server/33/` stay two
-        # rows — the distinction the codebase deliberately protects, since nothing can tell a version from
+        # rows, the distinction the codebase deliberately protects, since nothing can tell a version from
         # an object id by looking at the digits.
         key = (r.get("_host"), str(r.get("method")), _SLOT.sub("{}", str(t)),
                str(r.get("op")) if (r.get("op") and kind in OP_KEYED) else "")
@@ -1664,7 +1664,7 @@ def _merge_by_endpoint(recs):
             seen[key] = r
             out.append(r)
             continue
-        # Keep the best-NAMED spelling. The name is not invented — it is the one the application's own code
+        # Keep the best-NAMED spelling. The name is not invented, it is the one the application's own code
         # used somewhere, and `{ref}` is worth more to a reader than `{s}`. The spellings that lose are
         # recorded rather than dropped, because a caller naming it `{slug}` and another `{id}` is a fact
         # about the endpoint.
@@ -1715,13 +1715,13 @@ def _document_map(bodies):
     """body file -> the DOCUMENT that loaded it, written by the crawler beside `_origin.json`.
 
     Separate file, separate concern: `_origin.json` says who served a body, this says which page pulled it
-    in. Absent on any run crawled before this existed, and callers fall back to the serving host —
+    in. Absent on any run crawled before this existed, and callers fall back to the serving host,
     which is exactly the old behaviour, so an old workspace still analyses the way it always did.
     """
     if not bodies:
         return {}
     m = {}
-    # PRIMARY: the `d` field of _origin.jsonl. This map used to read `_document.json` alone — a file the
+    # PRIMARY: the `d` field of _origin.jsonl. This map used to read `_document.json` alone, a file the
     # crawler stopped writing when _save_origin became append-only JSONL, and which is therefore absent
     # from EVERY run on disk. The failure was silent and total: doc_host_of() returned None for
     # every file, so each bundle fell back to the host that SERVED it, and a site that ships its code from
@@ -1744,8 +1744,8 @@ def _document_map(bodies):
             # A DOCUMENT IS ITS OWN DOCUMENT.
             #
             # `d` is who pulled a body in, which is the right question for a script and the wrong one for
-            # a page. A relative URL inside a document resolves against THAT document's URL — always, by
-            # spec — never against whichever page happened to link to it. The crawler records a referrer,
+            # a page. A relative URL inside a document resolves against THAT document's URL, always, by
+            # spec, never against whichever page happened to link to it. The crawler records a referrer,
             # so app.client.example/home arrived carrying d=www.client.example/account, and every relative
             # path in the app bundle it loads was then filed under the marketing site.
             if r.get("u") and b.lower().endswith((".html", ".htm")):
@@ -1767,15 +1767,15 @@ def _document_map(bodies):
 def _origin_map(manifest, bodies=None):
     """body-file -> the URL it was served from.
 
-    Bodies are stored by CONTENT hash, so a saved file has forgotten where it came from — which is fine
+    Bodies are stored by CONTENT hash, so a saved file has forgotten where it came from, which is fine
     until a bundle declares its chunks RELATIVELY. `../../map/plugins/x.js` cannot be fetched by anyone
     without knowing the URL of the file that said it.
 
-    The crawl log holds part of that mapping — but only for records that carry a body_file, which is the
+    The crawl log holds part of that mapping, but only for records that carry a body_file, which is the
     documents, not the ~1000 assets they pulled in. The crawler now writes `_origin.json` beside the bodies
     covering every saved file, so that is the primary source and the log is a fallback. Without it, six
     crawls sharing one bodies dir cannot be told apart and `--host X` mislabels every other host's bundles
-    as X — which cost one run a full re-crawl.
+    as X, which cost one run a full re-crawl.
     """
     m = {}
     if bodies:
@@ -1824,7 +1824,7 @@ def _origin_map(manifest, bodies=None):
                       file=sys.stderr)
             # Trailing garbage is a THIRD corruption shape and it used to pass in silence, because the
             # warnings above only fire on 0 or >1 documents. reddit's file is one valid document of 148
-            # entries followed by 96 bytes of a truncated record — a shorter write landing on a longer
+            # entries followed by 96 bytes of a truncated record, a shorter write landing on a longer
             # file's tail. Exactly one document decoded, so nothing was said, and the run could not tell a
             # partial map from a complete one.
             if i < len(raw) and raw[i:].strip():
@@ -1833,7 +1833,7 @@ def _origin_map(manifest, bodies=None):
                       f"empty. Re-crawling is the only way to recover them.", file=sys.stderr)
     # Coverage is the number that tells you whether attribution can work at all. A map with 148 entries for
     # 493 saved files means two thirds of the corpus cannot be filed under any host, and every record from
-    # those files comes out with `_host: None` — which reads downstream as "no surface here".
+    # those files comes out with `_host: None`, which reads downstream as "no surface here".
     if bodies:
         try:
             saved = len([n for n in os.listdir(bodies)

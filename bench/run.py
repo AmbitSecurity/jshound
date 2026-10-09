@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bench/run.py — compare jshound against the other JavaScript analysers, reproducibly.
+"""bench/run.py: compare jshound against the other JavaScript analysers, reproducibly.
 
     python bench/run.py ./bodies --host app.example.com
 
@@ -9,14 +9,14 @@ Tools that are not on PATH are reported as absent rather than silently skipped.
 TWO THINGS THIS MEASURES THAT A PATH COUNT DOES NOT.
 
 **Noise.** Run a string extractor over a webpack bundle and it reports hundreds of "endpoints".
-Read them and most are documentation links plus strings like `/VwdtK` and `/+U0Y/` — minifier output
+Read them and most are documentation links plus strings like `/VwdtK` and `/+U0Y/`, minifier output
 that happens to contain a slash. `bench/classify.py` buckets every tool's output by the same rules,
 so debris cannot be counted as attack surface.
 
 **Attribution.** A crawl saves scripts from every host a page loads: the app, its CDN, the chat
 widget, the error reporter, Google. A tool with no notion of origin reports all of them as the
 target's surface. Measured on one corpus of 12 hosts, an extractor's apparent API lead came from
-`/v1/chooseServer` (www.gstatic.com) and `/sheriff/api/v1/rules/search` (tradingview-widget.com) —
+`/v1/chooseServer` (www.gstatic.com) and `/sheriff/api/v1/rules/search` (tradingview-widget.com),
 other people's endpoints, in a report about yours. `--host` turns that into a column: `on-target` vs
 `3rd-party`, resolved through the crawler's own `_origin.jsonl`.
 
@@ -45,7 +45,7 @@ def _norm(s):
     answer rather than its content: a relative path (`/v1/thing`), an absolute URL (`https://h/v1/
     thing`), and a path whose origin is a named-but-unresolved value (`{baseUrl}/v1/thing`). The last
     is jshound's marker for "this endpoint is real, its base came from somewhere I could not follow",
-    and only accepting `startswith("/")` dropped three of this repo's own six fixture endpoints —
+    and only accepting `startswith("/")` dropped three of this repo's own six fixture endpoints,
     so `bench/run.py` reported 3/6 for jshound while COMPARISON.md reported 6/6 off the same files.
     """
     if not s or not isinstance(s, str):
@@ -83,7 +83,7 @@ def origin_hosts(bodies):
 
 def on_target(host, targets):
     """None when we cannot tell. `targets` is a list because an app's own assets routinely live on a
-    different hostname — Grafana serves play.grafana.org from grafana-assets.grafana.net — and
+    different hostname, Grafana serves play.grafana.org from grafana-assets.grafana.net, and
     calling a target's own CDN 'third-party' would be a worse error than not attributing at all.
     Only the operator knows which hosts are theirs, so they pass them."""
     if not targets or not host or host == "unattributed.invalid":
@@ -146,7 +146,7 @@ def run_xnlinkfinder(bodies, targets):
     with tempfile.TemporaryDirectory() as td:
         out = os.path.join(td, "o.txt")
         # A CATCH-22 THAT MAKES THIS TOOL NOT COMPARABLE ON A LOCAL CORPUS, stated rather than
-        # scored. `-sf` is mandatory, and it filters results by the DOMAIN of each link — but paths
+        # scored. `-sf` is mandatory, and it filters results by the DOMAIN of each link, but paths
         # extracted from a bundle are relative (`/api/foo`) and carry no domain, so any scope value
         # removes all of them and the run writes an empty file. Omitting `-sf` makes it refuse to
         # start. It is built to crawl live URLs, which is a different job from reading files on
@@ -159,7 +159,7 @@ def run_xnlinkfinder(bodies, targets):
             print("  ! xnLinkFinder timed out", file=sys.stderr)
             return None
         if not os.path.exists(out) or os.path.getsize(out) == 0:
-            print("  ! xnLinkFinder: not comparable on a file corpus — its mandatory scope filter "
+            print("  ! xnLinkFinder: not comparable on a file corpus: its mandatory scope filter "
                   "matches on link domain, and bundle paths are relative. Reported as absent, not "
                   "as zero.", file=sys.stderr)
             return None
@@ -174,7 +174,7 @@ def run_xnlinkfinder(bodies, targets):
 
 def run_jsluice(bodies, targets):
     """jsluice DOES report a method and a bodyParams list for the sinks it understands. An earlier
-    version of this runner read only `url`, scoring it 0 on both columns — the same unfairness as
+    version of this runner read only `url`, scoring it 0 on both columns, the same unfairness as
     mis-invoking xnLinkFinder, and it would have been the first thing anyone checked."""
     if not shutil.which("jsluice"):
         return None
@@ -258,7 +258,7 @@ def main():
     print("\napi/content/asset/noise bucket every tool's output by the same rules (bench/classify.py).\n"
           "on-target/3rd-party resolve each path to the host whose script contained it, via the\n"
           "crawler's _origin.jsonl. +method / +body are records carrying a verb and a resolved body\n"
-          "contract — a path-set comparison cannot express either, which is why totals understate it.")
+          "contract; a path-set comparison cannot express either, which is why totals understate it.")
     if a.json:
         json.dump({k: {"paths": sorted(v[0]), "hosts": v[3]} for k, v in results.items()},
                   open(a.json, "w"), indent=1)

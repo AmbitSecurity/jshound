@@ -1,4 +1,4 @@
-"""Next's served build manifest — the one source in this repo that DECLARES routes instead of
+"""Next's served build manifest, the one source in this repo that DECLARES routes instead of
 inferring them.
 
 Everything else here reads code and concludes something about it, so it can be wrong about an endpoint.
@@ -118,7 +118,7 @@ def test_catch_all_segments_become_named_parameters(out, declared, expected):
 
 
 def test_api_routes_are_separated_from_page_routes(out):
-    """A Next `/api/*` route is server code the client calls — API surface. A page route is not, and
+    """A Next `/api/*` route is server code the client calls, API surface. A page route is not, and
     merging the two is how a route list stops being useful for reconnaissance."""
     assert {r["template"] for r in out["api_routes"]} == {
         "/api/content/graphql",
@@ -169,7 +169,7 @@ def test_middleware_matchers_are_reported_as_written(out):
 
 
 def test_the_prerendered_set_is_read_from_a_javascript_set(out):
-    """`_ssgManifest.js` assigns `new Set([...])`, not an array — which is why it is evaluated."""
+    """`_ssgManifest.js` assigns `new Set([...])`, not an array, which is why it is evaluated."""
     assert set(out["ssg"]) == {"/blog/{slug}", "/account/me"}
 
 
@@ -208,7 +208,7 @@ def test_a_getter_in_a_manifest_is_not_invoked():
 
 
 def test_one_unreadable_manifest_does_not_lose_the_others():
-    """Partial failure is normal — a CDN can serve one of the three as an error page."""
+    """Partial failure is normal, a CDN can serve one of the three as an error page."""
     out = run("error-page.js", "_buildManifest.js")
     assert len(out["errors"]) == 1
     assert "/account/me" in templates(out)
@@ -224,7 +224,7 @@ def test_one_unreadable_manifest_does_not_lose_the_others():
 def test_a_missing_manifest_does_not_assert_a_stack_that_is_not_in_evidence(
         monkeypatch, html, is_next, says):
     """`reason` is read by humans, so it has to be as honest as a finding. Saying "expected for an App
-    Router build" about tiktok.com — which was never Next — states something not in evidence, which is
+    Router build" about tiktok.com, which was never Next, states something not in evidence, which is
     the same mistake as reporting an endpoint nothing in the bundle supports."""
     import jshound.nextmanifest as nm
     monkeypatch.setattr(nm, "http_get",

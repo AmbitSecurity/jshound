@@ -9,7 +9,7 @@ function b(x){ return http.get(new URL("/v2/axios-get", base).href, {params:{x}}
 function c(x){ return new Request(new URL("/v2/request-obj", base), {method:"DELETE"}) }
 // plain fetch with a URL object
 function d(x){ return fetch(new URL("/v1/plain", base), {method:"PUT", body:JSON.stringify({x})}) }
-// base held in a private class field — tldraw's telemetry shape
+// base held in a private class field, tldraw's telemetry shape
 class Telemetry {
   #cfg = { endpoint: "https://api.demo.test" };
   event(t){ return fetch(new URL("/v1/event", this.#cfg.endpoint), {method:"POST", body:JSON.stringify({events:t})}) }

@@ -1,5 +1,5 @@
 """The export is only useful if the consumer accepts it. Burp's OpenAPI Parser validates before it
-imports, so an invalid document is not a cosmetic problem — it is the whole feature failing at the
+imports, so an invalid document is not a cosmetic problem, it is the whole feature failing at the
 last step. Skipped when the validator is not installed; CI installs it."""
 import os
 import sys

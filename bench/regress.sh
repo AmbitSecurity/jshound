@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# regress.sh — run `analyze` over a set of saved corpora and tag the output, so two versions of the
+# regress.sh: run `analyze` over a set of saved corpora and tag the output, so two versions of the
 # extractor can be diffed record-by-record instead of compared on totals.
 #
 #     bench/regress.sh before          # on the committed tree
@@ -10,12 +10,12 @@
 # WHY THIS EXISTS. A change to the extractor is not measurable by a count: tonight's sentinel fix
 # removed 27 fabricated templates and ADDED 29 real ones, so the total went up by two while the output
 # changed in 56 places. Four separate changes were reverted this session because a per-record diff
-# showed them making real output worse while the totals looked flat or better — a relative base URL
+# showed them making real output worse while the totals looked flat or better, a relative base URL
 # that glued Grafana's k8s base onto its legacy REST API (886 -> 887, so a count check would have
 # called it a win), and two precheck removals that looked like wins on a 60-file subset and were
 # net-negative on the full corpus.
 #
-# It lives in the repo because it kept being written into /tmp and lost — most recently to a reboot,
+# It lives in the repo because it kept being written into /tmp and lost, most recently to a reboot,
 # which took ~100 saved corpora and every baseline with it.
 #
 # CORPORA. This expects one directory per target, as `jshound <target> -o DIR` leaves them:
@@ -36,7 +36,7 @@ if [ -z "$TAG" ]; then
   exit 2
 fi
 if [ ! -d "$CORPORA" ]; then
-  echo "regress.sh: no corpora at $CORPORA — set CORPORA, or fetch some first:" >&2
+  echo "regress.sh: no corpora at $CORPORA, set CORPORA, or fetch some first:" >&2
   echo "  jshound https://play.grafana.org/ -o $CORPORA/t_grafana --max-chunks 150 -q" >&2
   exit 2
 fi

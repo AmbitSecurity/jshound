@@ -28,7 +28,7 @@ def test_fixture_yields_the_six_documented_endpoints():
 
 
 def test_cross_module_baseurl_endpoints_are_recovered():
-    """The three `${this.baseUrl}/v1/...` call sites are the whole point of the fixture — `baseUrl`
+    """The three `${this.baseUrl}/v1/...` call sites are the whole point of the fixture, `baseUrl`
     is assigned in a different module from the call."""
     tmpls = {r.get("template") for r in _records()}
     for want in ("{baseUrl}/v1/subscribe", "{baseUrl}/v1/media"):
@@ -47,7 +47,7 @@ def test_three_lazy_chunk_urls_are_built():
     ])
     src = open(os.path.join(DEMO, "app.4f2a9c1e.js")).read()
     for c in res["chunks"]:
-        assert c not in src, f"{c} is a literal in the bundle — the fixture no longer proves anything"
+        assert c not in src, f"{c} is a literal in the bundle, the fixture no longer proves anything"
 
 
 def test_the_readmes_offline_block_is_the_real_output(tmp_path):

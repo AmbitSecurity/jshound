@@ -47,7 +47,7 @@ def test_path_ids_named_moduleids():
 
 
 def test_hashed_ids_deterministic_moduleids():
-    """GitLab's 1.4 MB bundle is 849 entries keyed `++os`, `+18S`, `/23t` — exactly one numeric.
+    """GitLab's 1.4 MB bundle is 849 entries keyed `++os`, `+18S`, `/23t`, exactly one numeric.
     A key-format test rejected 848 real modules."""
     entries = [(f'"{c}z{i:02d}"', "r.d(t,{a:()=>1})") for i, c in enumerate("abcdefghij")]
     res, _f = _run(_map(entries))
@@ -55,7 +55,7 @@ def test_hashed_ids_deterministic_moduleids():
 
 
 def test_an_id_containing_a_slash_does_not_abort_the_run():
-    """base64 ids include `/` — GitLab ships a module called `0/Qg`. Writing that straight to disk
+    """base64 ids include `/`, GitLab ships a module called `0/Qg`. Writing that straight to disk
     threw ENOENT and killed the run after earlier modules had been written, so the output looked
     merely small rather than aborted."""
     entries = [(f'"0/Q{i}"', "r.d(t,{a:()=>1})") for i in range(10)]

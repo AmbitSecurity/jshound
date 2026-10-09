@@ -16,13 +16,39 @@ jobs:
         with: { python-version: "${{ matrix.python }}" }
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
-      - run: npm ci || npm install
       - run: pip install -e . pytest openapi-spec-validator
       - run: pytest tests -q
-      - name: node parsers compile
+      - name: node helpers compile
         run: for f in jshound/js/*.js; do node --check "$f"; done
-      - name: cli smoke test
+      - name: the README's offline example
         run: |
           jshound --version
-          echo '(()=>{var r={};r.u=e=>"static/chunks/"+e+"."+{12:"a1b2c3"}[e]+".js";})()' \
-            | jshound chunks -
+          test "$(jshound examples/demo-app -o "$RUNNER_TEMP/demo" -q | wc -l)" -eq 6
+
+  # The bundled Babel is generated. If it does not match what package-lock.json pins, someone edited
+  # it by hand or forgot to rebuild it.
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci
+      - run: npm run bundle
+      - run: git diff --exit-code jshound/js/babel.js
+
+  # What a user gets from `pip install`: no checkout around it, no node_modules to fall back on.
+  installed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: pip install .
+      - name: run from outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          cp -r "$GITHUB_WORKSPACE/examples/demo-app" demo-app
+          test "$(jshound demo-app -o out -q | wc -l)" -eq 6

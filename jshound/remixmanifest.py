@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""remixmanifest.py — read a Remix / React Router framework-mode route table from the document.
+"""remixmanifest.py: read a Remix / React Router framework-mode route table from the document.
 
     remixmanifest.py https://hydrogen.shop --json routes.json
 
@@ -7,7 +7,7 @@ A Remix document assigns its entire route manifest to a global in an inline scri
 
     window.__remixManifest = {"entry":{...},"routes":{"root":{...}},"url":"...","version":"9c45bfe8"}
 
-This repo already used `__remixManifest` as a FINGERPRINT marker — proof the app is Remix — and read
+This repo already used `__remixManifest` as a FINGERPRINT marker, proof the app is Remix, and read
 nothing out of it. It declares four things, and none of them were reaching the output:
 
     routes           the route tree, as `path` segments nested through `parentId`
@@ -17,7 +17,7 @@ nothing out of it. It declares four things, and none of them were reaching the o
 
 THE DATA ENDPOINTS ARE DECLARED, NOT INFERRED, which is what makes them safe to emit. Verified on
 hydrogen.shop: `?_data=root` answers 200 with 6,272 bytes of `text/remix-deferred` and
-`?_data=routes/($locale)._index` answers 200 with 10,750 — while an INVENTED route id answers 403.
+`?_data=routes/($locale)._index` answers 200 with 10,750, while an INVENTED route id answers 403.
 The ids come from the manifest, so there is nothing to guess; a route list alone would not do, because
 the id and the URL path are different strings.
 
@@ -41,7 +41,7 @@ def inline_scripts(html):
     p = _Scripts()
     try:
         p.feed(html or "")
-    except Exception:                                      # noqa: BLE001 — malformed markup is normal
+    except Exception:                                      # noqa: BLE001, malformed markup is normal
         pass
     return list(p.inline)
 
@@ -57,7 +57,7 @@ def read(doc_url, timeout=30, workdir=None):
     # React Router v7 does NOT inline it. reactrouter.com links
     # `<link rel="modulepreload" href="/assets/manifest-98aa57ec.js">`, and that file is one
     # statement: `window.__reactRouterManifest={...}`. The manifest's own `url` field names the same
-    # file, so the convention is the framework's rather than a guess — but the document is where the
+    # file, so the convention is the framework's rather than a guess, but the document is where the
     # hashed name can be read, which is the lesson the Next reader already paid for.
     fetched_from = None
     if not bodies:

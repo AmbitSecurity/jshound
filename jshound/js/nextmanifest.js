@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* nextmanifest.js — evaluate Next's own served manifests and print what the BUILD declared.
+/* nextmanifest.js, evaluate Next's own served manifests and print what the BUILD declared.
  *
  *     node nextmanifest.js _buildManifest.js _ssgManifest.js _clientMiddlewareManifest.js
  *
@@ -9,14 +9,14 @@
  *     self.__BUILD_MANIFEST = { "/account/me": ["static/chunks/1ir8gf5k36l2m.js"], ..., sortedPages: [...] }
  *     self.__BUILD_MANIFEST_CB && self.__BUILD_MANIFEST_CB()
  *
- * so it is READ FROM THE AST rather than scraped — the same way `chunkmap.js` reads
+ * so it is READ FROM THE AST rather than scraped, the same way `chunkmap.js` reads
  * `__webpack_require__.u`. Brace-counting a minified object is guesswork; walking the assignment's
  * right-hand side returns the structure the framework itself reads at runtime. That distinction is the
  * whole point: these routes are not inferred from filenames or string literals, they are the build's
  * own declaration, so the floor on precision is the build being wrong about itself.
  *
  * None of the file is executed. An earlier version evaluated it in a `vm` context and two escapes out
- * of that were reproduced against it — see `literal.js`, which replaced it. The `*_CB` callbacks are
+ * of that were reproduced against it, see `literal.js`, which replaced it. The `*_CB` callbacks are
  * not data and are ignored, which is also what they did before: they short-circuit on an absent
  * callback by design.
  */
@@ -122,7 +122,7 @@ function main() {
     if (ssg) {
       found.push("__SSG_MANIFEST");
       // A real build writes this as `new Set([...])`, not an array. It arrives here as an array
-      // anyway because the conversion in `vmvalue.js` drains any iterable inside the context — which
+      // anyway because the conversion in `vmvalue.js` drains any iterable inside the context, which
       // is also the only place that Set can be recognised, since it belongs to the context's realm
       // and `instanceof Set` against ours is false. That mismatch returned an empty prerendered list
       // every time until a fixture had a non-empty one, so it is worth not forgetting.

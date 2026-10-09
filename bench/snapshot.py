@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""snapshot.py — record what this tool extracts from a set of corpora, so a change has to prove it.
+"""snapshot.py: record what this tool extracts from a set of corpora, so a change has to prove it.
 
     python bench/snapshot.py /tmp/corpus_a /tmp/corpus_b -o before.json
     ...make a change...
@@ -9,7 +9,7 @@
 A fix that raises one number while quietly lowering another is the normal failure mode here: the
 resolver change that took GitLab from 7 endpoints to 134 could just as easily have cost Grafana its
 chunk enumeration, and a spot-check of the target you were working on would not have noticed. So
-every capability is recorded against every corpus, and the diff reports BOTH directions — a
+every capability is recorded against every corpus, and the diff reports BOTH directions, a
 regression is any number that went down, and it is printed first.
 
 The corpora are yours; nothing is committed. Point it at whatever you have.
@@ -62,7 +62,7 @@ def measure(corpus):
             parse_fail += 1
             continue
         # Tolerate the pre-stats output format (a bare array), so this harness can measure an older
-        # build as a baseline instead of crashing on it — which is exactly what it did the first
+        # build as a baseline instead of crashing on it, which is exactly what it did the first
         # time it was pointed at one.
         if isinstance(res, list):
             res = {"chunks": res}
@@ -88,7 +88,7 @@ def diff(before, after):
     for name in sorted(set(b) | set(a)):
         rb, ra = b.get(name, {}), a.get(name, {})
         if "error" in ra and "error" not in rb:
-            regressions.append(f"{name}: now ERRORS — {ra['error']}")
+            regressions.append(f"{name}: now ERRORS, {ra['error']}")
             continue
         for k in sorted(set(rb) | set(ra)):
             if k in ("corpus", "error"):

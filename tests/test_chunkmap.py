@@ -11,8 +11,8 @@ import jshound   # noqa: E402
 
 
 def test_a_string_that_cannot_be_a_url_path_is_not_a_chunk():
-    """Supabase's runtime holds the whole Google Tag Manager snippet in an id map —
-    `(function(w,d,s,l,i){w[l]=w[l]||[]...` — and it came back out as a chunk URL to go and
+    """Supabase's runtime holds the whole Google Tag Manager snippet in an id map,
+    `(function(w,d,s,l,i){w[l]=w[l]||[]...`, and it came back out as a chunk URL to go and
     download. A URL path component cannot carry whitespace, a quote, a bracket or a brace without
     being escaped first, so a string holding any of them was never a path."""
     src = ('(function(){var r={};r.p="";'

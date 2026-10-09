@@ -2,7 +2,7 @@
 
 `.get`/`.post`/`.put`/`.delete` are HTTP verbs and they are also ordinary methods on Map,
 URLSearchParams, Headers and FormData. The member sink fired on all of them, and the only thing
-between that and a fabricated endpoint was whether the first argument looked path-shaped — which
+between that and a fabricated endpoint was whether the first argument looked path-shaped, which
 `"user/profile"` does. Arguing about the argument cannot fix that. Where the receiver is a local
 binding its construction site says what it is, and a value built by `new Map()` has no endpoints.
 """
@@ -20,7 +20,7 @@ def _records():
     r = _lib.analyze(FIX)
     assert r.returncode == 0, r.stderr[-1200:]
     recs = json.loads(r.stdout)
-    assert recs, "analyzed nothing — the fixture must be a directory with real records"
+    assert recs, "analyzed nothing, the fixture must be a directory with real records"
     return recs
 
 
@@ -29,7 +29,7 @@ def _templates():
 
 
 def test_a_map_lookup_is_not_an_endpoint():
-    """`cache.get("user/profile")` — the path is fine, the receiver is a Map."""
+    """`cache.get("user/profile")`, the path is fine, the receiver is a Map."""
     assert "user/profile" not in _templates()
 
 
@@ -65,7 +65,7 @@ def test_a_bare_module_call_still_resolves():
 
 
 def test_nothing_else_was_quietly_dropped():
-    """The three real endpoints and no fabrications — stated as an exact set so a future change that
+    """The three real endpoints and no fabrications, stated as an exact set so a future change that
     removes a real one fails here rather than looking like an improvement."""
     got = {t for t in _templates() if t.startswith("/v")}
     assert got == {"/v1/users", "/v2/orders", "/v3/invoices"}

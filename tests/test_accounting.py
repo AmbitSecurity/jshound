@@ -17,7 +17,7 @@ RECS = [
     {"method": "POST", "template": "/api/a", "_host": "h"},
     {"method": "GET", "template": "/api/b", "_host": "h"},
     {"_kind": "route", "method": "GET", "template": "/ui/page", "_host": "h"},
-    # a body with no URL — not an endpoint, it has no address to send to
+    # a body with no URL, not an endpoint, it has no address to send to
     {"_kind": "request-no-url", "method": "POST", "body_keys": ["method", "jsonrpc", "id"],
      "_host": "h"},
 ]

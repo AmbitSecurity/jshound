@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""residual.py — measure what static analysis MISSED, not what it found.
+"""residual.py: measure what static analysis MISSED, not what it found.
 
 A count of endpoints is a number you cannot check. `1546 routes` reads exactly the same whether the
 extractor got everything or half, which is how a run reported "routes and contracts captured"
 while holding 7 contracts across 479 endpoints.
 
 The checkable measurement is a RESIDUAL. Crudely grep every path-shaped string out of the saved bundles,
-subtract everything the extractor attributed, and classify the remainder. The regex over-collects wildly —
-asset paths, i18n keys, CSS selectors, license text — so the remainder is bucketed rather than reported as
+subtract everything the extractor attributed, and classify the remainder. The regex over-collects wildly,
+asset paths, i18n keys, CSS selectors, license text, so the remainder is bucketed rather than reported as
 one number, and only one bucket matters:
 
     MISSED-apiish   looks like an API path, and the extractor never mentioned it
 
 That bucket is a bug list. Every entry is either a real endpoint the extractor should have found, or a
-false positive that says something about the regex — and both are worth knowing. A run where it is large is
+false positive that says something about the regex, and both are worth knowing. A run where it is large is
 not a target with a big API, it is a tool with a hole.
 
   jshound residual <bodies-dir> <records.json>    what analyze missed in what your crawler saved
@@ -48,7 +48,7 @@ def classify(bodies, records_path, verbose=False):
         # AN EXTRACTED TEMPLATE IS OFTEN ABSOLUTE, and the literal it came from is not. tldraw's
         # telemetry is written `fetch(new URL("/v1/event", cfg.endpoint))`, so the literal in the
         # bundle is `/v1/event` while the record resolves to
-        # `https://clerk-telemetry.com/v1/event` — a path-shaped test on the record then never
+        # `https://clerk-telemetry.com/v1/event`, a path-shaped test on the record then never
         # matched, and residual reported two endpoints as MISSED that the extractor had resolved
         # better than the literal. A false miss in the one tool whose job is measuring misses is
         # worse than no measurement.
@@ -65,7 +65,7 @@ def classify(bodies, records_path, verbose=False):
         for n in names:
             p = os.path.join(root, n)
             # The crawler names bodies by content hash, so most have no extension at all. Sniff instead of
-            # trusting the name — the same rule the bundle fetcher learned when a `.js.gz` cost a whole host.
+            # trusting the name, the same rule the bundle fetcher learned when a `.js.gz` cost a whole host.
             if not _READABLE.search(n):
                 try:
                     with open(p, "rb") as fh:
@@ -97,7 +97,7 @@ def classify(bodies, records_path, verbose=False):
         else:
             buckets["other"] += 1
 
-    # A score off an empty corpus is not a zero, it is an absence of evidence — and "0 missed, 0.0%"
+    # A score off an empty corpus is not a zero, it is an absence of evidence, and "0 missed, 0.0%"
     # is the most reassuring line this tool can print. It is refused rather than printed.
     if not files:
         raise SystemExit(f"residual: read 0 files from {bodies!r}, nothing to measure the records "

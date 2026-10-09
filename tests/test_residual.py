@@ -19,7 +19,7 @@ def _run(js, records):
 
 def test_an_absolute_template_claims_the_relative_literal_it_came_from():
     """tldraw writes `fetch(new URL("/v1/event", cfg.endpoint))`, so the literal in the bundle is
-    `/v1/event` while the record resolves to `https://clerk-telemetry.com/v1/event` — better than
+    `/v1/event` while the record resolves to `https://clerk-telemetry.com/v1/event`, better than
     the literal. A path-shaped test on the record reported it as MISSED."""
     res = _run('fetch(new URL("/v1/event", e));',
                [{"template": "https://clerk-telemetry.com/v1/event", "method": "POST"}])

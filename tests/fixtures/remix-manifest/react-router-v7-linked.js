@@ -1,4 +1,4 @@
 // React Router v7 does not inline it. reactrouter.com links
 // `<link rel="modulepreload" href="/assets/manifest-98aa57ec.js">`, and that file is this one
-// statement. The global is renamed and the DATA PROTOCOL is different — see the test.
+// statement. The global is renamed and the DATA PROTOCOL is different, see the test.
 window.__reactRouterManifest={"entry":{"module":"/assets/entry.client-DFC94nQT.js","imports":["/assets/jsx-runtime-JjCO_Kg5.js"],"css":[]},"routes":{"root":{"id":"root","path":"","hasAction":false,"hasLoader":true,"hasErrorBoundary":true,"module":"/assets/root-D1.js","imports":[]},"home":{"id":"home","parentId":"root","path":"home","hasAction":false,"hasLoader":true,"module":"/assets/home-D2.js","imports":[]},"actions/color-scheme/route":{"id":"actions/color-scheme/route","parentId":"root","path":"color-scheme","hasAction":true,"hasLoader":false,"module":"/assets/color-scheme-D3.js","imports":[]},"pages/doc":{"id":"pages/doc","parentId":"root","path":"*","hasAction":false,"hasLoader":true,"module":"/assets/doc-D4.js","imports":[]}},"url":"/assets/manifest-98aa57ec.js","version":"98aa57ec"}

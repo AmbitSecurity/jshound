@@ -11,7 +11,7 @@ from jshound.fetch import is_javascript   # noqa: E402
 
 def test_an_spa_catch_all_is_not_javascript():
     """Asking excalidraw.com for a chunk that does not exist returns index.html with a 200. Saving
-    those as .js put 46 copies of the same document into a corpus of 102 — polluting the analysis,
+    those as .js put 46 copies of the same document into a corpus of 102, polluting the analysis,
     inflating the fetched count, and making a 404 look like a hit."""
     assert not is_javascript('<!doctype html><html lang="en"><head><title>x</title>')
     assert not is_javascript("\n  <html>")
@@ -48,7 +48,7 @@ DOC_SVELTEKIT = """<html><head></head><body>
 def test_a_document_whose_only_script_is_an_inline_bootstrap_still_yields_javascript(
         tmp_path, monkeypatch):
     """Measured on realworld.svelte.dev: 1 script and 2 records before, 22 and 46 after. A SvelteKit
-    document has no `<script src>` at all — the entry module is reached only through a dynamic
+    document has no `<script src>` at all, the entry module is reached only through a dynamic
     `import()` inside an inline script, so a fetcher reading attributes finds nothing to analyse."""
     import jshound.fetch as f
     served = {
@@ -84,3 +84,42 @@ def test_an_spa_catch_all_reached_through_a_bootstrap_import_is_still_rejected(t
         (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
     # app.B.js and the inline script survive; start.A.js answered 200 with a document and does not.
     assert f.collect("https://x.test/", str(tmp_path), with_chunks=False) == 2
+
+
+def test_a_lazy_chunks_own_static_imports_are_followed(tmp_path, monkeypatch):
+    """How Vite and Rollup split code: the entry lazily loads a route, and the route statically imports
+    a shared module. Imports used to be followed only from the scripts the page itself loaded, so the
+    shared module, two hops out, was never fetched and nothing said so. Every file is scanned for both
+    now, until a round adds nothing."""
+    import jshound.fetch as f
+    served = {
+        "https://x.test/": (200, '<html><script type="module" src="/assets/app.A1b2c3.js"></script></html>'),
+        "https://x.test/assets/app.A1b2c3.js": (200, 'import("./route.B4d5e6.js").then(m => m.go());'),
+        "https://x.test/assets/route.B4d5e6.js": (200, 'import { api } from "./shared.C7f8a9.js"; export const go = () => api();'),
+        "https://x.test/assets/shared.C7f8a9.js": (200, 'export const api = () => fetch("/v1/ping");'),
+    }
+    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, max_bytes=None: (
+        (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
+    monkeypatch.setattr(f, "host_is_private", lambda h: False)
+    rep = {}
+    f.collect("https://x.test/", str(tmp_path), with_chunks=True, report=rep)
+    got = {r["u"] for r in (json.loads(l) for l in open(os.path.join(str(tmp_path), "_origin.jsonl")))}
+    assert "https://x.test/assets/route.B4d5e6.js" in got
+    assert "https://x.test/assets/shared.C7f8a9.js" in got, "the route's own import was not followed"
+    assert rep.get("files_unscanned") == 0
+
+
+def test_a_file_that_cannot_be_scanned_is_counted(tmp_path, monkeypatch):
+    """Whatever an unscannable file declares is missing, and a count is the only way anyone hears."""
+    import jshound.fetch as f
+    served = {
+        "https://x.test/": (200, '<html><script src="/assets/app.A1b2c3.js"></script></html>'),
+        "https://x.test/assets/app.A1b2c3.js": (200, "var a = 1;"),
+    }
+    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, max_bytes=None: (
+        (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
+    monkeypatch.setattr(f, "host_is_private", lambda h: False)
+    monkeypatch.setattr(f, "_chunk_map_or_none", lambda path: None)
+    rep = {}
+    f.collect("https://x.test/", str(tmp_path), with_chunks=True, report=rep)
+    assert rep.get("files_unscanned") == 1

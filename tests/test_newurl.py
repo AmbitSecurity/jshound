@@ -28,7 +28,7 @@ def test_new_url_resolves_through_every_sink():
 
 
 def test_private_class_field_base_still_resolves():
-    """tldraw's is `fetch(new URL("/v1/event", this.#cfg.endpoint), …)` — the base is a private
+    """tldraw's is `fetch(new URL("/v1/event", this.#cfg.endpoint), …)`, the base is a private
     class field."""
     assert ("POST", "https://api.demo.test/v1/logs") in _endpoints()
 
@@ -45,8 +45,8 @@ def _qs(template_fragment):
 
 
 def test_searchparams_resolve_through_href():
-    """`fetch(u)` and `fetch(u.toString())` both resolved their parameters while `fetch(u.href)` —
-    the commonest spelling — reported none, which reads as 'takes no query parameters'."""
+    """`fetch(u)` and `fetch(u.toString())` both resolved their parameters while `fetch(u.href)`,
+    the commonest spelling, reported none, which reads as 'takes no query parameters'."""
     assert _qs("/v1/items") == ["cursor"]
 
 

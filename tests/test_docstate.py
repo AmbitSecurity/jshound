@@ -1,7 +1,7 @@
 """Server state serialised into an HTML attribute.
 
 `_LOOKS_URL` rejects any value beginning `{` before any other gate, so a JSON document in an attribute
-reaches nothing else here — and on the corpora measured, what it carries is the application's declared
+reaches nothing else here, and on the corpora measured, what it carries is the application's declared
 auth surface. Every noise case below is a real one from those corpora and must stay out.
 """
 import os
@@ -17,7 +17,7 @@ FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "doc-
 
 def _recs():
     r = doc_state_records(FIX)
-    assert r, "no records — the fixture or the collector is broken, and every assertion below would pass"
+    assert r, "no records, the fixture or the collector is broken, and every assertion below would pass"
     return r
 
 
@@ -83,7 +83,7 @@ def test_a_bare_word_in_an_allowlisted_attribute_is_not_a_document():
 
 
 def test_a_third_party_bundle_url_is_not_an_endpoint():
-    """A `bundle_url` leaf is a CDN script. `.js` is excluded on this path only — elsewhere a `.js`
+    """A `bundle_url` leaf is a CDN script. `.js` is excluded on this path only, elsewhere a `.js`
     URL is the thing this tool exists to fetch."""
     assert not any(t.endswith(".js") for t in _templates())
 

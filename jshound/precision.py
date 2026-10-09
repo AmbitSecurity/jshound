@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""precision.py — find endpoints the extractor INVENTED.
+"""precision.py: find endpoints the extractor INVENTED.
 
     jshound precision ./bodies records.json
 
 `residual` answers "what did we miss". This answers the opposite question, and nothing else in this
 tool could: residual is structurally blind to a fabricated endpoint, because an invention is not a
-literal that went unclaimed — it is a claim with no literal behind it. An extractor can score a
+literal that went unclaimed, it is a claim with no literal behind it. An extractor can score a
 perfect zero on residual while reporting URLs that do not exist.
 
-That is not hypothetical. Three fabrications were found this way, each from the same root — a record
+That is not hypothetical. Three fabrications were found this way, each from the same root, a record
 that looks like a result but is not one:
 
   * a tRPC chain built a path out of minified identifiers, so Grafana reported 13 endpoints at
@@ -35,11 +35,11 @@ WHAT IT CHECKS. Each reported path is read back against the corpus it came from:
 Two other tests were tried and removed rather than shipped, because a checker nobody trusts is worse
 than no checker. Requiring a path's route root to appear verbatim flagged 44% of tldraw's endpoints
 and caught real tRPC alongside fake. Flagging short path segments called `/api/app/user_id/init`
-questionable because `app` is three characters, and tldraw's `c/{id}/d` sync routes along with it —
+questionable because `app` is three characters, and tldraw's `c/{id}/d` sync routes along with it,
 while never having caught either fabrication that motivated this file.
 
-Every finding is a question, not a verdict. A path built legitimately at runtime — from a config
-value, a template with a resolved base — may not appear literally anywhere, and
+Every finding is a question, not a verdict. A path built legitimately at runtime, from a config
+value, a template with a resolved base, may not appear literally anywhere, and
 `/apis/plugins.grafana.app/...` looks like a member chain while being a real Kubernetes API group.
 Read them; do not count them.
 """
@@ -79,7 +79,7 @@ def _prefix(path):
 
     Checking individual fragments is too lenient: Grafana's fabricated
     /api/trpc/hK.endpoints.upsertRuleGroupForNamespace is built from identifiers that DO appear in
-    the bundle, so fragment-wise every part of it is "present". What is absent is the route root —
+    the bundle, so fragment-wise every part of it is "present". What is absent is the route root,
     the string "/api/trpc" occurs nowhere in Grafana, because Grafana does not serve tRPC. A client
     that talks to a prefix has to name that prefix.
     """
@@ -110,7 +110,7 @@ def check(bodies, records_path, verbose=False):
         if _DATE.match(t) and _DATE_TOKEN.search(t):
             findings["date-format"].append((t, r.get("sink")))
             continue
-        # A RAW SPACE CANNOT BE IN A URL — and `not-in-corpus` below cannot see this one, because the
+        # A RAW SPACE CANNOT BE IN A URL, and `not-in-corpus` below cannot see this one, because the
         # offending text IS in the corpus. Grafana defines `{type: "mixed", uid: "-- Mixed --"}` in one
         # object literal; the extractor's property index filled every `${x.uid}` slot with it and
         # produced 20 addresses like `/datasources/uid/-- Mixed --/health`. Every fragment of that path
@@ -120,7 +120,7 @@ def check(bodies, records_path, verbose=False):
         if re.search(r"\s", _SLOT.sub("", bare)):
             findings["unencoded-space"].append((t, r.get("sink")))
             continue
-        if bare and bare in text:          # written down verbatim — it is real
+        if bare and bare in text:          # written down verbatim, it is real
             continue
         # THE PREFIX RULE WAS TOO AGGRESSIVE TO SHIP. Requiring a path's route root to appear
         # verbatim flagged 44% of tldraw's endpoints and also flagged REAL tRPC, because a client

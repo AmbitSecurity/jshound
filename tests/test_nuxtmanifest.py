@@ -1,4 +1,4 @@
-"""Nuxt's served app manifest — the Nuxt counterpart to Next's `_buildManifest.js`.
+"""Nuxt's served app manifest, the Nuxt counterpart to Next's `_buildManifest.js`.
 
 Same principle, different shape: the route list is a DECLARATION by the build rather than an inference
 from code, so these tests are about not losing that certainty and not overstating it. The two failure
@@ -41,7 +41,7 @@ def wire(monkeypatch, pages, final=None):
     ("/base/_nuxt/entry.js", "https://x.test/base/_nuxt/"),                   # app.baseURL
 ])
 def test_the_assets_base_is_read_from_the_document(ref, expected):
-    """`buildAssetsDir` and `app.baseURL` both move this, and a CDN moves it to another host — the
+    """`buildAssetsDir` and `app.baseURL` both move this, and a CDN moves it to another host, the
     same trap that cost 293 routes when the Next manifest URL was built from the origin."""
     html = f'<script src="{ref}"></script>'
     assert nm.assets_base("https://x.test/page", html) == expected
@@ -83,7 +83,7 @@ def test_the_build_id_comes_from_latest_json(ok):
 
 
 def test_route_rules_are_reported_with_their_pattern_and_kind(ok):
-    """`routeRules` is how an app states that `/api/**` is proxied somewhere — the destination is
+    """`routeRules` is how an app states that `/api/**` is proxied somewhere, the destination is
     internal structure nothing in the client links to."""
     by_pattern = {r["pattern"]: r for r in ok["route_rules"]}
     assert by_pattern["/api"]["rule"] == {"proxy": "https://api.internal/**"}

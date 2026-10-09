@@ -30,7 +30,7 @@ def test_a_sentinel_from_another_module_is_not_substituted_into_a_path():
 
 
 def test_the_named_slot_survives_instead():
-    """Refusing the substitution has to leave the endpoint, not drop it — the honest answer is `{uid}`,
+    """Refusing the substitution has to leave the endpoint, not drop it, the honest answer is `{uid}`,
     which is also the correct template. On Grafana this is why endpoints went up, not down."""
     got = _templates()
     assert "/api/datasources/uid/{uid}/health" in got

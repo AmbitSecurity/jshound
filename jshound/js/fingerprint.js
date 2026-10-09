@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* fingerprint.js — identify the bundler from the AST, not from text that happens to contain a name.
+/* fingerprint.js, identify the bundler from the AST, not from text that happens to contain a name.
  *
  * A regex over a bundle cannot tell `__webpack_require__(42)` from the string "__webpack_require__"
  * sitting in an error message, a sourcemap comment, or a vendored copy of someone else's loader.
@@ -17,14 +17,14 @@
  *
  *   node fingerprint.js file.js …      -> {"signals": {...}, "parsed": n, "failed": n}
  */
-const { parse } = require("@babel/parser");
-const traverse = require("@babel/traverse").default;
+const { parse } = require("./babel.js").parser;
+const traverse = require("./babel.js").traverse.default;
 const fs = require("fs");
 
 // identifier name -> signal it implies
 // Object.create(null), NOT {}. A bundle is full of identifiers called `toString`, `constructor` and
 // `hasOwnProperty`, and on a normal object literal `IDENT["toString"]` returns the inherited method
-// — which is truthy, so every one of them was reported as a detected bundler. The first run of this
+//, which is truthy, so every one of them was reported as a detected bundler. The first run of this
 // file produced nine signals named things like "function valueOf() { [native code] }".
 const IDENT = Object.assign(Object.create(null), {
   __webpack_require__: "webpack", __webpack_modules__: "webpack", webpackJsonp: "webpack",
@@ -41,7 +41,7 @@ const IDENT = Object.assign(Object.create(null), {
   parcelRequire: "parcel",
   __toESM: "esbuild", __commonJS: "esbuild",
   // Metro (React Native, and RN Web). Its module registry is `__d(factory, id, deps)` and
-  // `__r(id)` — one and two characters, far too generic to match on. These two are not:
+  // `__r(id)`, one and two characters, far too generic to match on. These two are not:
   // every Metro bundle opens by assigning them.
   __METRO_GLOBAL_PREFIX__: "metro", __BUNDLE_START_TIME__: "metro",
   __NEXT_DATA__: "next", __next_f: "next",
@@ -49,21 +49,21 @@ const IDENT = Object.assign(Object.create(null), {
   __remixContext: "remix", __remixManifest: "remix", __remixRouteModules: "remix",
   __sveltekit: "sveltekit",
   _$HY: "solid",
-  // Angular's compiler output. A client-rendered Angular app puts NOTHING in the served document —
-  // `ng-version` is written during hydration — so the document rule alone never names it. These are
+  // Angular's compiler output. A client-rendered Angular app puts NOTHING in the served document,
+  // `ng-version` is written during hydration, so the document rule alone never names it. These are
   // static class properties (`X.ɵfac = …`), i.e. real member names rather than text: material.angular.dev
   // carries ɵfac 219 times, ɵprov 102, ɵcmp 26.
   "\u0275fac": "angular", "\u0275prov": "angular", "\u0275cmp": "angular",
   "\u0275mod": "angular", "\u0275inj": "angular",
-  // Vue has the same problem as Angular — `data-v-app` is written onto the mount element during
-  // hydration, so a client-rendered Vue app puts nothing in the served document — but NOT the same
+  // Vue has the same problem as Angular, `data-v-app` is written onto the mount element during
+  // hydration, so a client-rendered Vue app puts nothing in the served document, but NOT the same
   // answer. These two are definitive, being the devtools and DOM-element wire contracts, and they
   // live in the runtime chunk alone: measured on antdv.com, 1 file of 137. That is below the 20%
   // share a JS-only signal needs before it is crowned, and rightly so, because one file cannot tell
   // "is Vue" from "bundles Vue". So Vue is LISTED in frameworks_in_js_only and not named as the
   // framework, which is the honest answer rather than a missing one.
   //
-  // `__scopeId` looked like the signal that would carry it — Vue's SFC compiler emits it for every
+  // `__scopeId` looked like the signal that would carry it, Vue's SFC compiler emits it for every
   // component with scoped styles, and the text appears in 37 of those 137 files. It is not a signal:
   // the compiled form is `_export_sfc(x, [["__scopeId", "data-v-e4e38630"]])`, so the name is a
   // STRING LITERAL, not an identifier or a property. Matching it would contradict the first rule of
@@ -83,7 +83,7 @@ const IDENT_PREFIX = [
 const files = process.argv.slice(2);
 const signals = Object.create(null);
 // Per-file results too, so a caller can ask WHICH file carried a signal without paying for one
-// process per file — the first version of that cost a node spawn per script and took minutes on a
+// process per file, the first version of that cost a node spawn per script and took minutes on a
 // 200-file corpus.
 const perFile = Object.create(null);
 let parsed = 0, failed = 0;
@@ -109,19 +109,19 @@ for (const f of files) {
   try {
     traverse(ast, {
       Identifier(p) {
-        // The name must be used AS a name — not be the contents of a string, and not be a property
+        // The name must be used AS a name, not be the contents of a string, and not be a property
         // key like `{__NEXT_DATA__: 1}` which says nothing about what is running.
         if (p.parent && p.parent.type === "MemberExpression" && p.parent.property === p.node &&
             !p.parent.computed) {
           const s = classify(p.node.name);
-          if (s) seen.add(s);                  // window.__NUXT__ — a global read, which is real
+          if (s) seen.add(s);                  // window.__NUXT__, a global read, which is real
           return;
         }
         if (p.parent && p.parent.type === "ObjectProperty" && p.parent.key === p.node) return;
         const s = classify(p.node.name);
         if (s) seen.add(s);
       },
-      // import("./chunk-abc.js") — a module reference, not a string that resembles one
+      // import("./chunk-abc.js"), a module reference, not a string that resembles one
       CallExpression(p) {
         if (p.node.callee && p.node.callee.type === "Import") seen.add("esm-dynamic-import");
       },

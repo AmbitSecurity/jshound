@@ -1,12 +1,12 @@
-"""har.py — emit the extracted contracts as HAR 1.2.
+"""har.py: emit the extracted contracts as HAR 1.2.
 
 HAR is the lowest common denominator that still carries a REQUEST rather than a URL: Burp's HAR
 Importer drops entries straight into the Site Map, Caido imports it natively, and so do Fiddler,
 Postman and Chrome DevTools. OpenAPI is the better format when the consumer understands schemas;
 HAR is the one that works everywhere.
 
-A HAR normally records traffic that happened. Nothing here happened — these are requests the client
-is BUILT to make, recovered from its code — so every entry carries `_jshound` provenance and a
+A HAR normally records traffic that happened. Nothing here happened, these are requests the client
+is BUILT to make, recovered from its code, so every entry carries `_jshound` provenance and a
 response with status 0. Writing a plausible 200 would make the file read like observed traffic, and
 nothing downstream could then tell the difference between evidence and inference.
 """
@@ -37,7 +37,7 @@ def _url(rec):
 
 
 def _headers(h):
-    """req_headers is a dict when the values are known and a LIST OF NAMES when only the names are —
+    """req_headers is a dict when the values are known and a LIST OF NAMES when only the names are,
     rtk-query reports the second shape for `headers:{…}` whose values it could not resolve. Assuming
     the dict crashed the whole export on Grafana with AttributeError, so nothing was written at all.
     A name with no value is still the useful half: it is what a tester has to send."""
