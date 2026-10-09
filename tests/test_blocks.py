@@ -17,6 +17,13 @@ CF = ('<html><head><title>Just a moment...</title></head><body>'
 AKAMAI = ('<HTML><HEAD><TITLE>Access Denied</TITLE></HEAD><BODY>You don\'t have permission. '
           'Reference&#32;&#35;18&#46;8b24c317 https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18'
           '</BODY></HTML>').replace("&#46;", ".").replace("&#58;&#47;&#47;", "://").replace("&#47;", "/")
+# Trimmed from what tesla.com served on 2026-10-08, with a 200, to a client that got past the 403s.
+AKAMAI_CHALLENGE = ('<!DOCTYPE html><html><body><script type="text/javascript" src="/sKGwF/7Iby/SykW/'
+                    'akXG/YXK/S0LaX4La9cOi/PWEJAg/ez8EBQh/EBBsV?v=ffe9&amp;t=732532568"></script>'
+                    '<div id="sec-if-cpt-container" role="main" style="display: none">'
+                    '<div class="behavioral-content"><div id="sec-bc-text-container"></div></div>'
+                    '<p class ="scf-akamai-protected-by">Powered and protected by</p></div>'
+                    '</body></html>')
 REAL = "<html><head><title>App</title></head><body>" + "<p>x</p>" * 3000 + \
        '<script src="/assets/app.js"></script></body></html>'
 
@@ -27,6 +34,12 @@ def test_a_cloudflare_challenge_is_a_refusal():
 
 def test_an_akamai_denial_is_a_refusal():
     assert F.blocked_by(403, AKAMAI) == "Akamai"
+
+
+def test_an_akamai_challenge_is_a_refusal_even_with_a_200():
+    """It answers 200, so the status says nothing. Reading its sensor scripts as the application
+    reported tesla.com as an app with no requests instead of an app we were not shown."""
+    assert F.blocked_by(200, AKAMAI_CHALLENGE) == "Akamai challenge"
 
 
 def test_a_real_page_is_not_a_refusal():

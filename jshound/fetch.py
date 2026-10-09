@@ -115,6 +115,10 @@ def set_proxy(url=None, ca=None):
 _BLOCK = (
     ("Cloudflare challenge", ("_cf_chl_opt", "challenge-platform", "<title>Just a moment")),
     ("Cloudflare block", ("cf-error-details", "Attention Required! | Cloudflare")),
+    # The challenge answers 200, which is why it needs its own markers: tesla.com served this 2.5 KB
+    # page to a client that got past the 403s, and the two obfuscated sensor scripts on it were read
+    # as the application and reported as "no requests" rather than as the refusal they are.
+    ("Akamai challenge", ("sec-if-cpt-container",)),
     ("Akamai", ("errors.edgesuite.net", "Reference&#32;&#35;")),
     ("DataDome", ("geo.captcha-delivery.com", "datadome")),
     ("PerimeterX", ("px-captcha", "_pxAppId")),
