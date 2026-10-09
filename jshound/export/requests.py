@@ -21,9 +21,24 @@ somewhere else entirely.
 """
 
 
+def _graphql_request(op, op_type, variables, r, uri=None, document=None):
+    return {"_kind": "endpoint", "kind": "graphql", "method": "POST",
+            "template": uri or "{graphql}", "op": op, "op_type": op_type,
+            "body_shape": {"operationName": op, "variables": variables},
+            "content_type": "application/json", "document": document,
+            "_page": r.get("_page"), "_host": r.get("_host"), "_file": r.get("_file")}
+
+
 def requests_only(records):
-    """-> endpoint-shaped records, one per request, in the order the extractor found them."""
+    """-> endpoint-shaped records, one per request, in the order the extractor found them.
+
+    GraphQL operations come from two places: `relay` records, which the extractor ties to a call site
+    and sometimes to an endpoint, and `gql-operation` records from the document scanner, which reads
+    every operation the client ships. On railway.com the first found 1 and the second 966, so both are
+    read, and an operation both found is listed once, the extractor's version first.
+    """
     out = []
+    have = {}
     for r in records:
         kind = r.get("_kind") or "endpoint"
         if kind == "endpoint":
@@ -35,14 +50,23 @@ def requests_only(records):
         elif kind == "relay" and r.get("op"):
             variables = {v.get("name"): v.get("type") for v in (r.get("variables") or [])
                          if isinstance(v, dict) and v.get("name")}
-            out.append({
-                "_kind": "endpoint", "kind": "graphql", "method": "POST",
-                "template": r.get("uri") or r.get("template") or "{graphql}",
-                "op": r["op"], "op_type": r.get("opkind"),
-                "body_shape": {"operationName": r["op"], "variables": variables},
-                "content_type": "application/json",
-                "_page": r.get("_page"), "_host": r.get("_host"), "_file": r.get("_file"),
-            })
+            req = _graphql_request(r["op"], r.get("opkind"), variables, r,
+                                   uri=r.get("uri") or r.get("template"))
+            have[(r["op"], r.get("opkind"))] = req
+            out.append(req)
+        elif kind == "gql-operation" and r.get("operation"):
+            key = (r["operation"], r.get("operation_type"))
+            if key in have:
+                # Already listed by the extractor, which knows the call site; the scanner knows the
+                # text, and the text is what makes it replayable, so it is added, not lost.
+                if r.get("document") and not have[key].get("document"):
+                    have[key]["document"] = r["document"]
+                continue
+            variables = {v.get("name"): v.get("type") for v in (r.get("variables") or [])
+                         if isinstance(v, dict) and v.get("name")}
+            have[key] = _graphql_request(r["operation"], r.get("operation_type"), variables, r,
+                                         document=r.get("document"))
+            out.append(have[key])
     return out
 
 
@@ -110,6 +134,8 @@ def to_lines(records):
             line["headers"] = r["req_headers"]
         if r.get("kind") == "graphql":
             line["graphql"] = {"operation": r.get("op"), "type": r.get("op_type")}
+            if r.get("document"):
+                line["graphql"]["query"] = r["document"]      # what makes it replayable
         if r.get("_page"):
             line["page"] = r["_page"]
         if r.get("_file"):

@@ -118,7 +118,9 @@ def extract(source, origin=None):
         document = _ESCAPED_WS.sub("\n", source[m.start():end])
         rec = {"_kind": "gql-operation", "operation_type": kind, "operation": name,
                "variables": variables, "selection": selection,
-               "document": document if len(document) <= 8000 else None,
+               # Only a generated blob is this long; a real operation's text is what makes it
+               # replayable, and it used to be dropped past 8,000 characters.
+               "document": document if len(document) <= 1_000_000 else None,
                "document_chars": end - m.start()}
         if origin:
             rec["_file"] = origin

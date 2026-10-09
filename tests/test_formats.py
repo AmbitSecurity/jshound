@@ -158,3 +158,28 @@ def test_columns_stay_aligned_when_a_row_has_no_body():
         {"method": "POST", "template": "/b", "body_keys": ["x"], "content_type": "text/plain"},
     ]).splitlines()
     assert rows[0].index("application/json") == rows[1].index("text/plain")
+
+
+def test_graphql_operations_the_scanner_finds_are_requests():
+    """railway.com ships 966 operations; the extractor tied 1 to a call site, and 1 was all the
+    output had. The scanner's operations are requests too, listed once, with their query text."""
+    from jshound.export.requests import requests_only, to_lines
+    from jshound.export import openapi
+    recs = [
+        {"_kind": "relay", "op": "Me", "opkind": "query", "variables": []},
+        {"_kind": "gql-operation", "operation": "Me", "operation_type": "query", "variables": [],
+         "document": "query Me { me { id } }"},
+        {"_kind": "gql-operation", "operation": "DeleteProject", "operation_type": "mutation",
+         "variables": [{"name": "id", "type": "String!"}],
+         "document": "mutation DeleteProject($id: String!) { projectDelete(id: $id) }"},
+    ]
+    reqs = requests_only(recs)
+    assert [r["op"] for r in reqs] == ["Me", "DeleteProject"]
+    lines = {l["graphql"]["operation"]: l for l in to_lines(recs)}
+    assert lines["Me"]["graphql"]["query"] == "query Me { me { id } }", "the duplicate kept the scanner's text"
+    assert lines["DeleteProject"]["body"] == {"operationName": "DeleteProject", "variables": {"id": "String!"}}
+    doc = openapi.build(reqs)
+    (op,) = [o for m in doc["paths"].values() for o in m.values()]
+    examples = op["requestBody"]["content"]["application/json"]["examples"]
+    assert set(examples) == {"query.Me", "mutation.DeleteProject"}
+    assert examples["mutation.DeleteProject"]["value"]["variables"] == {"id": "<String!>"}

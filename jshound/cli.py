@@ -35,6 +35,37 @@ def _hosts_fetched(corpus):
     return c
 
 
+def _graphql_operations(corpus):
+    """Every GraphQL operation the client ships, with the page each file came from.
+
+    The extractor ties an operation to a call site; the document scanner reads every operation in
+    the bundle. railway.com: 1 against 966. A scanner failure costs its operations and is said, it
+    does not cost the run.
+    """
+    from . import graphql_operations
+    try:
+        ops = graphql_operations(corpus)
+    except Exception as e:                                 # noqa: BLE001
+        print(f"  ! GraphQL scan failed: {str(e)[:160]}", file=sys.stderr)
+        return []
+    ops = ops if isinstance(ops, list) else (ops or {}).get("operations") or []
+    page = {}
+    try:
+        for ln in open(os.path.join(corpus, "_origin.jsonl")):
+            row = json.loads(ln)
+            page.setdefault(row.get("f"), row)
+    except (OSError, ValueError):
+        pass
+    from urllib.parse import urlsplit
+    for op in ops:
+        row = page.get(os.path.basename(op.get("_file") or "")) or {}
+        if row.get("d"):
+            op.setdefault("_page", row["d"])
+        if row.get("u"):
+            op.setdefault("_host", urlsplit(row["u"]).hostname)
+    return ops
+
+
 def _safe_name(name):
     return "".join(ch if ch.isalnum() or ch in ".-_" else "_" for ch in name)[:120] or "target"
 
@@ -201,6 +232,7 @@ def cmd_map(a):
             t_analyse = time.time()
             with quiet:
                 records, paths = run(corpus, a.host, None)
+                records = records + _graphql_operations(corpus)
             rep["analyse_seconds"] = round(time.time() - t_analyse, 1)
             if a.verbose:
                 print(f"{pad}time: fetch {rep.get('fetch_seconds', 0)}s, analysis "

@@ -111,6 +111,20 @@ def _unknown_base(where):
              "variables": {name: {"default": "https://base.invalid", "description": note}}}]
 
 
+def _graphql_example(op, rec):
+    """Add one GraphQL operation to `op` as a request body example."""
+    name = rec["op"]
+    kind = rec.get("op_type") or "operation"
+    variables = (rec.get("body_shape") or {}).get("variables") or {}
+    value = {"operationName": name, "variables": {k: f"<{t}>" for k, t in variables.items()}}
+    if rec.get("document"):
+        value["query"] = rec["document"]
+    body = op.setdefault("requestBody", {"required": True, "content": {}})
+    media = body.setdefault("content", {}).setdefault(_JSON, {})
+    key = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{kind}.{name}")
+    media.setdefault("examples", {}).setdefault(key, {"summary": f"{kind} {name}", "value": value})
+
+
 def _server(url):
     """A document server. A slot in the host (`https://{projectRef}.supabase.co`) is declared as a
     variable whose default is empty, which leaves the hostname invalid until it is filled in. Under
@@ -237,6 +251,16 @@ def build(records, title="Recovered API", version="0.0.0"):
         prov["path_fully_resolved"] = resolved
         op["x-jshound"] = prov
 
+        # GRAPHQL OPERATIONS SHARE ONE PATH AND ONE METHOD, and OpenAPI holds one operation per pair,
+        # so 966 of railway.com's operations collapsed into its first. Each one is a named example on
+        # that operation's request body instead, with its query text, which is how OpenAPI tools
+        # import a set of bodies for one endpoint.
+        if rec.get("kind") == "graphql" and rec.get("op"):
+            if method not in ops[path]:
+                ops[path][method] = op
+            _graphql_example(ops[path][method], rec)
+            continue
+
         # Two call sites for one operation is normal (a helper called from two pages). Keep the first
         # and record that it happened, rather than silently dropping provenance.
         if method in ops[path]:
@@ -244,6 +268,12 @@ def build(records, title="Recovered API", version="0.0.0"):
                 prov.get("page") or prov.get("file"))
         else:
             ops[path][method] = op
+
+    for methods in ops.values():
+        for op in methods.values():
+            ex = ((op.get("requestBody") or {}).get("content") or {}).get(_JSON, {}).get("examples")
+            if ex:
+                op["summary"] = f"GraphQL: {len(ex)} operation(s), one example each"
 
     doc = {
         "openapi": "3.1.0",
