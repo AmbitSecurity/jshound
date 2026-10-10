@@ -5,11 +5,12 @@ content type and headers.
 
 ![jshound reading supabase.com/dashboard: 2,282 files in, 387 requests out, each with its body](docs/demo.svg)
 
-A single page app ships its whole API client to the browser. jshound downloads that JavaScript,
-follows every lazily loaded chunk, parses all of it, and writes down each request the code makes.
+A single page app's JavaScript bundle contains every API request the app can make. Given a URL,
+jshound finds the app's bundle, crawls all of it, lazily loaded chunks included, and extracts those
+requests.
 
-It only requests the page and the JavaScript files a browser would download. Nothing is sent to the
-app's API.
+It is passive. The only requests it makes are unauthenticated GETs for public static files, the page
+and its JavaScript. The analysis runs locally, and nothing is sent to the app's API.
 
 ## Install
 
