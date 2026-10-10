@@ -7,7 +7,7 @@ name = "jshound"
 version = "0.1.0"
 description = "Find every API request a web app makes, from the JavaScript it ships: method, URL, body, headers and GraphQL operations."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE"]
 keywords = ["security", "recon", "reconnaissance", "pentest", "bug-bounty", "javascript", "webpack", "vite",

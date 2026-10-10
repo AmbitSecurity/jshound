@@ -21,7 +21,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Needs Python 3.9 or newer and Node 18 or newer.
+Needs Python 3.10 or newer and Node 18 or newer.
 
 ## Usage
 
