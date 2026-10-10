@@ -389,6 +389,15 @@ class _Scripts(HTMLParser):  # noqa: D101, docstring below
 
     def handle_starttag(self, tag, attrs):
         d = dict(attrs)
+        if tag == "astro-island":
+            # An Astro island's code is not a script tag. Astro's runtime imports these attributes
+            # when the island hydrates, and on connectrpc.com/demo/ the island is the whole app: its
+            # Connect client was never read because nothing here looked at them.
+            for attr in ("component-url", "renderer-url", "before-hydration-url"):
+                if d.get(attr):
+                    self.srcs.append(d[attr])
+                    self.origin.setdefault(d[attr], "astro-island")
+            return
         if tag == "link":
             rel = (d.get("rel") or "").lower()
             href = d.get("href") or ""

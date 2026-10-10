@@ -174,3 +174,14 @@ def test_a_redirected_page_is_read_where_it_landed(tmp_path, monkeypatch):
     assert "https://example.com/_astro/page.js" in {r["u"] for r in rows}
     assert {r["d"] for r in rows} == {landed}             # and its requests resolve against it
 
+
+def test_an_astro_islands_code_is_read():
+    """An island's component is not a script tag: Astro's runtime imports `component-url` and
+    `renderer-url` when it hydrates. On connectrpc.com/demo/ the island is the whole app, and its
+    Connect client was never read."""
+    from jshound.fetch import _Scripts
+    p = _Scripts()
+    p.feed('<astro-island uid="x" component-url="/_astro/index.Dp.js" component-export="ElizaDemo" '
+           'renderer-url="/_astro/client.Dm.js" client="load"></astro-island>')
+    assert p.srcs == ["/_astro/index.Dp.js", "/_astro/client.Dm.js"]
+    assert set(p.origin.values()) == {"astro-island"}
