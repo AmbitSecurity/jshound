@@ -194,6 +194,87 @@ function indexExports(ast, file) {
   });
 }
 
+// Pass one, bundled half: the URL-shaped strings each webpack or Turbopack module exports, so another
+// module's `d.API_URL` reads the value module `d` exports rather than a guess by property name.
+function indexBundledExports(ast) {
+  for (const ex of _bundledExports(ast)) {
+    const k = "mod:" + ex.id + "\u0000" + ex.name;
+    if (_EXPORTS.has(k) || !ex.value) continue;
+    try {
+      const r = strFromNode(ex.value, ex.path.scope, 0, null);
+      const v = r && !r.dyn && typeof r.s === "string" ? r.s : null;
+      if (v && v.length <= 2000 && (/^(?:https?:)?\/\/|^\//.test(v) || LOOKS_PATH(v))) _EXPORTS.set(k, { str: v });
+    } catch {}
+  }
+}
+
+// Pass two of the index: which exports are API clients, or getters that hand one back, with the base
+// each one is built with. Needs pass one loaded, because the base is routinely another module's export.
+function _describeExport(valueNode, scope, wrappersByFn) {
+  const out = {};
+  if (!valueNode) return out;
+  let fn = null, fnScope = null;
+  if (valueNode.type === "Identifier") {
+    const b = scope && scope.getBinding && scope.getBinding(valueNode.name);
+    if (b && b.path && b.path.node) {
+      if (b.path.node.type === "FunctionDeclaration") { fn = b.path.node; fnScope = b.path.scope; }
+      else if (b.path.node.type === "VariableDeclarator" && b.path.node.init && /Function/.test(b.path.node.init.type)) {
+        fn = b.path.node.init; fnScope = b.path.get("init").scope;
+      }
+    }
+  }
+  if (fn) {
+    const r = _returned(fn);
+    const c = r && fnScope ? clientOf(r, fnScope, 1) : null;
+    if (c) out.returns = c;
+    const w = wrappersByFn && wrappersByFn.get(fn);
+    if (w && !w.isMethod) out.wrapper = { tmpl: w.tmpl, paramNames: w.paramNames, method: w.method || null,
+                                          body_idx: w.body_idx, body_keys: w.body_keys || null, viaFetch: !!w.viaFetch };
+    if (!out.wrapper && r && fnScope && (r.type === "CallExpression" || r.type === "AwaitExpression")) {
+      const cc = callClient((r.argument || r).callee, fnScope);
+      if (cc) out.client = cc;
+    }
+  } else {
+    const c = clientOf(valueNode, scope, 0);
+    if (c) out.client = c;
+  }
+  return out;
+}
+function indexClientExports(ast, file) {
+  const touched = [];
+  const WR = collectWrappers(ast);
+  const byFn = new Map();
+  for (const ws of Object.values(WR)) for (const w of ws) byFn.set(w.fnNode, w);
+  const put = (k, desc) => {
+    if (!desc.client && !desc.returns && !desc.wrapper) return;
+    const v = Object.assign({}, _EXPORTS.get(k) || {}, desc);
+    _EXPORTS.set(k, v);
+    touched.push([k, v]);
+  };
+  traverse(ast, {
+    ExportNamedDeclaration(p) {
+      if (!file) return;
+      try {
+        const d = p.node.declaration;
+        if (d && d.type === "VariableDeclaration") {
+          for (const v of d.declarations || []) if (v.id && v.id.type === "Identifier")
+            put(file + "\u0000" + v.id.name, _describeExport(v.id, p.scope, byFn));
+        } else if (d && d.type === "FunctionDeclaration" && d.id) {
+          put(file + "\u0000" + d.id.name, _describeExport(d.id, p.scope, byFn));
+        }
+        for (const sp of p.node.specifiers || []) {
+          if (sp.type !== "ExportSpecifier" || !sp.local || !sp.exported) continue;
+          put(file + "\u0000" + (sp.exported.name ?? sp.exported.value), _describeExport(sp.local, p.scope, byFn));
+        }
+      } catch {}
+    },
+  });
+  for (const ex of _bundledExports(ast)) {
+    try { put("mod:" + ex.id + "\u0000" + ex.name, _describeExport(ex.value, ex.path.scope, byFn)); } catch {}
+  }
+  return touched;
+}
+
 // What an imported identifier resolves to, if anything.
 function importedValue(name, scope) {
   const b = scope && scope.getBinding && scope.getBinding(name);
@@ -206,6 +287,278 @@ function importedValue(name, scope) {
     ? (b.path.node.imported.name ?? b.path.node.imported.value)
     : name;
   return _EXPORTS.get(file + "\u0000" + imported) || null;
+}
+
+// ── BUNDLED MODULES: WHO EXPORTS WHAT ───────────────────────────────────────────────────────────────
+// A bundle links its modules by id, and writes the links down:
+//     webpack, rspack   {5:(e,t,n)=>{ n.d(t,{Z:()=>o}); var r=n(9) }}         exports by n.d, imports by n(id)
+//     Turbopack         [202, e=>{ var a=e.i(303); e.s(["post",0,v],202) }]     exports by e.s, imports by e.i
+// Minification renames locals, never export names: those are the contract between modules. So
+// `(0,A.post)` with `A=e.i(202)` names exactly one export of exactly one module, and its value is read
+// from that module. Keyed "mod:<id>\0<name>" in _EXPORTS, beside the file-keyed ES module exports.
+function _requiredModule(init, scope) {
+  if (!init || init.type !== "CallExpression" || (init.arguments || []).length !== 1) return null;
+  const a = init.arguments[0];
+  const id = a.type === "NumericLiteral" ? String(a.value)
+           : a.type === "StringLiteral" && a.value.length <= 300 ? a.value : null;
+  if (id == null) return null;
+  const c = init.callee;
+  if (c.type === "MemberExpression" && !c.computed && c.object.type === "Identifier" && c.property &&
+      (c.property.name === "i" || c.property.name === "r")) return id;           // Turbopack
+  if (c.type === "Identifier") {
+    if (c.name === "__webpack_require__") return id;
+    // webpack's require is the module factory's third parameter
+    const b = scope && scope.getBinding && scope.getBinding(c.name);
+    const fn = b && b.kind === "param" && b.path.parentPath && b.path.parentPath.node;
+    if (fn && fn.params && fn.params.indexOf(b.path.node) === 2) return id;
+  }
+  return null;
+}
+// The module a namespace identifier stands for: `A` in `A.post`, given `var A = e.i(202)`.
+function _moduleOf(node, scope) {
+  if (!node || node.type !== "Identifier") return null;
+  const b = scope && scope.getBinding && scope.getBinding(node.name);
+  const d = b && b.path && b.path.node;
+  if (!d || d.type !== "VariableDeclarator" || !d.id || d.id.type !== "Identifier") return null;
+  return _requiredModule(d.init, b.scope);
+}
+function _modExport(id, name) { return _EXPORTS.get("mod:" + id + "\u0000" + name) || null; }
+// The id of the bundled module a node sits in: the key of its factory in the module map (webpack), or the
+// id written before the factory in the chunk's array (Turbopack).
+function _factoryId(path) {
+  for (let p = path.getFunctionParent && path.getFunctionParent(); p; p = p.getFunctionParent && p.getFunctionParent()) {
+    const par = p.parentPath && p.parentPath.node;
+    if (p.node.type === "ObjectMethod" && p.node.key) {
+      const k = p.node.key.value ?? p.node.key.name;
+      if (k != null && /^[\w./@~+-]{1,300}$/.test(String(k))) return String(k);
+    }
+    if (par && par.type === "ObjectProperty" && par.value === p.node && par.key) {
+      const k = par.key.value ?? par.key.name;
+      if (k != null && (par.key.type === "NumericLiteral" || par.key.type === "StringLiteral" || /^\d+$/.test(String(k))))
+        return String(k);
+    }
+    if (par && par.type === "ArrayExpression") {
+      const i = par.elements.indexOf(p.node);
+      const prev = i > 0 ? par.elements[i - 1] : null;
+      if (prev && (prev.type === "NumericLiteral" || prev.type === "StringLiteral")) return String(prev.value);
+    }
+  }
+  return null;
+}
+// [{id, name, value, path}] for every export a bundler's runtime declares in this file.
+function _bundledExports(ast) {
+  const out = [];
+  traverse(ast, { CallExpression(p) {
+    try {
+      const n = p.node, c = n.callee;
+      if (c.type !== "MemberExpression" || c.computed || !c.property) return;
+      // Turbopack: e.s(["name", 0, value, ...], id)
+      if (c.property.name === "s" && n.arguments[0] && n.arguments[0].type === "ArrayExpression") {
+        const a1 = n.arguments[1];
+        const id = a1 && (a1.type === "NumericLiteral" || a1.type === "StringLiteral") ? String(a1.value) : _factoryId(p);
+        if (id == null) return;
+        const el = n.arguments[0].elements;
+        for (let i = 0; i < el.length; i++) {
+          if (!el[i] || el[i].type !== "StringLiteral") continue;
+          if (el[i + 1] && el[i + 1].type === "NumericLiteral" && el[i + 2]) {
+            out.push({ id, name: el[i].value, value: el[i + 2], path: p }); i += 2;
+          } else if (el[i + 1] && /Function/.test(el[i + 1].type)) {
+            out.push({ id, name: el[i].value, value: _returned(el[i + 1]), path: p }); i += 1;
+          }
+        }
+        return;
+      }
+      // webpack: n.d(t, {name: () => local})
+      if (c.property.name === "d" && n.arguments.length === 2 && n.arguments[1].type === "ObjectExpression") {
+        const id = _factoryId(p);
+        if (id == null) return;
+        for (const pr of n.arguments[1].properties) {
+          if (!pr.key) continue;
+          const name = pr.key.name ?? pr.key.value;
+          const v = pr.type === "ObjectMethod" ? _returned(pr) : (pr.value && /Function/.test(pr.value.type) ? _returned(pr.value) : null);
+          if (name != null && v) out.push({ id, name: String(name), value: v, path: p });
+        }
+      }
+    } catch {}
+  } });
+  return out;
+}
+// What a function returns, when that is one expression: `() => x`, `function(){return x}`.
+function _returned(fn) {
+  if (!fn) return null;
+  if (fn.body && fn.body.type !== "BlockStatement") return fn.body;
+  const rs = ((fn.body && fn.body.body) || []).filter((st) => st.type === "ReturnStatement" && st.argument);
+  return rs.length === 1 ? rs[0].argument : null;
+}
+
+// ── CLIENT BASES, BY BINDING ────────────────────────────────────────────────────────────────────────
+// A request made through an API client goes to the client's base plus the call's path, so the base is a
+// value like any other and is found the way any other value is: follow the receiver through its bindings,
+// through destructuring (`let {POST: v} = h`), through a getter (`cs()` returning the instance), through
+// imports and module exports, to the call that built the client, and read the base out of its options.
+//
+// This replaced a lookup of the receiver's NAME among clients built in the same file, which only trusted
+// an absolute origin because a minified name collides across modules. A binding does not collide, so a
+// relative base (`/api/v2`) is as certain as an absolute one. Measured before: 6,170 of the benchmark's
+// 13,003 requests had no host, among them every one of supabase's, whose base is three bindings and two
+// module exports away from the call.
+const _BASE_KEY = /^(?:api|root|service|server)?_?base_?(?:url|uri|path|address|host)?$|^prefix_?url$|^(?:api|root|service|server)?_?(?:base)?_?(?:url|uri|host|hostname|origin|endpoint|server|base)$/i;
+const _EXPLICIT_BASE_KEY = /^(?:api|root|service|server)?_?base_?(?:url|uri|path|address|host)?$|^prefix_?url$/i;
+// The base a client-building call is configured with, read from its options object: {base, dyn} or null.
+function _baseOfCreate(call, scope) {
+  if (!call || (call.type !== "CallExpression" && call.type !== "NewExpression")) return null;
+  const objs = [];
+  const walk = (n, d) => {
+    if (!n || d > 3 || objs.length > 4) return;
+    if (n.type === "ObjectExpression") { objs.push(n); return; }
+    if (n.type === "CallExpression" || n.type === "NewExpression") for (const a of n.arguments || []) walk(a, d + 1);
+  };
+  walk(call, 0);
+  const hits = [];
+  for (const o of objs) for (const pr of o.properties) {
+    if (pr.type !== "ObjectProperty" || !pr.key || !pr.value) continue;
+    const key = String(pr.key.name ?? pr.key.value ?? "");
+    // RTK Query: `createApi({baseQuery: fetchBaseQuery({baseUrl})})`, the base is the base query's
+    if (key === "baseQuery") {
+      const q = clientOf(pr.value, scope, 1);
+      if (q) hits.push({ key: "baseUrl", base: q.base, dyn: q.dyn });
+      continue;
+    }
+    if (!_BASE_KEY.test(key)) continue;
+    // A key that only MIGHT be a base (`url`, `uri`, `endpoint`, `host`) counts with an absolute origin
+    // and nothing else: axios's `{url: "/users"}` is the default request, and reading it as a base made
+    // `/users/orders`. A key that says base (`baseURL`, `basePath`, `prefixUrl`) is one whatever its value.
+    const explicit = _EXPLICIT_BASE_KEY.test(key);
+    const r = strFromNode(pr.value, scope, 0, null);
+    const v = r && typeof r.s === "string" ? r.s : "";
+    if (!r.dyn && /^(?:https?:)?\/\/[A-Za-z0-9.\-]+(?::\d{1,5})?(?:\/[^\s]*)?$/.test(v)) { hits.push({ key, base: v, dyn: false }); continue; }
+    if (!explicit) continue;
+    if (!r.dyn && /^\/[^\s]*$/.test(v)) { hits.push({ key, base: v, dyn: false }); continue; }
+    // Unresolved: the expression as the code writes it, not a name picked for it.
+    if (r.dyn) {
+      const whole = /^\{[^{}]*\}$/.test(v) || v === "";
+      const src = generateSrc(pr.value);
+      if (whole && src && src.length <= 160) hits.push({ key, base: "{" + src + "}", dyn: true });
+      else if (/^(?:https?:)?\/\/|^\/|^\{[^{}]+\}\//.test(v)) hits.push({ key, base: v, dyn: true });
+    }
+  }
+  if (!hits.length) return null;
+  if (hits.length === 1) return { base: hits[0].base, dyn: hits[0].dyn };
+  const explicit = hits.filter((h) => _EXPLICIT_BASE_KEY.test(h.key));
+  return explicit.length === 1 ? { base: explicit[0].base, dyn: explicit[0].dyn } : null;
+}
+// The client a value is, followed through bindings: {base, dyn, alts?} or null.
+function clientOf(node, scope, depth) {
+  depth = depth || 0;
+  if (!node || depth > 10) return null;
+  const union = (xs) => {
+    const got = xs.filter(Boolean);
+    if (!got.length) return null;
+    const bases = [...new Set(got.flatMap((g) => [g.base, ...(g.alts || [])]))];
+    return { base: bases[0], dyn: got.some((g) => g.dyn), alts: bases.slice(1) };
+  };
+  switch (node.type) {
+    case "SequenceExpression": return clientOf(node.expressions[node.expressions.length - 1], scope, depth + 1);
+    case "ParenthesizedExpression": case "AwaitExpression": case "TSAsExpression": case "TSNonNullExpression":
+      return clientOf(node.expression || node.argument, scope, depth + 1);
+    case "ConditionalExpression": return union([clientOf(node.consequent, scope, depth + 1), clientOf(node.alternate, scope, depth + 1)]);
+    case "LogicalExpression": return union([clientOf(node.left, scope, depth + 1), clientOf(node.right, scope, depth + 1)]);
+    case "Identifier": {
+      const iv = importedValue(node.name, scope);
+      if (iv && iv.client) return iv.client;
+      const b = scope && scope.getBinding && scope.getBinding(node.name);
+      const d = b && b.path && b.path.node;
+      // `get = (p, o) => api.get(p, o)`: a function that is one call through a client is that client
+      const fnd = d && (d.type === "FunctionDeclaration" ? d : d.type === "VariableDeclarator" && d.init && /Function/.test(d.init.type) ? d.init : null);
+      if (fnd) {
+        const ret = _returned(fnd);
+        const fsc = (b.path.node === fnd ? b.path : b.path.get("init")).scope;
+        return ret && (ret.type === "CallExpression" || ret.type === "AwaitExpression") ? callClient((ret.argument || ret).callee, fsc) : null;
+      }
+      if (!d || d.type !== "VariableDeclarator" || !d.init) return null;
+      // `let {POST: v} = h`: a method taken off the client is still the client's
+      if (d.id.type === "ObjectPattern") return clientOf(d.init, b.scope, depth + 1);
+      if (d.id.type !== "Identifier") return null;
+      return clientOf(d.init, b.scope, depth + 1);
+    }
+    case "MemberExpression": case "OptionalMemberExpression": {
+      if (node.computed || !node.property) return null;
+      const mid = _moduleOf(node.object, scope);
+      if (mid != null) {
+        const ex = _modExport(mid, node.property.name ?? node.property.value);
+        return ex && ex.client ? ex.client : null;
+      }
+      return null;
+    }
+    case "CallExpression": case "OptionalCallExpression": case "NewExpression": {
+      // A getter that hands the client back: `cs()`, `(0,A.getClient)()`, `useApi()`
+      let c = node.callee;
+      if (c && c.type === "SequenceExpression") c = c.expressions[c.expressions.length - 1];
+      if (node.type !== "NewExpression" && c) {
+        if (c.type === "Identifier") {
+          const iv = importedValue(c.name, scope);
+          if (iv && iv.returns) return iv.returns;
+          const b = scope && scope.getBinding && scope.getBinding(c.name);
+          const d = b && b.path && b.path.node;
+          const fn = d && (d.type === "FunctionDeclaration" ? d : d.type === "VariableDeclarator" && d.init && /Function/.test(d.init.type) ? d.init : null);
+          if (fn) {
+            const ret = _returned(fn);
+            const fnScope = (b.path.node === fn ? b.path : b.path.get("init")).scope;
+            if (ret) return clientOf(ret, fnScope, depth + 1);
+            return null;
+          }
+        } else if ((c.type === "MemberExpression" || c.type === "OptionalMemberExpression") && !c.computed && c.property) {
+          const mid = _moduleOf(c.object, scope);
+          if (mid != null) {
+            const ex = _modExport(mid, c.property.name ?? c.property.value);
+            if (ex && ex.returns) return ex.returns;
+          }
+        }
+      }
+      // …or the call that builds it
+      return _baseOfCreate(node, scope);
+    }
+  }
+  return null;
+}
+// A wrapper function another module exports, from a callee: `c(...)` with `c` imported, `(0,A.gt)(...)`.
+function _exportedWrapper(callee, scope) {
+  let c = callee;
+  if (c && c.type === "SequenceExpression") c = c.expressions[c.expressions.length - 1];
+  if (!c) return null;
+  if (c.type === "Identifier") {
+    const iv = importedValue(c.name, scope);
+    return (iv && iv.wrapper) || null;
+  }
+  if ((c.type === "MemberExpression" || c.type === "OptionalMemberExpression") && !c.computed && c.property) {
+    const mid = _moduleOf(c.object, scope);
+    if (mid != null) { const ex = _modExport(mid, c.property.name ?? c.property.value); return (ex && ex.wrapper) || null; }
+  }
+  return null;
+}
+// An exported wrapper's template with one call's arguments put in, keeping the CALLER's own parameters
+// as placeholders when the caller is itself being read as a wrapper.
+function _composeWrapper(ext, args, scope, paramNames) {
+  return ext.tmpl.replace(/\x01(\w+)\x01/g, (_, pn) => {
+    const i = ext.paramNames.indexOf(pn);
+    const a = i >= 0 ? args[i] : null;
+    if (!a) return "{EXPR}";
+    const v = strFromNode(a, scope, 0, paramNames || null).s;
+    return _NODE_SLOT.test(v) ? "{param:" + pn + "}" : v;
+  });
+}
+// The resolver's name for a value it could not read, after the kind of expression it was.
+const _NODE_SLOT = /^\{(?:unary|nullliteral|booleanliteral|numericliteral|object|array|sequence|new|arrowfunction|function|class|this)\}$/;
+
+// The client a call goes through, from its callee: `c.get(...)`, `(0,A.post)(...)`, `v(...)`.
+function callClient(callee, scope) {
+  let c = callee;
+  if (c && c.type === "SequenceExpression") c = c.expressions[c.expressions.length - 1];
+  if (!c) return null;
+  if (c.type === "MemberExpression" || c.type === "OptionalMemberExpression")
+    return clientOf(c.object, scope) || clientOf(c, scope);
+  if (c.type === "Identifier") return clientOf(c, scope);
+  return null;
 }
 
 {
@@ -298,7 +651,7 @@ function resolveUrl(node, scope, paramNames) {
   // return null, so there is no recursion back into this function.
   const un = newUrlNode(node, scope);
   if (un && (un.arguments || []).length) {
-    const r = resolveNewUrl(un, scope);
+    const r = resolveNewUrl(un, scope, paramNames);
     if (r && r.template && r.template !== "{EXPR}") return r;
   }
   const out = strFromNode(node, scope, 0, paramNames);
@@ -448,7 +801,35 @@ function strFromNode(node, scope, depth, paramNames) {
       }
       // resolve const/let aliases bound to a string literal in scope (the common `const BASE="/api"` case)
       const b = scope && scope.getBinding && scope.getBinding(node.name);
-      if (b && b.path && b.path.node) {
+      // A COMMA EXPRESSION, OR A LATER ASSIGNMENT. supabase's generated API client builds its URL as
+      //     let t, {baseUrl: i} = a ?? {}, s = (t = i ?? env.SUPABASE_API_BASE_URL ?? c, new URL(`${t}${n}`).toString())
+      // where `s` is the value of the comma expression's last part, and `t` has no initialiser, only one
+      // assignment. Both are ordinary values; reading neither lost every one of its 131 `/v1` endpoints.
+      if (b && b.path && b.path.node && b.path.node.type === "VariableDeclarator" && depth < 6) {
+        const init0 = b.path.node.init;
+        // Taken only when it says more than the fallback below would: a value that resolves to nothing
+        // but `{EXPR}` loses the one thing the fallback keeps, that a minified name stood there.
+        const _informative = (r) => r && typeof r.s === "string" && r.s.replace(/\{[^{}]*\}|\x01\w+\x01/g, "") !== "";
+        if (init0 && init0.type === "SequenceExpression" && init0.expressions.length) {
+          const last = init0.expressions[init0.expressions.length - 1];
+          const un = newUrlNode(last, b.scope);
+          const r = un ? (() => { const x = resolveNewUrl(un, b.scope, paramNames); return { s: x.template, dyn: x.dynamic }; })()
+                       : strFromNode(last, b.scope, depth + 1, paramNames);
+          if (_informative(r)) return r;
+        }
+        if (!init0 && b.constantViolations && b.constantViolations.length === 1) {
+          const cv = b.constantViolations[0];
+          if (cv.node && cv.node.type === "AssignmentExpression" && cv.node.operator === "=") {
+            const r = strFromNode(cv.node.right, cv.scope, depth + 1, paramNames);
+            if (_informative(r)) return r;
+          }
+        }
+      }
+      // A DESTRUCTURED name is a property of the initialiser, not the initialiser: `{baseUrl: i} = a ?? {}`
+      // is `a.baseUrl`. Reading the whole of `a ?? {}` as `i` handed supabase's API client its options
+      // object as a base. The destructuring rule further down is the one that applies.
+      const _plain = !(b && b.path && b.path.node && b.path.node.id && b.path.node.id.type !== "Identifier");
+      if (b && b.path && b.path.node && _plain) {
         const init = b.path.node.init || (b.path.node.type === "VariableDeclarator" && b.path.node.init);
         // recurse into string/template inits AND into Logical/Binary inits, the latter is the default-base config
         // pattern (`const base = env.API ?? "/api"`, `const u = host + "/v1"`) that later gets concatenated into a URL.
@@ -556,6 +937,15 @@ function strFromNode(node, scope, depth, paramNames) {
     case "MemberExpression_orig":
     case "OptionalMemberExpression": {
       if (!node.computed && node.property && node.property.name) {
+        // ANOTHER MODULE'S EXPORT. `d.API_URL` with `d = e.i(101)` is export API_URL of module 101, read
+        // from that module, which beats any guess by property name.
+        {
+          const mid = _moduleOf(node.object, scope);
+          if (mid != null) {
+            const ex = _modExport(mid, node.property.name);
+            if (ex && ex.str) return { s: ex.str, dyn: false };
+          }
+        }
         // FIRST try to resolve `cfg.base` / `cfg.paths.auth` into the CONFIG OBJECT LITERAL it points at, pure-literal
         // config objects (baseURL + path tables) are extremely common; recover the real string, not a {slot}. This is
         // load-bearing for axios baseURL resolution and lifts recall broadly wherever URLs come from a config object.
@@ -590,6 +980,7 @@ function strFromNode(node, scope, depth, paramNames) {
       // is no name to borrow. Distinguishing it from a blank says the lookup table is worth finding.
       return { s: "{computed}", dyn: true };
     }
+    case "OptionalCallExpression":
     case "CallExpression": {
       // THERE WERE TWO `case "CallExpression"` ARMS IN THIS SWITCH. The first handled .concat() chains and
       // then unconditionally returned {EXPR}, which made this one, encoder unwrapping, user-defined URL
@@ -635,6 +1026,18 @@ function strFromNode(node, scope, depth, paramNames) {
             const slot = "{" + needle.value.slice(1) + "}";
             return { s: base.s.split(needle.value).join(slot), dyn: true };
           }
+        }
+      }
+
+      // `.replace("/platform", "")` on a string we know is just that string, edited. supabase builds its API
+      // client's base as `API_URL?.replace("/platform","")`.
+      if (c && (c.type === "MemberExpression" || c.type === "OptionalMemberExpression") && !c.computed && c.property &&
+          (c.property.name === "replace" || c.property.name === "replaceAll") && (node.arguments || []).length === 2 &&
+          node.arguments[0].type === "StringLiteral" && node.arguments[1].type === "StringLiteral" && depth < 8) {
+        const base = strFromNode(c.object, scope, depth + 1, paramNames);
+        if (base && !base.dyn && typeof base.s === "string") {
+          const [a, b] = [node.arguments[0].value, node.arguments[1].value];
+          return { s: c.property.name === "replace" ? base.s.replace(a, () => b) : base.s.split(a).join(b), dyn: false };
         }
       }
 
@@ -762,6 +1165,11 @@ function strFromNode(node, scope, depth, paramNames) {
     }
     // `await getUrl()`, `(url)`, `url as string`, `url!`, wrappers that change nothing about the value.
     // Falling through to the default returned {EXPR} and lost whatever was inside them.
+    case "SequenceExpression":
+      // `(t = new URLSearchParams, ..., `/v1/logs?${t}`)`: a comma expression's value is its last part
+      if (node.expressions && node.expressions.length)
+        return strFromNode(node.expressions[node.expressions.length - 1], scope, depth + 1, paramNames);
+      return { s: "{EXPR}", dyn: true };
     case "AwaitExpression":
     case "ParenthesizedExpression":
     case "TSAsExpression":
@@ -2950,6 +3358,18 @@ function collectAxiosInstances(ast) {
   return inst;
 }
 
+// A path through a client, with the client's base in front of it.
+function _withBase(inst, u) {
+  if (!inst || /^(?:https?:)?\/\//i.test(u.template)) return u;
+  // a client bound to more than one base (mainnet/testnet) rides the existing enum-expansion marker, so `push`
+  // fans it out into one record per host with no new machinery.
+  if (inst.alts && inst.alts.length) {
+    const all = [inst.base, ...inst.alts].map((b) => String(b).replace(/\/+$/, ""));
+    return { template: "\x02" + all.join("|") + "\x02/" + String(u.template).replace(/^\/+/, ""), dynamic: u.dynamic || inst.dyn };
+  }
+  return { template: joinBase(inst.base, u.template), dynamic: u.dynamic || inst.dyn };
+}
+
 // prefix a resolved base onto a relative path template (dedup the slash); skip if the path is already absolute.
 function joinBase(base, tmpl) {
   if (!base || /^https?:\/\//i.test(tmpl)) return tmpl;       // already absolute → leave it
@@ -2963,6 +3383,8 @@ function joinBase(base, tmpl) {
 function newUrlNode(node, scope, depth) {
   depth = depth || 0;
   if (!node || depth > 4) return null;
+  if (node.type === "SequenceExpression" && node.expressions.length)
+    return newUrlNode(node.expressions[node.expressions.length - 1], scope, depth + 1);
   if (node.type === "NewExpression" && node.callee && node.callee.name === "URL") return node;
   if ((node.type === "MemberExpression" || node.type === "OptionalMemberExpression") && node.property &&
       (node.property.name === "href" || node.property.name === "pathname"))
@@ -2995,11 +3417,11 @@ function findRegistryKey(node, depth) {
   }
   return null;
 }
-function resolveNewUrl(urlNode, scope) {   // `new URL(pathArg, baseArg)` → base + path (URL(rel, base) semantics)
+function resolveNewUrl(urlNode, scope, paramNames) {   // `new URL(pathArg, baseArg)` → base + path (URL(rel, base) semantics)
   const pathArg = urlNode.arguments[0], baseArg = urlNode.arguments[1];
-  const p = pathArg ? resolveUrl(pathArg, scope) : { template: "", dynamic: true };
+  const p = pathArg ? resolveUrl(pathArg, scope, paramNames) : { template: "", dynamic: true };
   let base = "";
-  if (baseArg) { const bs = strFromNode(baseArg, scope, 0, null); if (bs && bs.s && bs.s !== "{EXPR}") base = bs.s; }
+  if (baseArg) { const bs = strFromNode(baseArg, scope, 0, paramNames || null); if (bs && bs.s && bs.s !== "{EXPR}") base = bs.s; }
   const template = base ? joinBase(base, p.template) : p.template;
   return { template, dynamic: p.dynamic || (!!baseArg && !base), key: findRegistryKey(pathArg) };
 }
@@ -3104,11 +3526,27 @@ function collectWrappers(ast) {
                                         : p.type === "AssignmentPattern" && p.left.type === "Identifier"
                                           ? p.left.name : "\x00"));
     const paramDefaults = params.map((p) => (p.type === "AssignmentPattern" ? p.right : null));
-    let best = null, bestMethod = null, bestBody = null, bestBodyIdx = null;
+    let best = null, bestMethod = null, bestBody = null, bestBodyIdx = null, bestInner = null, bestViaFetch = false;
     fnPath.traverse({
       CallExpression(p) {
         if (best) return;
         const n = p.node, c = n.callee;
+        // THE SINK IS A WRAPPER ANOTHER MODULE EXPORTS. claude.ai's `w(e,t){return c(e,t)}`, where `c` is
+        // imported and is `fetchAsDocumentAccount(e,t)`, which hands `e` to fetch. Read through it.
+        const ext = _exportedWrapper(c, p.scope);
+        if (ext) {
+          const tm = _composeWrapper(ext, n.arguments, p.scope, paramNames);
+          if (tm.includes("\x01")) {
+            best = tm; bestViaFetch = !!ext.viaFetch;
+            const oa = n.arguments.find((a) => a && a.type === "ObjectExpression");
+            bestMethod = (oa && optsInfo(oa, p.scope).method) || ext.method || null;
+            if (ext.body_idx != null && n.arguments[ext.body_idx] && n.arguments[ext.body_idx].type === "Identifier") {
+              const pi = paramNames.indexOf(n.arguments[ext.body_idx].name);
+              if (pi >= 0) bestBodyIdx = pi;
+            }
+          }
+          return;
+        }
         // a body sink INSIDE the wrapper: raw fetch, a client method (.get/.post), OR anything carrying an options
         // object (react-query hook / custom fetcher). Broadened so base-param wrappers around ANY sink resolve,
         // claude.ai's org helpers wrap the react-query hook `t(`${e}/invites`,{queryKey})`, not raw fetch.
@@ -3128,13 +3566,17 @@ function collectWrappers(ast) {
                      ["path", "url", "uri", "endpoint"].includes(pr.key.name ?? pr.key.value));
           if (pk) urlNode = pk.value;
         }
-        const t = resolveUrl(urlNode, p.scope, paramNames);
+        let t = resolveUrl(urlNode, p.scope, paramNames);
+        // a method call on a client: the client's base goes in front, as at any other call through it
+        if (isMethodCall) { const cb = callClient(c, p.scope); if (cb) t = _withBase(cb, t); }
         // must reference a param; needs a real literal path segment UNLESS it's a definite fetch/Request sink,
         // `fetch(`${base}/${action}`)` is an all-param URL-builder (AI streaming helpers); precision comes from the
         // call-site arg resolution + the LOOKS_PATH filter, not from a literal segment here.
         const realSeg = /[/][\w-]/.test(t.template.replace(/\x01\w+\x01|\{[^}]*\}/g, ""));
         if (t.template.includes("\x01") && (realSeg || isFetch)) {
           best = t.template;   // references a param AND has a real literal path segment
+          bestInner = { call: n, scope: p.scope };
+          bestViaFetch = !!isFetch;
           // capture the method + body from THIS internal sink so the resolved call-site record is COMPLETE
           const oi = optsArg ? optsInfo(optsArg, p.scope) : {};
           const hasQK = optsArg && optsArg.properties.some((pr) => pr.key && (pr.key.name ?? pr.key.value) === "queryKey");
@@ -3171,13 +3613,14 @@ function collectWrappers(ast) {
         if (best) return;
         if (p.node.callee && p.node.callee.name === "Request") {
           const t = resolveUrl(p.node.arguments[0], p.scope, paramNames);
-          if (t.template.includes("\x01")) best = t.template;
+          if (t.template.includes("\x01")) { best = t.template; bestViaFetch = true; }
         }
       },
     });
     if (best) (wrappers[name] = wrappers[name] || []).push(
       { tmpl: best, paramNames, paramDefaults, method: bestMethod, body_keys: bestBody,
-        body_idx: bestBodyIdx, fnNode: fnPath.node, isMethod: !!isMethod });
+        body_idx: bestBodyIdx, fnNode: fnPath.node, isMethod: !!isMethod, inner: bestInner,
+        viaFetch: bestViaFetch });
   };
   traverse(ast, {
     FunctionDeclaration(p) { consider(p.node.id && p.node.id.name, p.node.params, p); },
@@ -3202,6 +3645,31 @@ function collectWrappers(ast) {
       if (k && !p.node.computed) consider(k.name ?? k.value, p.node.params, p, true);
     },
   });
+  // A WRAPPER AROUND A WRAPPER. supabase's generated client has one function per endpoint calling one
+  // that adds the base:
+  //     g = async (n, a) => fetch(new URL(`${base}${n}`).toString(), a)
+  //     o = async (n, e) => g(`/v1/projects/${n}/advisors/performance`, {...e, method: "GET"})
+  // `o`'s template was read from its raw call to `g`, without `g`'s base, so every call to `o` came out a
+  // bare `/v1/...` path beside the same request with its base. Render the inner wrapper into the outer.
+  const byFn = new Map();
+  for (const ws of Object.values(wrappers)) for (const w of ws) byFn.set(w.fnNode, w);
+  for (let round = 0; round < 3; round++) {
+    let changed = false;
+    for (const w of byFn.values()) {
+      const ic = w.inner && w.inner.call;
+      if (!ic || !ic.callee || ic.callee.type !== "Identifier") continue;
+      const inner = byFn.get(_fnOfBinding(ic.callee.name, w.inner.scope));
+      if (!inner || inner === w || !inner.tmpl) continue;
+      const tm = inner.tmpl.replace(/\x01(\w+)\x01/g, (_, pn) => {
+        const i = inner.paramNames.indexOf(pn);
+        const a = i >= 0 ? ic.arguments[i] : null;
+        return a ? strFromNode(a, w.inner.scope, 0, w.paramNames).s : "{EXPR}";
+      });
+      if (tm !== w.tmpl && tm.includes("\x01")) { w.tmpl = tm; w.viaFetch = !!inner.viaFetch; changed = true; }
+      w.inner = null;
+    }
+    if (!changed) break;
+  }
   return wrappers;
 }
 // The function an identifier ACTUALLY resolves to at this call site. Two scopes each declaring `t` are two
@@ -3254,6 +3722,10 @@ function renderWrapper(w, callArgs, scope) {
     if (!arg) { dynamic = true; return "{EXPR}"; }
     const u = strFromNode(arg, scope, 0, null);
     if (_isBuiltinRef(u.s)) { dynamic = true; return "{EXPR}"; }
+    // `null`, `void 0` or an object where a URL piece goes says nothing about the piece; the wrapper's
+    // own parameter name says what it is. claude.ai's `/api/labs_verification/{param:e}` came out
+    // `{nullliteral}` from a call passing null.
+    if (_NODE_SLOT.test(u.s)) { dynamic = true; return "{param:" + pname + "}"; }
     if (u.dyn) dynamic = true;
     return u.s;   // keep the resolved base even if it has named {slots}, `/api/organizations/{uuid}` is the win
   });
@@ -4091,6 +4563,18 @@ function collectRtk(ast) {
         }
       } else { const u = resolveUrl(ret, path.scope); template = u.template; dyn = u.dynamic; }
       if (template) {
+        // The base is the createApi's own base query. `api.injectEndpoints({endpoints})` adds to an api
+        // defined elsewhere, so the base is that api's.
+        const host = path.findParent((q) => q.node.type === "CallExpression" && q.node.arguments[0] &&
+          q.node.arguments[0].type === "ObjectExpression" &&
+          q.node.arguments[0].properties.some((r) => r.key && (r.key.name ?? r.key.value) === "endpoints"));
+        if (host) {
+          const hc = host.node.callee;
+          const inj = hc && (hc.type === "MemberExpression" || hc.type === "OptionalMemberExpression") && hc.property &&
+                      /^(injectEndpoints|enhanceEndpoints)$/.test(hc.property.name || "");
+          const b = inj ? clientOf(hc.object, host.scope) : _baseOfCreate(host.node, host.scope);
+          if (b) { const ub = _withBase(b, { template, dynamic: dyn }); template = ub.template; dyn = ub.dynamic; }
+        }
         const rec = { sink: "rtk-query", kind: "xhr", method, template, body_keys: body, dynamic: dyn };
         // RTK Query's fetchBaseQuery serialises a non-string, non-FormData body with
         // JSON.stringify and sets content-type: application/json. The endpoint definition
@@ -4529,7 +5013,9 @@ function extract(src) {
             ? indexObjectGetters(ast) : new Map();
   // gate the two per-chunk collectors on a cheap substring precheck, a wrapper must contain a fetch sink, a
   // response schema must contain `.json(`; skipping chunks without them keeps the 1400-chunk walk fast.
-  const WRAPPERS = /fetch\s*\(|queryKey|mutationKey|\bmethod:/.test(src) ? collectWrappers(ast) : {};
+  const WRAPPERS = /fetch\s*\(|queryKey|mutationKey|\bmethod:|\.(?:get|post|put|patch|delete|request)\s*\(/.test(src)
+                 ? collectWrappers(ast) : {};
+  const WRAPPER_FNS = new Set(Object.values(WRAPPERS).flat().map((w) => w.fnNode));
   // Which wrappers in THIS file take react-query options in their trailing argument, learned from the call
   // sites that say so unambiguously. Per file, because a minified local name means nothing outside one.
   _QUERY_OPT_CALLEES = /onSuccess|onError|mutationKey|queryKey|onSettled/.test(src)
@@ -4551,8 +5037,11 @@ function extract(src) {
   // A premature optimisation whose predicate is wrong is worth deleting, not repairing.
   const INSTANCES = collectAxiosInstances(ast);
   // prefix an axios-instance's baseURL onto a relative-path call: X.get("/p") + X=axios.create({baseURL}) → base+/p.
-  const applyBase = (nm, u) => {
-    let inst = INSTANCES[nm.obj] || (nm.obj ? INSTANCES["this." + nm.obj] : null);
+  const applyBase = (nm, u, callee, scope) => {
+    // By binding first: exact, and it reaches clients built in other modules. The name lookup below is
+    // what is left for `this.client`, which has no binding to follow.
+    let inst = (callee && scope ? callClient(callee, scope) : null) ||
+               INSTANCES[nm.obj] || (nm.obj ? INSTANCES["this." + nm.obj] : null);
     // the client can also be chosen inline at the call: `(chainId===mainnet ? mainnetClient : testnetClient).get(path)`.
     // Same two-host fan-out as the aliased form, just written at the use site instead of bound to a name.
     // `(opts?.client ?? client).get({url})`, the defaulting receiver every generated OpenAPI client emits,
@@ -4572,14 +5061,7 @@ function extract(src) {
         inst = { base: bases[0], dyn: br.some((x) => x.dyn), alts: bases.slice(1) };
       }
     }
-    if (!inst || /^https?:\/\//i.test(u.template)) return u;
-    // a client bound to more than one base (mainnet/testnet) rides the existing enum-expansion marker, so `push`
-    // fans it out into one record per host with no new machinery.
-    if (inst.alts && inst.alts.length) {
-      const all = [inst.base, ...inst.alts].map((b) => String(b).replace(/\/+$/, ""));
-      return { template: "\x02" + all.join("|") + "\x02/" + String(u.template).replace(/^\/+/, ""), dynamic: u.dynamic || inst.dyn };
-    }
-    return { template: joinBase(inst.base, u.template), dynamic: u.dynamic || inst.dyn };
+    return _withBase(inst, u);
   };
   // The corpus verdict when the index pass reached one, this chunk's own reading otherwise, which is
   // the right answer for a direct single-file invocation and for `--index-only` not having run.
@@ -4617,6 +5099,13 @@ function extract(src) {
     if (!pathish && !realBody && !o.registry_key && !isSocket) return;
     if (!pathish && (realBody || o.registry_key)) o._bodyOnly = true;
     if (/\b(example\.(com|org|net)|localhost|127\.0\.0\.1|schema\.org|w3\.org)\b/.test(o.template)) return; // lib placeholders
+    // THE WRAPPER ITSELF IS NOT AN ENDPOINT. `req = (p, o) => fetch(BASE + p, o)` emitted
+    // `https://api.x.test{param:p}/` beside every real request its callers make. A URL whose whole path is
+    // the enclosing wrapper's own parameter says where the wrapper sends things; its call sites say what.
+    if (curFn && WRAPPER_FNS.has(curFn) && !String(o.sink || "").startsWith("wrap:")) {
+      const rest = o.template.replace(/^(?:https?:)?\/\/[^/{]+/, "");
+      if (/^\/?\{param:[\w$]+\}\/?$/.test(rest)) return;
+    }
     o._fn = curFn;
     // computed here rather than in `guard` so the 24-step parent walk is paid once per RECORD, not once per
     // visited call expression (the latter is a measurable cost on a 5 MB chunk).
@@ -4873,7 +5362,7 @@ function extract(src) {
           const u = resolveUrl(n.arguments[1], path.scope);
           if (LOOKS_PATH(u.template) || LOOKS_PATH(u.template.replace(/\{[^}]*\}/g, ""))) {
             const oi = optsInfo(n.arguments[2], path.scope);
-            const ub = applyBase(nm, u);
+            const ub = applyBase(nm, u, n.callee, path.scope);
             push({ sink: `${nm.obj || "?"}.request`, kind: "xhr", method: arg0.value.toUpperCase(), template: ub.template, body_keys: oi.body_keys, body_encoding: oi.body_encoding, content_type: oi.content_type, body_schema: oi.body_schema, query_schema: oi.query_schema, req_headers: oi.headers, credentials: oi.credentials, dynamic: ub.dynamic });
             return;
           }
@@ -4882,7 +5371,7 @@ function extract(src) {
         if (arg0.type === "ObjectExpression") {
           const oi = optsInfo(arg0, path.scope);
           if (oi._url) {
-            const ub = applyBase(nm, oi._url);
+            const ub = applyBase(nm, oi._url, n.callee, path.scope);
             const rec0 = { sink: `${nm.obj || "?"}.${nm.prop}`, kind: "xhr", method: oi.method || nm.prop.toUpperCase(), template: ub.template, body_keys: oi.body_keys, body_encoding: oi.body_encoding, content_type: oi.content_type, body_schema: oi.body_schema, query_schema: oi.query_schema, req_headers: oi.headers, credentials: oi.credentials, dynamic: ub.dynamic };
             if (!oi.body_keys) tagOptsBodyParam(rec0, n, path);
             // The content-type may be in an argument we did not treat as the options object, see
@@ -4933,7 +5422,7 @@ function extract(src) {
         const bodyNode = dataArg ? bodyKeys(dataArg, path.scope) : null;
         const bodySch = dataArg ? bodySchema(dataArg, path.scope) : null;
         const cfg = cfgArg ? optsInfo(cfgArg, path.scope) : null;
-        let ub = applyBase(nm, u);   // prefix instance baseURL if X came from axios.create({baseURL})
+        let ub = applyBase(nm, u, n.callee, path.scope);   // prefix instance baseURL if X came from axios.create({baseURL})
         // RESOLVE THE BASE THROUGH THE CLIENT'S OWN METHOD. `client.post("account/deactivate", body)` gives
         // the bare string `account/deactivate`, which is not a path anyone can request, the base lives in
         // the method that was called:
@@ -5038,6 +5527,26 @@ function extract(src) {
           return;
         }
       }
+      // A WRAPPER ANOTHER MODULE EXPORTS, called directly: render it here as it would be rendered there.
+      if (!(c.type === "Identifier" && (WRAPPERS[c.name] || []).length)) {
+        const ew = _exportedWrapper(n.callee, path.scope);
+        if (ew) {
+          const rendered = { template: _composeWrapper(ew, n.arguments, path.scope, null), dynamic: false };
+          if (rendered.template.includes("{EXPR}")) rendered.dynamic = true;
+          const mb = methodBodyFromArgs(n.arguments, path.scope);
+          let bk = mb.body_keys || ew.body_keys || null, bs = null;
+          if (ew.body_idx != null && n.arguments[ew.body_idx]) {
+            bk = bodyKeys(n.arguments[ew.body_idx], path.scope) || bk;
+            const sch = bodySchema(n.arguments[ew.body_idx], path.scope);
+            if (sch && sch !== "{EXPR}") bs = sch;
+          }
+          const nm0 = c.type === "Identifier" ? c.name : (calleeName(c).prop || "?");
+          push({ sink: `wrap:${nm0}`, kind: "xhr", method: mb.method || ew.method || "GET", template: rendered.template,
+                 body_keys: bk, body_schema: bs, dynamic: rendered.dynamic, via_fetch: !!ew.viaFetch,
+                 content_type: mb.content_type, body_encoding: mb.body_encoding });
+          return;
+        }
+      }
       // INTER-PROCEDURAL: callee is a custom fetch wrapper we resolved (pass 1) → substitute args into its URL template.
       // Only FUNCTION wrappers here. Class and object methods are registered under the same map by NAME,
       // and this branch ends in `return` when it cannot match a binding, so once `get`, `post`, `send` and
@@ -5071,12 +5580,22 @@ function extract(src) {
           if (sch && sch !== "{EXPR}") bs = sch;
         }
         push({ sink: `wrap:${c.name}`, kind: "xhr", method: mb.method || w.method || "GET",
-               template: rendered.template, body_keys: bk, body_schema: bs, dynamic: rendered.dynamic });
+               template: rendered.template, body_keys: bk, body_schema: bs, dynamic: rendered.dynamic,
+               via_fetch: !!w.viaFetch });
         return;
       }
       // FALLBACK: no named sink matched, duck-type by the options object (custom wrappers / react-query hooks).
       const ds = optsSink(n, path.scope);
-      if (ds) { if (!ds.body_keys) tagOptsBodyParam(ds, n, path); push(ds); return; }
+      if (ds) {
+        // `(0,A.post)("/platform/auth/{ref}/otp", {body})`: the callee is a client's method, so the
+        // client's base goes in front of the path, the same as for `client.post(...)`.
+        const cb = callClient(n.callee, path.scope);
+        if (cb && ds.template && ds.template !== "{EXPR}") {
+          const ub = _withBase(cb, { template: ds.template, dynamic: ds.dynamic });
+          ds.template = ub.template; ds.dynamic = ub.dynamic;
+        }
+        if (!ds.body_keys) tagOptsBodyParam(ds, n, path); push(ds); return;
+      }
     }),
   });
 
@@ -7279,12 +7798,13 @@ try {
 // tool keeps producing whenever a bad input reaches the parser.
 const _argv = process.argv.slice(2);
 const _files = [];
-let _indexOnly = false, _indexIn = null, _filesetIn = null;
+let _indexOnly = false, _indexClients = false, _indexIn = null, _filesetIn = null;
 for (let i = 0; i < _argv.length; i++) {
   if (_argv[i] === "--config") { i++; continue; }
   if (_argv[i] === "--index") { _indexIn = _argv[++i]; continue; }
   if (_argv[i] === "--fileset") { _filesetIn = _argv[++i]; continue; }
   if (_argv[i] === "--index-only") { _indexOnly = true; continue; }
+  if (_argv[i] === "--index-clients") { _indexClients = true; continue; }
   if (_argv[i].startsWith("--")) continue;
   _files.push(_argv[i]);
 }
@@ -7354,9 +7874,27 @@ const src = readAll(_files);
             _ROUTING = _rt;
           }
           if (_files[i]) indexExports(a, path_.resolve(_files[i]));
+          _SRC = _chunks[i];
+          indexBundledExports(a);
         } catch {}
       }
     }
+  }
+
+  if (_indexClients) {
+    // Index pass two, with pass one loaded: the clients modules export, and the base each is built with.
+    const touched = new Map();
+    for (let i = 0; i < _chunks.length; i++) {
+      try {
+        const a = parse(_chunks[i]);
+        if (!a) continue;
+        _SRC = _chunks[i];
+        _CURFILE = _files[i] ? require("path").resolve(_files[i]) : null;
+        for (const [k, v] of indexClientExports(a, _CURFILE)) touched.set(k, v);
+      } catch {}
+    }
+    process.stdout.write(JSON.stringify({ exports: [...touched] }));
+    return;
   }
 
   if (_indexOnly) {

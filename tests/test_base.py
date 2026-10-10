@@ -33,16 +33,12 @@ def test_basepath_and_prefixurl_are_base_keys_too():
     assert ("POST", "https://edge.mycorp.io/publish") in got
 
 
-def test_a_relative_base_is_deliberately_not_applied():
-    """A known limitation, pinned so the reason is not lost and the behaviour is not changed by
-    accident. Accepting a relative base was implemented and measured: it fixed this file and made
-    Grafana worse, producing four paths that glue the k8s-style resource base onto the legacy REST API
-    and displacing four correct records. The cause is that `applyBase` resolves a client by receiver
-    NAME, which collides under minification; an origin value makes a mis-attribution conspicuous,
-    a relative one does not. See the fixture for the full account."""
+def test_a_relative_base_is_applied_when_the_client_is_found_by_binding():
+    """This was pinned as a deliberate limitation: a relative base was refused because a client was
+    found by its receiver's NAME, which collides under minification, and on Grafana that glued a k8s
+    resource base onto the legacy REST API. A client is found by binding now, which cannot collide."""
     got = _paths("relative-base-is-not-applied")
-    assert ("GET", "/users") in got
-    assert not any("/api/v2" in str(t) for _m, t in got)
+    assert ("GET", "/api/v2/users") in got
 
 
 def test_an_absolute_base_still_works():

@@ -111,8 +111,10 @@ def _url(r):
         return origin + path
     sink = r.get("sink")
     # A URL the server wrote into the document is resolved against the document, like a link.
+    # A wrapper that hands the path to fetch is a fetch: claude.ai's `/api/...` calls go through
+    # `fetchAsDocumentAccount`, and fetch resolves a relative path against the page.
     if (sink not in _PAGE_RELATIVE and not str(sink).startswith("jsx:")
-            and r.get("_kind") != "doc-state"):
+            and r.get("_kind") != "doc-state" and not r.get("via_fetch")):
         return t
     # Resolved the way the browser resolves it: `/x` from the host, `x` from the page's directory.
     # Gluing the path onto the host printed `https://play.grafana.orgapis/...` for a path with no slash.

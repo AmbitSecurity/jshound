@@ -910,8 +910,51 @@ def _build_module_index(paths, workers, batches):
     if aliases:
         print(f"  {len(aliases)} original module name(s) mapped onto content-hashed bodies, so relative "
               f"imports can resolve", file=sys.stderr)
-    print(f"  module index: {len(exports)} export(s), {len(propvals)} property value(s) across "
-          f"{len(paths)} files, independent of how they are batched", file=sys.stderr)
+    # PASS ONE AND A HALF: which exports are API clients, and the base each is built with. It needs pass
+    # one's index loaded, because a client's base is routinely another module's export (supabase's is
+    # `API_URL` from its constants module), and only the files that build or hand out a client matter.
+    clients = 0
+    wanted = [b for b in batches if any(_may_build_client(f) for f in b)]
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for got in ex.map(_run_index_clients, wanted):
+            for k, v in (got.get("exports") or []):
+                cur = exports.get(k) or {}
+                exports[k] = {**cur, **v}
+                clients += 1
+    if clients:
+        with open(_INDEX_FILE[0], "w") as fh:
+            json.dump({"exports": list(exports.items()), "propvals": list(propvals.items()),
+                       "callargs": list(callargs.items()), "trpc": trpc,
+                       "routing": None if routing_conflict else routing}, fh)
+    print(f"  module index: {len(exports)} export(s), {clients} of them API clients, {len(propvals)} "
+          f"property value(s) across {len(paths)} files, independent of how they are batched", file=sys.stderr)
+
+
+# A file that builds or hands out an API client names a base option or calls a client factory, and one
+# that exports a fetch wrapper calls fetch.
+_CLIENT_HINT = re.compile(rb"base_?ur[li]|prefix_?url|base_?path|baseQuery|\.create\(|createClient|fetch\(", re.I)
+
+
+def _may_build_client(path):
+    try:
+        with open(path, "rb") as fh:
+            return bool(_CLIENT_HINT.search(fh.read()))
+    except OSError:
+        return False
+
+
+def _run_index_clients(paths):
+    if not paths:
+        return {}
+    try:
+        env = node_env(); env["NODE_PATH"] = NODE_PATH
+        extra = ["--index", _INDEX_FILE[0]] + (["--fileset", _FILESET_FILE[0]] if _FILESET_FILE[0] else [])
+        r = subprocess.run(["node", AST, "--index-clients"] + paths + extra, capture_output=True, env=env,
+                           timeout=_batch_timeout(paths, 20))
+        return json.loads(r.stdout or b"{}")
+    except Exception as e:                                       # noqa: BLE001
+        print(f"  ! client index pass failed on {len(paths)} files: {str(e)[:120]}", file=sys.stderr)
+        return {}
 
 
 def _run_index(paths):
@@ -1548,8 +1591,15 @@ def analyze(bodies, host=None, manifest=None):
 
 _SLOT = re.compile(r"\{[^}]*\}")
 # An internal marker, or a name the minifier chose. Neither tells a reader what belongs in the slot.
-_POOR_SLOT = re.compile(r"^(EXPR|min|max|search|hash|call:.*|param:[a-z_$][a-z0-9_$]?|[a-z_$][a-z0-9_$]?)$",
-                        re.I)
+# The resolver names a value it could not read after the KIND of expression it was, `{unary}` for
+# `void 0`, `{nullliteral}`, `{object}`. That says nothing about the value, so it must not beat even a
+# minified parameter name when two copies of one endpoint are merged: claude.ai's
+# `/api/account_migrations/{param:e}` was replaced by `{unary}` from a call site passing `void 0`.
+_NODE_SLOTS = (r"unary|nullliteral|booleanliteral|numericliteral|bigintliteral|regexpliteral|object|array|"
+               r"sequence|new|arrowfunction|function|class|this|update|assignment|yield|await|deep|computed|"
+               r"spread|optionalcall|optionalmember|taggedtemplate|identifier")
+_POOR_SLOT = re.compile(r"^(EXPR|min|max|search|hash|call:.*|param:[a-z_$][a-z0-9_$]?|[a-z_$][a-z0-9_$]?|"
+                        + _NODE_SLOTS + r")$", re.I)
 
 
 def _slot_quality(t):
