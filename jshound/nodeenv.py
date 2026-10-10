@@ -14,7 +14,7 @@ What stays, and why each is load-bearing:
   NODE_OPTIONS    the user's own node configuration.
   HOME, TMPDIR    node's own temp and cache resolution.
   LANG, LC_*      decoding of the paths it is handed.
-  AMBIT_*, BP_*   the debug switches `static_ast.js` reads.
+  JSHOUND_*, BP_* the debug switches `static_ast.js` reads.
 """
 import os
 
@@ -22,7 +22,7 @@ _KEEP = (
     "PATH", "NODE_PATH", "NODE_OPTIONS",
     "HOME", "TMPDIR", "TMP", "TEMP",
     "LANG", "LC_ALL", "LC_CTYPE",
-    "AMBIT_OPTS_DEBUG", "AMBIT_BODY_DEBUG", "BP_DEBUG",
+    "JSHOUND_OPTS_DEBUG", "JSHOUND_BODY_DEBUG", "BP_DEBUG",
 )
 
 

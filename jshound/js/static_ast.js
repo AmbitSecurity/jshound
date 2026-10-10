@@ -2604,13 +2604,13 @@ const CACHE_OPS = new Set([
   "cancelQueries", "removeQueries", "refetchQueries", "resetQueries", "setQueryDefaults",
   "setInfiniteQueryData", "getQueryState", "isFetching", "isMutating",
 ]);
-const _OPTSDBG = !!process.env.AMBIT_OPTS_DEBUG;
+const _OPTSDBG = !!process.env.JSHOUND_OPTS_DEBUG;
 // A write whose body we could not resolve is a specific RE failure, and the failures are not all the same kind:
 // a local variable assigned two lines up is a scope walk, a call to a payload builder is an inlining problem, and a
-// FormData assembled across ten statements is a different job again. Under AMBIT_BODY_DEBUG each unresolved body
+// FormData assembled across ten statements is a different job again. Under JSHOUND_BODY_DEBUG each unresolved body
 // carries the SOURCE of the argument we gave up on, so the remaining work can be ranked by what actually occurs
 // rather than by what seems likely. Off by default, this is diagnostic weight, not output.
-const _BODYDBG = !!process.env.AMBIT_BODY_DEBUG;
+const _BODYDBG = !!process.env.JSHOUND_BODY_DEBUG;
 function _dbgBody(rec, node, callNode) {
   if (!_BODYDBG) return rec;
   if (node) {
