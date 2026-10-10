@@ -160,7 +160,7 @@ and checks the output above against it, so it cannot quietly stop being true.
 Against Grafana's own published OpenAPI spec, jshound recovers 89% of the documented API paths from
 the JavaScript alone, with the right HTTP method on every one it matches. On the same files, jsluice
 and LinkFinder recover 44%. Run end to end against 48 public apps with nothing signed into, 46 of
-which let it in, it read 41,357 files and found 12,848 requests, 3,498 of them GraphQL operations.
+which let it in, it read 41,355 files and found 12,849 requests, 3,498 of them GraphQL operations.
 The method and every number are in [bench/RESULTS.md](bench/RESULTS.md), and a 30-second comparison
 you can run yourself is in [bench/COMPARISON.md](bench/COMPARISON.md).
 
