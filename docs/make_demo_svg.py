@@ -79,7 +79,9 @@ def main():
         return 7 + len(f[1]) + 2 + len(f[2]) + 2 + len(f[3]) <= a.max_width
 
     def dull(f):
-        return "/_next" in f[1] or f[1].count("/") < 3
+        # A row whose verb is not known is in the output, honestly, but a sample of what the tool reads
+        # should show what it reads.
+        return "/_next" in f[1] or f[1].count("/") < 3 or f[0] == "UNKNOWN"
 
     withbody = [f for f in table if f[3].startswith('{"') and fits(f) and not dull(f)]
     plain = [f for f in table if not f[3] and fits(f) and not dull(f)]

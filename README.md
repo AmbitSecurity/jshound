@@ -3,7 +3,7 @@
 Recover every request a web app is built to make from the JavaScript it ships: method, URL, body,
 content type and headers.
 
-![jshound reading supabase.com/dashboard: 214 files in, 226 requests out, each with its body](docs/demo.svg)
+![jshound reading supabase.com/dashboard: 2,282 files in, 347 requests out, each with its body](docs/demo.svg)
 
 A single page app hands its whole API client to the browser. The URL, the method, the field names it
 sends and the headers it attaches are all in the bundle, so if the bundle can be read properly the
@@ -34,26 +34,28 @@ Each request it makes is printed as it goes, with its status:
 ```console
 $ jshound supabase.com/dashboard
   200     19K  https://supabase.com/dashboard
-  200    109K  https://frontend-assets.supabase.com/studio/1ee88e0fee29/_next/static/chunks/0c0hxoamwjsbw.js?dpl=dpl_9C2bDPvRyr2U75ouX1tQDMb1R81V
+  200     29K  https://frontend-assets.supabase.com/studio/8617532ae1a4/_next/static/chunks/37zx22xp9wy37.js?dpl=dpl_ESaSquAbnWrJqbvvyRh7F1qj5wWH
   ...
+  404     26K  https://frontend-assets.supabase.com/studio/8617532ae1a4/_next/static/chunks/dist/cli/index.js
   404     16K  https://supabase.com/dist/cli/index.js
   ...
-supabase.com  200  214 files (213 from frontend-assets.supabase.com, 1 from supabase.com)  ->  226 endpoints
+supabase.com  200  2282 files (2281 from frontend-assets.supabase.com, 1 from supabase.com)  ->  347 endpoints
               1 declared chunk(s) could not be fetched
               -> .jshound/supabase.com/endpoints.txt  (also requests.jsonl, urls.txt, openapi.json)
 ```
 
-213 of the 214 files came from `frontend-assets.supabase.com`, which is where the build lives and
-which nobody would put in a scope file. The 404 is a chunk the build declares that neither host
-served, and the summary says so rather than skipping it. Then every request, one per line (five of the
-226 here):
+2,281 of the 2,282 files came from `frontend-assets.supabase.com`, which is where the build lives
+and which nobody would put in a scope file. The page itself names 71 of them; the other 2,210 are
+lazy chunks and modules, found by following every chunk table and import until a round turned up
+nothing new. The two 404s are one chunk the build declares, tried on both hosts, and the summary
+counts it rather than skipping it. Then every request, one per line (five of the 347 here):
 
 ```
-POST   /platform/auth/{ref}/otp                                        {"phone":"state:phone"}
-POST   https://supabase.com/docs/api/search/fts     application/json   {"query":"computed:trim"}
-DELETE {BASE_PATH}/api/integrations/stripe-sync     application/json   {"projectRef":"input:e","startTime":"input:t"}
-POST   {url}/factors/recovery-codes/verify          application/json?  {"code":"state:code"}
-POST   {graphql}                                    application/json   {"operationName":"saveConsents","variables":{"consents":"[NewCreateConsentInput]","consentMeta":"ConsentMeta","consentString":"ConsentString"}}
+POST   /platform/auth/{ref}/otp                                     {"phone":"state:phone"}
+POST   https://supabase.com/docs/api/search/fts  application/json   {"query":"computed:trim"}
+DELETE {BASE_PATH}/api/integrations/stripe-sync  application/json   {"projectRef":"input:e","startTime":"input:t"}
+POST   {url}/factors/recovery-codes/verify       application/json?  {"code":"state:code"}
+POST   {graphql}                                 application/json   {"operationName":"saveConsents","variables":{"consents":"[NewCreateConsentInput]","consentMeta":"ConsentMeta","consentString":"ConsentString"}}
 ```
 
 Several targets at once, or a list on stdin:
@@ -152,6 +154,15 @@ and checks the output above against it, so it cannot quietly stop being true.
 4. **Build the request from the call.** The method comes from the options object or the wrapper's
    default, the body from the object being serialised, the content type from a `FormData`, a
    `JSON.stringify` or an explicit header, and the headers from the client's own defaults.
+
+## How well it works
+
+Against Grafana's own published OpenAPI spec, jshound recovers 89% of the documented API paths from
+the JavaScript alone, with the right HTTP method on every one it matches. On the same files, jsluice
+and LinkFinder recover 44%. Run end to end against 48 public apps with nothing signed into, 46 of
+which let it in, it read 41,357 files and found 12,848 requests, 3,498 of them GraphQL operations.
+The method and every number are in [bench/RESULTS.md](bench/RESULTS.md), and a 30-second comparison
+you can run yourself is in [bench/COMPARISON.md](bench/COMPARISON.md).
 
 ## Scope
 
