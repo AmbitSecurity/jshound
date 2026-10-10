@@ -72,7 +72,7 @@ Everything goes to `.jshound/<host>/`, or to `-o DIR`:
 | | |
 |---|---|
 | `endpoints.txt` | the table above, one request per line |
-| `requests.jsonl` | one JSON object per request: `method`, `url`, `body`, `content_type`, `headers`, `graphql`, and the page and file it came from |
+| `requests.jsonl` | one JSON object per request: `method`, `url`, `body`, `content_type`, `headers`, `graphql` or `rpc`, and the page and file it came from |
 | `urls.txt` | `METHOD URL` for the requests whose host is known, for tools that take a list |
 | `openapi.json` | an OpenAPI 3 document, to import into Burp, Caido or Postman |
 | `js/` | every file that was fetched |
@@ -101,6 +101,10 @@ jshound .jshound/supabase.com/js
   read at the call site. **`~{...}`** is a body whose listed fields are real but incomplete.
 - **`{graphql}`** is a GraphQL operation. Every operation goes to one endpoint, so the operation
   name, type and variables are the request, and they are written as its body.
+- **`/<package>.<Service>/<Method>`** is a Connect or gRPC-web call. A generated client builds those
+  URLs at call time from the service descriptors it ships, so they are read from the descriptors,
+  every method with its request fields. **`{connect}`** is the client's base URL when the bundle
+  does not name exactly one.
 
 ## Options
 

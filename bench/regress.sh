@@ -67,6 +67,11 @@ with contextlib.redirect_stderr(io.StringIO()):
         recs = recs + _graphql_operations(src)
     except ImportError:
         pass
+    try:
+        from jshound.cli import _with_rpc
+        recs = _with_rpc(src, recs)
+    except ImportError:
+        pass
 json.dump(recs, open(base + ".json", "w"))
 with open(base + ".requests.jsonl", "w") as fh:
     for line in to_lines(recs):

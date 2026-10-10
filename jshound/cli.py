@@ -49,21 +49,7 @@ def _graphql_operations(corpus):
         print(f"  ! GraphQL scan failed: {str(e)[:160]}", file=sys.stderr)
         return []
     ops = ops if isinstance(ops, list) else (ops or {}).get("operations") or []
-    page = {}
-    try:
-        for ln in open(os.path.join(corpus, "_origin.jsonl")):
-            row = json.loads(ln)
-            page.setdefault(row.get("f"), row)
-    except (OSError, ValueError):
-        pass
-    from urllib.parse import urlsplit
-    for op in ops:
-        row = page.get(os.path.basename(op.get("_file") or "")) or {}
-        if row.get("d"):
-            op.setdefault("_page", row["d"])
-        if row.get("u"):
-            op.setdefault("_host", urlsplit(row["u"]).hostname)
-    return ops
+    return _attribute(ops, corpus)
 
 
 def _node_problem():
@@ -81,6 +67,59 @@ def _node_problem():
     if major < 18:
         return f"node {v} is too old. jshound needs Node.js 18 or newer: https://nodejs.org"
     return None
+
+
+def _attribute(records, corpus):
+    """Give records the page and host their file came from, from the corpus's origin map."""
+    from urllib.parse import urlsplit
+    page = {}
+    try:
+        for ln in open(os.path.join(corpus, "_origin.jsonl")):
+            row = json.loads(ln)
+            page.setdefault(row.get("f"), row)
+    except (OSError, ValueError):
+        pass
+    for rec in records:
+        row = page.get(os.path.basename(rec.get("_file") or "")) or {}
+        if row.get("d"):
+            rec.setdefault("_page", row["d"])
+        if row.get("u"):
+            rec.setdefault("_host", urlsplit(row["u"]).hostname)
+    return records
+
+
+def _with_rpc(corpus, records):
+    """The records, with every Connect and gRPC-web method the client is generated for, see rpc.py.
+
+    A method the extractor found at a call site keeps that record: it is how the app actually calls
+    it, with the base and the body it really sends. Lovable calls
+    `${base}/lovable.agentgw.v1.CollectionLinksService/FindCollectionLinks` itself. They are matched on
+    the `<Service>/<Method>` the URL ends with, because the call site's base is often a slot where
+    the descriptor's is a path, or the reverse. The extractor's own reading of a service object,
+    `connect-rpc`, is the exception: it knows the method's name and nothing else, so the record read
+    from the descriptor replaces it. On Dropbox that is 77 methods gaining their base, their content
+    type and, where the bundle has the class, their request fields.
+    """
+    from .analyze import js_files
+    from .rpc import scan
+    try:
+        found = scan(js_files(corpus, with_inline=False))
+    except Exception as e:                                 # noqa: BLE001
+        print(f"  ! RPC descriptor scan failed: {str(e)[:160]}", file=sys.stderr)
+        return records
+
+    def tail(r):
+        return "/".join(str(r.get("template") or "").split("?")[0].rstrip("/").rsplit("/", 2)[-2:])
+
+    read = {f"{r['rpc']['service']}/{r['rpc']['method']}": r for r in found}
+    kept, called = [], set()
+    for r in records:
+        if r.get("sink") == "connect-rpc" and tail(r) in read:
+            continue
+        kept.append(r)
+        if (r.get("_kind") or "endpoint") == "endpoint" and str(r.get("method") or "POST").upper() == "POST":
+            called.add(tail(r))
+    return kept + _attribute([r for k, r in read.items() if k not in called], corpus)
 
 
 def _safe_name(name):
@@ -274,6 +313,7 @@ def cmd_map(a):
             with quiet:
                 records, paths = run(corpus, a.host, None)
                 records = records + _graphql_operations(corpus)
+                records = _with_rpc(corpus, records)
             rep["analyse_seconds"] = round(time.time() - t_analyse, 1)
             if a.verbose:
                 print(f"{pad}time: fetch {rep.get('fetch_seconds', 0)}s, analysis "

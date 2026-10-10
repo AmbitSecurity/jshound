@@ -163,6 +163,14 @@ def graphql_operations(bodies):
     return scan(bodies)
 
 
+def rpc_operations(bodies):
+    """The Connect and gRPC-web methods the client is generated for, read from the service
+    descriptors and objects it ships. See rpc.py."""
+    from .analyze import js_files
+    from .rpc import scan
+    return scan(js_files(bodies, with_inline=False))
+
+
 def residual(bodies, records_json):
     """What the extractor MISSED, bucketed. The only honest way to score a recon tool."""
     from .residual import classify

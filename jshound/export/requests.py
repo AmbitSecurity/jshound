@@ -87,8 +87,9 @@ _MEDIA = {"json": "application/json", "multipart": "multipart/form-data",
 # puts its own base URL in front, set somewhere the analysis did not follow. On supabase.com/dashboard
 # 168 of 226 requests are like that, and their base is the API host, not supabase.com, so pinning
 # them to the page would print a URL the app never requests.
+# A Connect transport hands its `baseUrl` to fetch as written, so a relative one is the page's too.
 _PAGE_RELATIVE = {"fetch", "XHR.open", "sendBeacon", "EventSource", "WebSocket", "Request",
-                  "axios", "route-const", None}
+                  "axios", "route-const", "connect-descriptor", None}
 
 
 def _url(r):
@@ -143,6 +144,8 @@ def to_lines(records):
             line["graphql"] = {"operation": r.get("op"), "type": r.get("op_type")}
             if r.get("document"):
                 line["graphql"]["query"] = r["document"]      # what makes it replayable
+        if r.get("rpc"):
+            line["rpc"] = r["rpc"]                            # service, method, and whether it streams
         if r.get("_page"):
             line["page"] = r["_page"]
         if r.get("_file"):
