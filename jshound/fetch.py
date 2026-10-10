@@ -576,6 +576,59 @@ def js_imports(paths, failed=None):
     return out
 
 
+def scan_files(paths):
+    """{path: chunk map with its "specifiers"} for each file, or None where a file could not be scanned.
+
+    One node process per BATCH of files, batches run in parallel, each file parsed once for its chunk
+    table and once for its imports. A node process per file, which this replaced, cost 0.08s to start
+    before parsing anything: lovable.dev's 10,361 files (median 1.4 KB) took 235 seconds to scan that
+    way. A batch that fails is retried file by file, so one bad file costs that file.
+    """
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+    js = os.path.join(os.path.dirname(os.path.abspath(__file__)), "js", "chunkmap.js")
+    env = node_env()
+    batches, cur, cur_bytes = [], [], 0
+    for fp in paths:
+        try:
+            size = os.path.getsize(fp)
+        except OSError:
+            size = 0
+        if cur and (len(cur) >= 64 or cur_bytes + size > 8_000_000):
+            batches.append(cur)
+            cur, cur_bytes = [], 0
+        cur.append(fp)
+        cur_bytes += size
+    if cur:
+        batches.append(cur)
+
+    def run(batch):
+        mb = sum(os.path.getsize(f) for f in batch if os.path.exists(f)) / 1e6
+        r = subprocess.run(["node", "--max-old-space-size=4096", js, "--batch"] + batch,
+                           capture_output=True, env=env, timeout=int(120 + 2 * len(batch) + 60 * mb))
+        if r.returncode != 0:
+            raise RuntimeError(f"chunkmap exited {r.returncode}")
+        return json.loads(r.stdout or b"{}")
+
+    def scan(batch):
+        try:
+            got = run(batch)
+            return {f: (None if (got.get(f) or {}).get("error") else got.get(f)) for f in batch}
+        except Exception:                                  # noqa: BLE001
+            if len(batch) == 1:
+                return {batch[0]: None}
+            out = {}
+            for f in batch:
+                out.update(scan([f]))
+            return out
+
+    results = {}
+    with ThreadPoolExecutor(SCAN_WORKERS) as ex:
+        for part in ex.map(scan, batches):
+            results.update(part)
+    return results
+
+
 def _chunk_map_or_none(path):
     """What one file declares, or None when it could not be read (and the caller counts that)."""
     from . import chunk_map
@@ -665,8 +718,11 @@ def _name(url):
 # One at a time, claude.ai's 1,258 files kept a single core busy for minutes while the rest sat idle.
 MAX_CHUNKS = 50000
 SCAN_WORKERS = max(2, min(16, os.cpu_count() or 4))
+# Downloads in flight at once. Measured on lovable.dev's CDN: a request takes 66 ms whether 8 or 32
+# run together, so 32 fetched 404 files a second where 8 fetched 110. It is latency, not bandwidth:
+# 80 MB over the whole crawl. 32 is about what a browser has in flight loading a heavy page.
+CHUNK_WORKERS = 32
 from . import SCAN_TIMEOUT  # noqa: E402
-CHUNK_WORKERS = 8
 
 
 def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, allow_private=False,
@@ -812,9 +868,9 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
                 if os.path.exists(fp):
                     files.append((u, fp))
             candidates = {}
-            with ThreadPoolExecutor(SCAN_WORKERS) as ex:
-                maps = list(ex.map(lambda f: _chunk_map_or_none(f[1]), files))
-            for (u, fp), res in zip(files, maps):
+            maps = scan_files([fp for _u, fp in files])
+            for u, fp in files:
+                res = maps.get(fp)
                 if res is None:
                     unscanned.add(fp)
                     continue
@@ -831,17 +887,13 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
                         cands = chunk_candidates(u, c, pub, page_base)
                         if cands and cands[0] not in candidates:
                             candidates[cands[0]] = (cands, "chunk-table" if kind == "chunks" else "speculative")
-            by_path = {fp: u for u, fp in files}
-            failed = []
-            for fp, specs in js_imports(sorted(by_path), failed=failed).items():
-                u = by_path.get(fp)
-                for spec in specs:
+            for u, fp in files:
+                for spec in ((maps.get(fp) or {}).get("specifiers") or []):
                     # Through the page's import map, as the browser resolves it. A bare package name
                     # the map does not mention was a build-time specifier, with no URL to fetch.
-                    tgt = imap.resolve(spec, u) if u else None
+                    tgt = imap.resolve(spec, u)
                     if tgt and tgt.startswith("http") and tgt not in candidates:
                         candidates[tgt] = ([tgt], "es-import")
-            unscanned.update(failed)
             frontier = []
             # Decide this round's work in one thread, fetch it in several, apply it in one. The
             # fetch is the only slow part, and it is the only part that touches nothing shared.

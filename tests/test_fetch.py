@@ -119,7 +119,7 @@ def test_a_file_that_cannot_be_scanned_is_counted(tmp_path, monkeypatch):
     monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, max_bytes=None: (
         (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
     monkeypatch.setattr(f, "host_is_private", lambda h: False)
-    monkeypatch.setattr(f, "_chunk_map_or_none", lambda path: None)
+    monkeypatch.setattr(f, "scan_files", lambda paths: {p: None for p in paths})
     rep = {}
     f.collect("https://x.test/", str(tmp_path), with_chunks=True, report=rep)
     assert rep.get("files_unscanned") == 1

@@ -66,4 +66,6 @@ function main() {
   process.stdout.write(JSON.stringify(out));
 }
 
-main();
+module.exports = { specifiers };
+
+if (require.main === module) main();
