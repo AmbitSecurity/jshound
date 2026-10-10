@@ -66,6 +66,23 @@ def _graphql_operations(corpus):
     return ops
 
 
+def _node_problem():
+    """None when node 18 or newer is on the PATH, else the sentence that says what to install."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        return ("node is not on your PATH. jshound reads JavaScript with Node.js, version 18 or newer: "
+                "https://nodejs.org")
+    try:
+        v = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=20).stdout.strip()
+        major = int(v.lstrip("v").split(".")[0])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None                                        # cannot tell; let the run say what fails
+    if major < 18:
+        return f"node {v} is too old. jshound needs Node.js 18 or newer: https://nodejs.org"
+    return None
+
+
 def _safe_name(name):
     return "".join(ch if ch.isalnum() or ch in ".-_" else "_" for ch in name)[:120] or "target"
 
@@ -161,6 +178,12 @@ def cmd_map(a):
     from .export import table as _table
 
     targets = _inputs(a)
+    # NODE FIRST. The extractors are JavaScript; without node a run "succeeded" with 0 endpoints, two
+    # `[Errno 2] ... 'node'` warnings, and the claim that the page's scripts make no requests.
+    problem = _node_problem() if targets else None
+    if problem:
+        print(f"jshound: {problem}", file=sys.stderr)
+        return 1
     if not targets:
         print("jshound: nothing to read. Give it a hostname, a URL or a directory, "
               "or pipe a list in.", file=sys.stderr)

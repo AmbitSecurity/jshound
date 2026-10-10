@@ -187,3 +187,16 @@ def test_a_mistake_gets_a_sentence_not_a_fetch(tmp_path):
 def test_nothing_to_read_is_an_error():
     r = _cli(stdin="")
     assert r.returncode == 1 and "nothing to read" in r.stderr
+
+
+def test_without_node_the_run_says_so_instead_of_finding_nothing(tmp_path):
+    """Without node a run "succeeded" with 0 endpoints and the claim that the scripts make no
+    requests, which is the one wrong answer a first-time user would believe."""
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    empty = tmp_path / "bin"
+    empty.mkdir()
+    r = subprocess.run([sys.executable, "-m", "jshound.cli", "examples/demo-app", "-o", str(tmp_path / "o")],
+                       capture_output=True, text=True, cwd=root, env={"PATH": str(empty)}, timeout=120)
+    assert r.returncode == 1 and "node is not on your PATH" in r.stderr, r.stderr
