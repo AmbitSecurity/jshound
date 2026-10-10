@@ -7,6 +7,7 @@ written into the corpus, from inside whoever's network ran the tool.
 """
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -24,7 +25,7 @@ def asked(monkeypatch):
     `host_is_private` itself classifies is asserted separately, on literal addresses."""
     seen = []
 
-    def fake_get(url, timeout=30, with_url=False, max_bytes=F.MAX_BODY):
+    def fake_get(url, timeout=30, with_url=False, **kw):
         seen.append(url)
         body = DOC if url == DOC_URL else "var a = 1;\nfetch('/v1/thing');\n"
         return (200, body, url) if with_url else (200, body)
@@ -52,7 +53,7 @@ def test_a_private_target_puts_private_space_in_scope(tmp_path, monkeypatch):
     doc = '<script src="http://127.0.0.1:3000/main.js"></script>'
     seen = []
 
-    def fake_get(url, timeout=30, with_url=False, max_bytes=F.MAX_BODY):
+    def fake_get(url, timeout=30, with_url=False, **kw):
         seen.append(url)
         body = doc if url == doc_url else "var a = 1;\n"
         return (200, body, url) if with_url else (200, body)
@@ -116,3 +117,72 @@ def test_a_response_is_read_only_up_to_the_cap():
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+# ---- redirects ----------------------------------------------------------------------------------
+
+class _Redirects(BaseHTTPRequestHandler):
+    hits = []
+
+    def do_GET(self):                                     # noqa: N802
+        type(self).hits.append(self.path)
+        port = self.server.server_port
+        to = {"/": f"http://localhost:{port}/secret", "/file": "file:///etc/passwd",
+              "/hop": "/landed/"}.get(self.path)
+        if to:
+            self.send_response(302)
+            self.send_header("Location", to)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = b"<html><p>landed</p></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):                            # noqa: D102
+        pass
+
+
+@pytest.fixture
+def redirects():
+    _Redirects.hits = []
+    srv = HTTPServer(("127.0.0.1", 0), _Redirects)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}"
+    srv.shutdown()
+    srv.server_close()
+
+
+def test_redirects_are_followed_hop_by_hop_and_each_hop_is_shown(redirects, monkeypatch):
+    shown = []
+    monkeypatch.setattr(F, "ON_REQUEST", lambda u, st, n: shown.append((u, st)))
+    status, body, final = F.http_get(redirects + "/hop", with_url=True)
+    assert (status, final) == (200, redirects + "/landed/") and "landed" in body
+    assert shown == [(redirects + "/hop", 302), (redirects + "/landed/", 200)]
+
+
+def test_a_redirect_the_scope_refuses_is_not_followed(redirects):
+    """Left to curl, a redirect went wherever it pointed, so a public page could send the fetch
+    into the private network that refusing private URLs exists to keep it out of."""
+    status, _body, final = F.http_get(redirects + "/", with_url=True,
+                                      allow=lambda u: urlsplit(u).hostname != "localhost")
+    assert (status, final) == (302, redirects + "/")
+    assert "/secret" not in _Redirects.hits
+
+
+def test_only_http_redirects_are_followed(redirects):
+    status, _body, final = F.http_get(redirects + "/file", with_url=True)
+    assert (status, final) == (302, redirects + "/file")
+
+
+def test_a_public_target_redirecting_into_private_space_is_refused_and_said(
+        redirects, tmp_path, monkeypatch, capsys):
+    """The whole path: the document's redirect is checked against the same rule as its scripts."""
+    monkeypatch.setattr(F, "host_is_private", lambda h: h == "localhost")
+    assert F.collect(redirects + "/", str(tmp_path), with_chunks=False) == 0
+    assert "/secret" not in _Redirects.hits
+    err = capsys.readouterr().err
+    assert "refused 1 URL" in err and "localhost" in err

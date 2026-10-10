@@ -57,7 +57,7 @@ def test_a_document_whose_only_script_is_an_inline_bootstrap_still_yields_javasc
         "https://x.test/_app/immutable/entry/app.B.js": (200, "export const dictionary = {};"),
         "https://x.test/_app/immutable/entry/chunk.C.js": (200, "export const q = 1;"),
     }
-    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False: (
+    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, **kw: (
         (*served.get(u, (404, "<!doctype html><html>")), u) if with_url
         else served.get(u, (404, "<!doctype html><html>"))))
 
@@ -80,7 +80,7 @@ def test_an_spa_catch_all_reached_through_a_bootstrap_import_is_still_rejected(t
         "https://x.test/_app/immutable/entry/start.A.js": (200, "<!doctype html><html>nope</html>"),
         "https://x.test/_app/immutable/entry/app.B.js": (200, "export const dictionary = {};"),
     }
-    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False: (
+    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, **kw: (
         (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
     # app.B.js and the inline script survive; start.A.js answered 200 with a document and does not.
     assert f.collect("https://x.test/", str(tmp_path), with_chunks=False) == 2
@@ -98,7 +98,7 @@ def test_a_lazy_chunks_own_static_imports_are_followed(tmp_path, monkeypatch):
         "https://x.test/assets/route.B4d5e6.js": (200, 'import { api } from "./shared.C7f8a9.js"; export const go = () => api();'),
         "https://x.test/assets/shared.C7f8a9.js": (200, 'export const api = () => fetch("/v1/ping");'),
     }
-    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, max_bytes=None: (
+    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, **kw: (
         (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
     monkeypatch.setattr(f, "host_is_private", lambda h: False)
     rep = {}
@@ -116,7 +116,7 @@ def test_a_file_that_cannot_be_scanned_is_counted(tmp_path, monkeypatch):
         "https://x.test/": (200, '<html><script src="/assets/app.A1b2c3.js"></script></html>'),
         "https://x.test/assets/app.A1b2c3.js": (200, "var a = 1;"),
     }
-    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, max_bytes=None: (
+    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, **kw: (
         (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
     monkeypatch.setattr(f, "host_is_private", lambda h: False)
     monkeypatch.setattr(f, "scan_files", lambda paths: {p: None for p in paths})
@@ -138,7 +138,7 @@ def test_imports_resolve_through_the_pages_import_map(tmp_path, monkeypatch):
         "https://x.test/assets/app/fathom.@apt6hu.ts": (200, 'export const t = () => fetch("/api/track");'),
         "https://x.test/vendor/lit.@x1y2z3.js": (200, "export const html = 1;"),
     }
-    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, max_bytes=None: (
+    monkeypatch.setattr(f, "http_get", lambda u, timeout=30, with_url=False, **kw: (
         (*served.get(u, (404, "")), u) if with_url else served.get(u, (404, ""))))
     monkeypatch.setattr(f, "host_is_private", lambda h: False)
     rep = {}
@@ -150,3 +150,27 @@ def test_imports_resolve_through_the_pages_import_map(tmp_path, monkeypatch):
     # and the map itself is data, not a script to analyse
     assert not any("importmap" in open(os.path.join(str(tmp_path), n)).read()
                    for n in os.listdir(str(tmp_path)) if n.startswith("inline_"))
+
+
+def test_a_redirected_page_is_read_where_it_landed(tmp_path, monkeypatch):
+    """demo.connectrpc.com redirects to connectrpc.com/demo/. Its scripts were resolved against the
+    host that was asked for, which answered `/_astro/page.js` with its catch-all page, so the app
+    read as two files and none of its code."""
+    import jshound.fetch as f
+    landed = "https://example.com/demo/"
+    served = {landed: (200, '<html><script type="module" src="/_astro/page.js"></script></html>'),
+              "https://example.com/_astro/page.js": (200, "fetch('/api/x');")}
+
+    def fake(u, timeout=30, with_url=False, **kw):
+        if u == "https://demo.example.com/":
+            u = landed                                    # where following the redirect ends up
+        st, body = served.get(u, (200, "<!doctype html><html>catch-all</html>"))
+        return (st, body, u) if with_url else (st, body)
+
+    monkeypatch.setattr(f, "http_get", fake)
+    monkeypatch.setattr(f, "host_is_private", lambda h: False)
+    assert f.collect("https://demo.example.com/", str(tmp_path), with_chunks=False) == 1
+    rows = [json.loads(l) for l in open(os.path.join(str(tmp_path), "_origin.jsonl"))]
+    assert "https://example.com/_astro/page.js" in {r["u"] for r in rows}
+    assert {r["d"] for r in rows} == {landed}             # and its requests resolve against it
+

@@ -104,7 +104,7 @@ def _wire(monkeypatch, refused_by):
     """A target that refuses some profiles and serves the rest."""
     seen = []
 
-    def fake(url, timeout=30, with_url=False, max_bytes=F.MAX_BODY):
+    def fake(url, timeout=30, with_url=False, **kw):
         seen.append((F.IMPERSONATE, url))
         if url.endswith("/") and F.IMPERSONATE in refused_by:
             body, st = CF, 403

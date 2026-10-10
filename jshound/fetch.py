@@ -226,92 +226,116 @@ def _session(profile, max_bytes=None):
 MAX_BODY = 64 * 1024 * 1024
 
 
-def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY):
+_REDIRECTS = (301, 302, 303, 307, 308)
+
+
+def _get_curl(url, timeout, max_bytes):
+    """One GET through curl_cffi, no redirect followed: (status, raw bytes, headers, encoding)."""
+    kw = {"allow_redirects": False}
+    if PROXY:
+        kw["proxies"] = {"http": PROXY, "https": PROXY}
+        if PROXY_CA:
+            kw["verify"] = PROXY_CA
+    # A plain read, so the connection goes back to the session for the next request; curl stops it
+    # at `max_bytes` (error 63). Only then is it read again as a stream, keeping the first
+    # `max_bytes`: a bundle cut off mid-file still parses to something, and dropping it would lose
+    # the whole target to one oversized file. A streamed read never reuses its connection, which is
+    # why it is the exception and not the rule.
+    try:
+        r = _session(IMPERSONATE, max_bytes).get(url, timeout=timeout, **kw)
+        return r.status_code, r.content, r.headers, getattr(r, "encoding", None)
+    except Exception as e:                                 # noqa: BLE001
+        if getattr(e, "code", None) != 63:
+            raise
+    r = _session(IMPERSONATE).get(url, timeout=timeout, stream=True, **kw)
+    try:
+        buf, n = [], 0
+        for part in r.iter_content():
+            buf.append(part)
+            n += len(part)
+            if n >= max_bytes:
+                break
+        return r.status_code, b"".join(buf)[:max_bytes], r.headers, getattr(r, "encoding", None)
+    finally:
+        try:
+            r.close()
+        except Exception:                                  # noqa: BLE001
+            pass
+
+
+def _get_urllib(url, timeout, max_bytes):
+    """The same through the standard library, for a Python without curl_cffi."""
+    import urllib.error
+    import urllib.request
+
+    class _Stay(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):               # noqa: D102
+            return None                                    # the 3xx comes back; http_get follows it
+
+    handlers = [_Stay()]
+    if PROXY:
+        import ssl
+        ctx = ssl.create_default_context(cafile=PROXY_CA) if PROXY_CA else None
+        handlers += [urllib.request.ProxyHandler({"http": PROXY, "https": PROXY}),
+                     urllib.request.HTTPSHandler(context=ctx)]
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    try:
+        with urllib.request.build_opener(*handlers).open(req, timeout=timeout) as fh:
+            return fh.status, fh.read(max_bytes), fh.headers, fh.headers.get_content_charset()
+    except urllib.error.HTTPError as e:
+        try:
+            raw = e.read(max_bytes)
+        except Exception:                                  # noqa: BLE001
+            raw = b""
+        return e.code, raw, e.headers, None
+
+
+def http_get(url, timeout=30, with_url=False, max_bytes=MAX_BODY, allow=None):
     """(status, text), or (status, text, final_url) with `with_url`.
 
     curl_cffi when installed, its TLS fingerprint gets past more WAFs.
 
-    `final_url` is the URL AFTER redirects, and callers that resolve relative references against a
-    document must use it. kit.svelte.dev redirects to svelte.dev and its markup links `./_app/...`;
-    resolving that against the requested URL built `kit.svelte.dev/_app/...`, which answers with an
-    error page, and the route table was reported as a parse failure on an app that has one.
+    REDIRECTS ARE FOLLOWED HERE, ONE HOP AT A TIME, so each hop is checked and shown. `allow`, when
+    given, is asked about every URL a redirect points to, and a refused hop ends the chain there.
+    Left to curl, a public target could redirect the fetch into the private network the
+    `--allow-private` rule exists to keep it out of. Only http and https are followed, and each hop
+    is reported as the request it is.
+
+    `final_url` is the URL after redirects, and a caller resolving a document's relative references
+    must use it. demo.connectrpc.com redirects to connectrpc.com/demo/; resolving its
+    `/_astro/page.js` against the requested host fetched the site's catch-all page instead of the
+    script, and the whole app read as two files.
 
     Truncated at `max_bytes`. A truncated body is still returned, because a bundle cut off mid-file
     still parses to something and the alternative is losing the whole target to one oversized file.
     """
     try:
-        from curl_cffi import requests as rq
+        from curl_cffi import requests as rq  # noqa: F401
+        once = _get_curl
     except ImportError:
-        pass
-    else:
-        # Any transport failure, DNS, TLS, connection reset, timeout, is a normal outcome when
-        # pointing at the open internet, not a reason to abort the run with a traceback.
+        once = _get_urllib
+    cur = url
+    # Any transport failure, DNS, TLS, connection reset, timeout, is a normal outcome when pointing
+    # at the open internet, not a reason to abort the run with a traceback.
+    try:
+        for hop in range(11):
+            status, raw, headers, enc = once(cur, timeout, max_bytes)
+            loc = headers.get("location") if status in _REDIRECTS and headers is not None else None
+            nxt = urljoin(cur, loc.strip()) if loc else None
+            if (not nxt or hop == 10 or urlsplit(nxt).scheme not in ("http", "https")
+                    or (allow is not None and not allow(nxt))):
+                break
+            _report(cur, status, len(raw))
+            cur = nxt
         try:
-            kw = {}
-            if PROXY:
-                kw["proxies"] = {"http": PROXY, "https": PROXY}
-                if PROXY_CA:
-                    kw["verify"] = PROXY_CA
-            # A plain read, so the connection goes back to the session for the next request; curl
-            # stops it at `max_bytes` (error 63). Only then is it read again as a stream, keeping the
-            # first `max_bytes`: a bundle cut off mid-file still parses to something, and dropping
-            # it would lose the whole target to one oversized file. A streamed read never reuses its
-            # connection, which is why it is the exception and not the rule.
-            try:
-                r = _session(IMPERSONATE, max_bytes).get(url, timeout=timeout, **kw)
-                raw = r.content
-            except Exception as e:                         # noqa: BLE001
-                if getattr(e, "code", None) != 63:
-                    raise
-                r = _session(IMPERSONATE).get(url, timeout=timeout, stream=True, **kw)
-                try:
-                    buf, n = [], 0
-                    for part in r.iter_content():
-                        buf.append(part)
-                        n += len(part)
-                        if n >= max_bytes:
-                            break
-                    raw = b"".join(buf)[:max_bytes]
-                finally:
-                    try:
-                        r.close()
-                    except Exception:                      # noqa: BLE001
-                        pass
-            enc = getattr(r, "encoding", None) or "utf-8"
-            try:
-                body = raw.decode(enc, "replace")
-            except LookupError:
-                body = raw.decode("utf-8", "replace")
-            final = str(getattr(r, "url", "") or url)
-            _report(url, r.status_code, len(raw))
-            return (r.status_code, body, final) if with_url else (r.status_code, body)
-        except Exception:                                  # noqa: BLE001
-            _report(url, None, 0)
-            return (None, "", url) if with_url else (None, "")
-    if True:
-        import urllib.error
-        import urllib.request
-        req = urllib.request.Request(url, headers={"User-Agent": _UA})
-        opener = urllib.request.urlopen
-        if PROXY:
-            import ssl
-            ctx = ssl.create_default_context(cafile=PROXY_CA) if PROXY_CA else None
-            opener = urllib.request.build_opener(
-                urllib.request.ProxyHandler({"http": PROXY, "https": PROXY}),
-                urllib.request.HTTPSHandler(context=ctx)).open
-        try:
-            with opener(req, timeout=timeout) as fh:
-                raw = fh.read(max_bytes)
-                body = raw.decode("utf-8", "replace")
-                final = fh.geturl() or url
-                _report(url, fh.status, len(raw))
-                return (fh.status, body, final) if with_url else (fh.status, body)
-        except urllib.error.HTTPError as e:
-            _report(url, e.code, 0)
-            return (e.code, "", url) if with_url else (e.code, "")
-        except Exception:                                   # noqa: BLE001
-            _report(url, None, 0)
-            return (None, "", url) if with_url else (None, "")
+            body = raw.decode(enc or "utf-8", "replace")
+        except LookupError:
+            body = raw.decode("utf-8", "replace")
+        _report(cur, status, len(raw))
+        return (status, body, cur) if with_url else (status, body)
+    except Exception:                                      # noqa: BLE001
+        _report(cur, None, 0)
+        return (None, "", cur) if with_url else (None, "")
 
 
 # WHAT A TARGET IS ALLOWED TO MAKE THIS FETCH.
@@ -725,6 +749,17 @@ CHUNK_WORKERS = 32
 from . import SCAN_TIMEOUT  # noqa: E402
 
 
+def _say_refused(refused):
+    """Named and counted, not silently dropped: a refusal is the one case where the target has
+    surface this did not read, and the fix is a flag rather than a mystery."""
+    if refused:
+        hosts = sorted({urlsplit(u).hostname or "?" for u in refused})
+        shown = ", ".join(hosts[:4]) + (", ..." if len(hosts) > 4 else "")
+        print(f"  ! refused {len(refused)} URL(s) the target named in private address space "
+              f"({shown}), pass --allow-private if that is surface you meant to read",
+              file=sys.stderr)
+
+
 def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, allow_private=False,
             report=None):
     os.makedirs(outdir, exist_ok=True)
@@ -743,30 +778,33 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
         return True
 
     global IMPERSONATE
-    status, html = http_get(url, timeout)
+    # `doc` is where the page actually landed, after redirects, and the base every reference in it
+    # resolves against, the way the browser resolves them.
+    status, html, doc = http_get(url, timeout, with_url=True, allow=in_scope)
     vendor = blocked_by(status, html)
     tried = [IMPERSONATE]
     if vendor and not _PINNED:
-        first = (status, html, vendor)
+        first = (status, html, vendor, doc)
         for prof in PROFILES:
             if prof in tried:
                 continue
             IMPERSONATE = prof
             tried.append(prof)
-            status, html = http_get(url, timeout)
+            status, html, doc = http_get(url, timeout, with_url=True, allow=in_scope)
             vendor = blocked_by(status, html)
             if not vendor:
                 break
         if vendor:
             # Every profile refused. Report the FIRST refusal, which is what the default client got,
             # rather than whichever happened to be tried last.
-            status, html, vendor = first
+            status, html, vendor, doc = first
             IMPERSONATE = PROFILES[0]
     if report is not None:
         report.update(status=status, bytes=len(html or ""), blocked=vendor, scripts_by_host={},
                       profile=IMPERSONATE, tried=tried)
     if not html:
         print(f"  ! {url} returned {status} with no body", file=sys.stderr)
+        _say_refused(refused)
         return 0
     if vendor:
         # Saved anyway, because the page is evidence of what refused us. But nothing it references is
@@ -783,12 +821,12 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
     rows, saved = [], 0
     hname = hashlib.sha1(url.encode()).hexdigest()[:20] + ".html"
     open(os.path.join(outdir, hname), "w", errors="replace").write(html)
-    rows.append({"f": hname, "u": url, "d": url})
+    rows.append({"f": hname, "u": doc, "d": doc})
 
     for i, src in enumerate(p.inline):
         n = f"inline_{i}_{hashlib.sha1(src.encode()).hexdigest()[:12]}.js"
         open(os.path.join(outdir, n), "w", errors="replace").write(src)
-        rows.append({"f": n, "u": url, "d": url})
+        rows.append({"f": n, "u": doc, "d": doc})
         saved += 1
         how["inline"] += 1
 
@@ -801,9 +839,9 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
     # An inline script's dynamic `import()` is a real fetch the browser performs, and on SvelteKit it
     # is the ONLY reference to the entry module, nothing links it as a `src`. Counted under its own
     # discovery path so the breakdown still sums to the total.
-    imap = ImportMap(url, p.importmaps)
-    bootstrap = [u for u in inline_imports(url, p.inline, imap) if u.startswith("http")]
-    todo = [urljoin(url, s) for s in p.srcs] + bootstrap
+    imap = ImportMap(doc, p.importmaps)
+    bootstrap = [u for u in inline_imports(doc, p.inline, imap) if u.startswith("http")]
+    todo = [urljoin(doc, s) for s in p.srcs] + bootstrap
     from_bootstrap = set(bootstrap)
     first = []
     for u in todo:
@@ -816,16 +854,16 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
     # remix.run's 112 modulepreloads took 10.7 seconds of a 12.6 second run.
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(CHUNK_WORKERS) as ex:
-        got = list(ex.map(lambda u: (u, http_get(u, timeout)), first))
+        got = list(ex.map(lambda u: (u, http_get(u, timeout, allow=in_scope)), first))
     declared_as = {}
     for k in p.origin:
-        declared_as.setdefault(urljoin(url, k), k)
+        declared_as.setdefault(urljoin(doc, k), k)
     for u, (st, body) in got:
         if st != 200 or not body or not is_javascript(body):
             continue
         n = _name(u)
         open(os.path.join(outdir, n), "w", errors="replace").write(body)
-        rows.append({"f": n, "u": u, "d": url})
+        rows.append({"f": n, "u": u, "d": doc})
         saved += 1
         raw = declared_as.get(u)
         if raw is None and u in from_bootstrap:
@@ -855,7 +893,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
     candidates = {}
     if with_chunks and seen:
         from concurrent.futures import ThreadPoolExecutor
-        page_base = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
+        page_base = f"{urlsplit(doc).scheme}://{urlsplit(doc).netloc}"
         scanned, frontier = set(), sorted(seen)
         while frontier and fetched_ok < max_chunks:
             rounds += 1
@@ -918,7 +956,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
             def fetch_one(item):
                 todo, kind = item
                 for cu in todo:
-                    st, body = http_get(cu, timeout)
+                    st, body = http_get(cu, timeout, allow=in_scope)
                     if st == 200 and body and is_javascript(body):
                         return cu, body, kind
                 return None, None, kind       # an SPA catch-all is a 404 wearing a 200
@@ -931,7 +969,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
                         continue
                     n = _name(cu)
                     open(os.path.join(outdir, n), "w", errors="replace").write(body)
-                    rows.append({"f": n, "u": cu, "d": url})
+                    rows.append({"f": n, "u": cu, "d": doc})
                     saved += 1
                     how[kind] += 1
                     fetched_ok += 1
@@ -955,14 +993,7 @@ def collect(url, outdir, with_chunks=True, max_chunks=MAX_CHUNKS, timeout=30, al
         if report is not None:
             report["files_unscanned"] = len(unscanned)
 
-    # Named and counted, not silently dropped: a refusal here is the one case where the target has
-    # surface this did not read, and the fix is a flag rather than a mystery.
-    if refused:
-        hosts = sorted({urlsplit(u).hostname or "?" for u in refused})
-        shown = ", ".join(hosts[:4]) + (", ..." if len(hosts) > 4 else "")
-        print(f"  ! refused {len(refused)} URL(s) the target named in private address space "
-              f"({shown}), pass --allow-private if that is surface you meant to read",
-              file=sys.stderr)
+    _say_refused(refused)
 
     with open(os.path.join(outdir, "_origin.jsonl"), "a") as fh:
         for r in rows:
