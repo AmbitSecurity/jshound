@@ -1,62 +1,58 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1367" height="542" viewBox="0 0 1367 542" font-family="ui-monospace, SFMono-Regular, &#x27;SF Mono&#x27;, Menlo, Consolas, &#x27;DejaVu Sans Mono&#x27;, monospace" font-size="14.5">
-<rect width="1367" height="542" rx="10" fill="#16181d"/>
-<path d="M0 10a10 10 0 0 1 10-10h1347a10 10 0 0 1 10 10v26H0z" fill="#1f222a"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1140" height="542" viewBox="0 0 1140 542" font-family="ui-monospace, SFMono-Regular, &#x27;SF Mono&#x27;, Menlo, Consolas, &#x27;DejaVu Sans Mono&#x27;, monospace" font-size="14.5">
+<rect width="1140" height="542" rx="10" fill="#16181d"/>
+<path d="M0 10a10 10 0 0 1 10-10h1120a10 10 0 0 1 10 10v26H0z" fill="#1f222a"/>
 <circle cx="22" cy="18" r="6" fill="#ff5f56"/>
 <circle cx="41" cy="18" r="6" fill="#ffbd2e"/>
 <circle cx="60" cy="18" r="6" fill="#27c93f"/>
 <text x="26.0" y="62" fill="#565f89" xml:space="preserve" textLength="8.7" lengthAdjust="spacingAndGlyphs">$</text>
 <text x="43.4" y="62" fill="#ffffff" xml:space="preserve" textLength="261.0" lengthAdjust="spacingAndGlyphs">jshound supabase.com/dashboard</text>
-<text x="43.4" y="85" fill="#9ece6a" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">200</text>
+<text x="43.4" y="85" fill="#7dcfff" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">307</text>
 <text x="156.5" y="85" fill="#565f89" xml:space="preserve" textLength="261.0" lengthAdjust="spacingAndGlyphs">https://supabase.com/dashboard</text>
-<text x="113.0" y="85" fill="#565f89" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">19K</text>
+<text x="104.3" y="85" fill="#565f89" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">128B</text>
 <text x="43.4" y="108" fill="#565f89" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">...</text>
-<text x="26.0" y="131" fill="#7aa2f7" xml:space="preserve" textLength="957.0" lengthAdjust="spacingAndGlyphs">supabase.com  200  2282 files (2281 from frontend-assets.supabase.com, 1 from supabase.com)  -&gt;  347 endpoints</text>
+<text x="26.0" y="131" fill="#7aa2f7" xml:space="preserve" textLength="957.0" lengthAdjust="spacingAndGlyphs">supabase.com  200  2282 files (2281 from frontend-assets.supabase.com, 1 from supabase.com)  -&gt;  387 endpoints</text>
 <text x="26.0" y="177" fill="#9ece6a" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">GET</text>
-<text x="86.9" y="177" fill="#c0caf5" xml:space="preserve" textLength="234.9" lengthAdjust="spacingAndGlyphs">/api/early_access_features/</text>
+<text x="86.9" y="177" fill="#c0caf5" xml:space="preserve" textLength="495.9" lengthAdjust="spacingAndGlyphs">https://api.supabase.com/platform/auth/{ref}/config/hooks</text>
 <text x="26.0" y="200" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
-<text x="86.9" y="200" fill="#c0caf5" xml:space="preserve" textLength="234.9" lengthAdjust="spacingAndGlyphs">/platform/auth/{ref}/invite</text>
-<text x="774.2" y="200" fill="#7dcfff" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">{&quot;email&quot;:&quot;input:t&quot;}</text>
-<text x="26.0" y="223" fill="#bb9af7" xml:space="preserve" textLength="43.5" lengthAdjust="spacingAndGlyphs">PATCH</text>
-<text x="86.9" y="223" fill="#c0caf5" xml:space="preserve" textLength="191.4" lengthAdjust="spacingAndGlyphs">/v1/branches/{param_n}</text>
-<text x="608.9" y="223" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
-<text x="26.0" y="246" fill="#7dcfff" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">HEAD</text>
-<text x="86.9" y="246" fill="#c0caf5" xml:space="preserve" textLength="261.0" lengthAdjust="spacingAndGlyphs">/v1/projects/{param_n}/actions</text>
-<text x="26.0" y="269" fill="#bb9af7" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">PUT</text>
-<text x="86.9" y="269" fill="#c0caf5" xml:space="preserve" textLength="504.6" lengthAdjust="spacingAndGlyphs">/v1/projects/{param_n}/config/auth/sso/providers/{param_e}</text>
-<text x="608.9" y="269" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
-<text x="26.0" y="292" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
-<text x="86.9" y="292" fill="#c0caf5" xml:space="preserve" textLength="417.6" lengthAdjust="spacingAndGlyphs">/v1/projects/{ref}/config/auth/signing-keys/{id}</text>
-<text x="774.2" y="292" fill="#7dcfff" xml:space="preserve" textLength="217.5" lengthAdjust="spacingAndGlyphs">{&quot;status&quot;:&quot;state:status&quot;}</text>
-<text x="26.0" y="315" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
-<text x="86.9" y="315" fill="#c0caf5" xml:space="preserve" textLength="269.7" lengthAdjust="spacingAndGlyphs">/v2/projects/{ref}/advisors/run</text>
-<text x="774.2" y="315" fill="#7dcfff" xml:space="preserve" textLength="556.8" lengthAdjust="spacingAndGlyphs">{&quot;data&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;attributes&quot;:{&quot;lints&quot;:&quot;computed:map&quot;}}}</text>
-<text x="26.0" y="338" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
-<text x="86.9" y="338" fill="#c0caf5" xml:space="preserve" textLength="348.0" lengthAdjust="spacingAndGlyphs">https://supabase.com/api/content/graphql</text>
-<text x="608.9" y="338" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
-<text x="774.2" y="338" fill="#7dcfff" xml:space="preserve" textLength="295.8" lengthAdjust="spacingAndGlyphs">{&quot;query&quot;:{},&quot;variables&quot;:&quot;input:t&quot;}</text>
+<text x="86.9" y="200" fill="#c0caf5" xml:space="preserve" textLength="443.7" lengthAdjust="spacingAndGlyphs">https://api.supabase.com/platform/auth/{ref}/invite</text>
+<text x="809.0" y="200" fill="#7dcfff" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">{&quot;email&quot;:&quot;input:t&quot;}</text>
+<text x="26.0" y="223" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="223" fill="#c0caf5" xml:space="preserve" textLength="469.8" lengthAdjust="spacingAndGlyphs">https://api.supabase.com/platform/auth/{ref}/magiclink</text>
+<text x="809.0" y="223" fill="#7dcfff" xml:space="preserve" textLength="200.1" lengthAdjust="spacingAndGlyphs">{&quot;email&quot;:&quot;state:email&quot;}</text>
+<text x="26.0" y="246" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="246" fill="#c0caf5" xml:space="preserve" textLength="530.7" lengthAdjust="spacingAndGlyphs">https://api.supabase.com/v1/branches/{branch_id_or_ref}/merge</text>
+<text x="809.0" y="246" fill="#7dcfff" xml:space="preserve" textLength="269.7" lengthAdjust="spacingAndGlyphs">{&quot;migration_version&quot;:&quot;input:t&quot;}</text>
+<text x="26.0" y="269" fill="#f7768e" xml:space="preserve" textLength="52.2" lengthAdjust="spacingAndGlyphs">DELETE</text>
+<text x="86.9" y="269" fill="#c0caf5" xml:space="preserve" textLength="400.2" lengthAdjust="spacingAndGlyphs">https://api.supabase.com/v1/branches/{param_n}</text>
+<text x="26.0" y="292" fill="#bb9af7" xml:space="preserve" textLength="43.5" lengthAdjust="spacingAndGlyphs">PATCH</text>
+<text x="86.9" y="292" fill="#c0caf5" xml:space="preserve" textLength="400.2" lengthAdjust="spacingAndGlyphs">https://api.supabase.com/v1/branches/{param_n}</text>
+<text x="26.0" y="315" fill="#7dcfff" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">HEAD</text>
+<text x="86.9" y="315" fill="#c0caf5" xml:space="preserve" textLength="469.8" lengthAdjust="spacingAndGlyphs">https://api.supabase.com/v1/projects/{param_n}/actions</text>
+<text x="26.0" y="338" fill="#bb9af7" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">PUT</text>
+<text x="86.9" y="338" fill="#c0caf5" xml:space="preserve" textLength="539.4" lengthAdjust="spacingAndGlyphs">https://api.supabase.com/v1/projects/{param_n}/api-keys/legacy</text>
 <text x="26.0" y="361" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
-<text x="86.9" y="361" fill="#c0caf5" xml:space="preserve" textLength="408.9" lengthAdjust="spacingAndGlyphs">https://supabase.com/docs/api/search/embeddings</text>
-<text x="608.9" y="361" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
-<text x="774.2" y="361" fill="#7dcfff" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">{&quot;query&quot;:&quot;input:e&quot;}</text>
-<text x="26.0" y="384" fill="#f7768e" xml:space="preserve" textLength="52.2" lengthAdjust="spacingAndGlyphs">DELETE</text>
-<text x="86.9" y="384" fill="#c0caf5" xml:space="preserve" textLength="348.0" lengthAdjust="spacingAndGlyphs">{BASE_PATH}/api/integrations/stripe-sync</text>
-<text x="608.9" y="384" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
-<text x="774.2" y="384" fill="#7dcfff" xml:space="preserve" textLength="400.2" lengthAdjust="spacingAndGlyphs">{&quot;projectRef&quot;:&quot;input:e&quot;,&quot;startTime&quot;:&quot;input:t&quot;}</text>
+<text x="86.9" y="361" fill="#c0caf5" xml:space="preserve" textLength="348.0" lengthAdjust="spacingAndGlyphs">https://supabase.com/api/content/graphql</text>
+<text x="643.7" y="361" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="809.0" y="361" fill="#7dcfff" xml:space="preserve" textLength="295.8" lengthAdjust="spacingAndGlyphs">{&quot;query&quot;:{},&quot;variables&quot;:&quot;input:t&quot;}</text>
+<text x="26.0" y="384" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
+<text x="86.9" y="384" fill="#c0caf5" xml:space="preserve" textLength="478.5" lengthAdjust="spacingAndGlyphs">https://supabase.com/dashboard/api/ai/feedback/classify</text>
+<text x="643.7" y="384" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="809.0" y="384" fill="#7dcfff" xml:space="preserve" textLength="121.8" lengthAdjust="spacingAndGlyphs">{&quot;prompt&quot;:&quot;?&quot;}</text>
 <text x="26.0" y="407" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
-<text x="86.9" y="407" fill="#c0caf5" xml:space="preserve" textLength="304.5" lengthAdjust="spacingAndGlyphs">{min}/platform/support/verify-email</text>
-<text x="608.9" y="407" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
-<text x="774.2" y="407" fill="#7dcfff" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">{&quot;token&quot;:&quot;input:e&quot;}</text>
+<text x="86.9" y="407" fill="#c0caf5" xml:space="preserve" textLength="408.9" lengthAdjust="spacingAndGlyphs">https://supabase.com/docs/api/search/embeddings</text>
+<text x="643.7" y="407" fill="#6b7394" xml:space="preserve" textLength="139.2" lengthAdjust="spacingAndGlyphs">application/json</text>
+<text x="809.0" y="407" fill="#7dcfff" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">{&quot;query&quot;:&quot;input:e&quot;}</text>
 <text x="26.0" y="430" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
 <text x="86.9" y="430" fill="#c0caf5" xml:space="preserve" textLength="234.9" lengthAdjust="spacingAndGlyphs">{url}/admin/users/{param_e}</text>
-<text x="608.9" y="430" fill="#6b7394" xml:space="preserve" textLength="147.9" lengthAdjust="spacingAndGlyphs">application/json?</text>
-<text x="774.2" y="430" fill="#7dcfff" xml:space="preserve" textLength="278.4" lengthAdjust="spacingAndGlyphs">{&quot;should_soft_delete&quot;:&quot;input:t&quot;}</text>
+<text x="643.7" y="430" fill="#6b7394" xml:space="preserve" textLength="147.9" lengthAdjust="spacingAndGlyphs">application/json?</text>
+<text x="809.0" y="430" fill="#7dcfff" xml:space="preserve" textLength="278.4" lengthAdjust="spacingAndGlyphs">{&quot;should_soft_delete&quot;:&quot;input:t&quot;}</text>
 <text x="26.0" y="453" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
 <text x="86.9" y="453" fill="#c0caf5" xml:space="preserve" textLength="304.5" lengthAdjust="spacingAndGlyphs">{url}/factors/recovery-codes/verify</text>
-<text x="608.9" y="453" fill="#6b7394" xml:space="preserve" textLength="147.9" lengthAdjust="spacingAndGlyphs">application/json?</text>
-<text x="774.2" y="453" fill="#7dcfff" xml:space="preserve" textLength="182.7" lengthAdjust="spacingAndGlyphs">{&quot;code&quot;:&quot;state:code&quot;}</text>
+<text x="643.7" y="453" fill="#6b7394" xml:space="preserve" textLength="147.9" lengthAdjust="spacingAndGlyphs">application/json?</text>
+<text x="809.0" y="453" fill="#7dcfff" xml:space="preserve" textLength="182.7" lengthAdjust="spacingAndGlyphs">{&quot;code&quot;:&quot;state:code&quot;}</text>
 <text x="26.0" y="476" fill="#e0af68" xml:space="preserve" textLength="34.8" lengthAdjust="spacingAndGlyphs">POST</text>
 <text x="86.9" y="476" fill="#c0caf5" xml:space="preserve" textLength="382.8" lengthAdjust="spacingAndGlyphs">{url}/oauth/authorizations/{param_e}/consent</text>
-<text x="608.9" y="476" fill="#6b7394" xml:space="preserve" textLength="147.9" lengthAdjust="spacingAndGlyphs">application/json?</text>
-<text x="774.2" y="476" fill="#7dcfff" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">{&quot;action&quot;:&quot;string&quot;}</text>
+<text x="643.7" y="476" fill="#6b7394" xml:space="preserve" textLength="147.9" lengthAdjust="spacingAndGlyphs">application/json?</text>
+<text x="809.0" y="476" fill="#7dcfff" xml:space="preserve" textLength="165.3" lengthAdjust="spacingAndGlyphs">{&quot;action&quot;:&quot;string&quot;}</text>
 <text x="26.0" y="499" fill="#565f89" xml:space="preserve" textLength="26.1" lengthAdjust="spacingAndGlyphs">...</text>
 </svg>

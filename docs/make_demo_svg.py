@@ -80,8 +80,10 @@ def main():
 
     def dull(f):
         # A row whose verb is not known is in the output, honestly, but a sample of what the tool reads
-        # should show what it reads.
-        return "/_next" in f[1] or f[1].count("/") < 3 or f[0] == "UNKNOWN"
+        # should show what it reads: a whole request, so not a path with no host, and not a slot that
+        # only names the kind of expression it could not read.
+        return ("/_next" in f[1] or f[1].count("/") < 3 or f[0] == "UNKNOWN" or f[1].startswith("/")
+                or re.search(r"\{(unary|nullliteral|object|array|sequence|new|EXPR|min[_0-9]*|call_[^}]*)\}", f[1]) is not None)
 
     withbody = [f for f in table if f[3].startswith('{"') and fits(f) and not dull(f)]
     plain = [f for f in table if not f[3] and fits(f) and not dull(f)]

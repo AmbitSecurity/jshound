@@ -3,15 +3,13 @@
 Recover every request a web app is built to make from the JavaScript it ships: method, URL, body,
 content type and headers.
 
-![jshound reading supabase.com/dashboard: 2,282 files in, 347 requests out, each with its body](docs/demo.svg)
+![jshound reading supabase.com/dashboard: 2,282 files in, 387 requests out, each with its body](docs/demo.svg)
 
-A single page app hands its whole API client to the browser. The URL, the method, the field names it
-sends and the headers it attaches are all in the bundle, so if the bundle can be read properly the
-API does not have to be discovered by clicking through the UI. jshound fetches the bundle, follows
-every lazily loaded chunk, parses all of it, and writes down the requests.
+A single page app ships its whole API client to the browser. jshound downloads that JavaScript,
+follows every lazily loaded chunk, parses all of it, and writes down each request the code makes.
 
-It sends nothing to the app's API. The only requests it makes are GETs for the page and the
-JavaScript a browser would download, and everything after that happens against files on disk.
+It only requests the page and the JavaScript files a browser would download. Nothing is sent to the
+app's API.
 
 ## Install
 
@@ -29,33 +27,28 @@ Needs Python 3.10 or newer and Node 18 or newer.
 jshound supabase.com/dashboard
 ```
 
-Each request it makes is printed as it goes, with its status:
-
 ```console
 $ jshound supabase.com/dashboard
-  200     19K  https://supabase.com/dashboard
-  200     29K  https://frontend-assets.supabase.com/studio/8617532ae1a4/_next/static/chunks/37zx22xp9wy37.js?dpl=dpl_ESaSquAbnWrJqbvvyRh7F1qj5wWH
+  307    128B  https://supabase.com/dashboard
+  200     19K  https://supabase.com/dashboard/org
+  200     28K  https://frontend-assets.supabase.com/studio/8617532ae1a4/_next/static/chunks/1p849pzlxcp4n.js?dpl=dpl_ESaSquAbnWrJqbvvyRh7F1qj5wWH
   ...
-  404     26K  https://frontend-assets.supabase.com/studio/8617532ae1a4/_next/static/chunks/dist/cli/index.js
-  404     16K  https://supabase.com/dist/cli/index.js
-  ...
-supabase.com  200  2282 files (2281 from frontend-assets.supabase.com, 1 from supabase.com)  ->  347 endpoints
+supabase.com  200  2282 files (2281 from frontend-assets.supabase.com, 1 from supabase.com)  ->  387 endpoints
               1 declared chunk(s) could not be fetched
               -> .jshound/supabase.com/endpoints.txt  (also requests.jsonl, urls.txt, openapi.json)
 ```
 
-2,281 of the 2,282 files came from `frontend-assets.supabase.com`, which is where the build lives
-and which nobody would put in a scope file. The page itself names 71 of them; the other 2,210 are
-lazy chunks and modules, found by following every chunk table and import until a round turned up
-nothing new. The two 404s are one chunk the build declares, tried on both hosts, and the summary
-counts it rather than skipping it. Then every request, one per line (five of the 347 here):
+- It fetched the page and every script the page loads, including the 2,281 files on
+  `frontend-assets.supabase.com`, where supabase's build lives.
+- It found the lazily loaded chunks and imports in those files, fetched them, and repeated until no
+  new files turned up.
+- It read every request in the code, one per line:
 
 ```
-POST   /platform/auth/{ref}/otp                                     {"phone":"state:phone"}
-POST   https://supabase.com/docs/api/search/fts  application/json   {"query":"computed:trim"}
-DELETE {BASE_PATH}/api/integrations/stripe-sync  application/json   {"projectRef":"input:e","startTime":"input:t"}
-POST   {url}/factors/recovery-codes/verify       application/json?  {"code":"state:code"}
-POST   {graphql}                                 application/json   {"operationName":"saveConsents","variables":{"consents":"[NewCreateConsentInput]","consentMeta":"ConsentMeta","consentString":"ConsentString"}}
+POST    https://api.supabase.com/platform/auth/{ref}/otp                                       {"phone":"state:phone"}
+DELETE  https://api.supabase.com/v1/projects/{param_n}/functions/{param_e}
+DELETE  https://supabase.com/dashboard/api/integrations/stripe-sync     application/json   {"projectRef":"input:e","startTime":"input:t"}
+POST    https://supabase.com/docs/api/search/fts                        application/json   {"query":"computed:trim"}
 ```
 
 Several targets at once, or a list on stdin:
@@ -63,6 +56,18 @@ Several targets at once, or a list on stdin:
 ```bash
 jshound app.example.com api.example.com
 cat scope.txt | jshound
+```
+
+Files already on disk, such as a previous run's `js/` folder, are read without touching the network:
+
+```console
+$ jshound examples/demo-app
+GET    https://demo-app.test/api/feature-flags
+POST   https://demo-app.test/t/events                                  {"sid":"?","evt":"?"}
+DELETE https://demo-app.test/v1/sessions/current
+POST   {baseUrl}/v1/media                         multipart/form-data  {"file":"file-upload"}
+POST   {baseUrl}/v1/subscribe                     application/json     {"email":"computed:trim","pageUri":"state:href"}
+GET    {baseUrl}/v1/users/{param_o}/profile
 ```
 
 ## What gets saved
@@ -77,106 +82,22 @@ Everything goes to `.jshound/<host>/`, or to `-o DIR`:
 | `openapi.json` | an OpenAPI 3 document, to import into Burp, Caido or Postman |
 | `js/` | every file that was fetched |
 
-Nothing is truncated. A long body is a long line.
-
-To read it again without touching the network, point jshound at the folder:
-
-```bash
-jshound .jshound/supabase.com/js
-```
-
 ## Reading the output
 
-- **A full URL** is what the browser itself resolves: a `fetch`, an `XMLHttpRequest`, a beacon or a
-  WebSocket with a path, resolved against the page it ran on.
-- **A bare path** like `/platform/auth/{ref}/otp` came through the app's own API client, which puts
-  a base URL in front of it. The base is set somewhere jshound did not follow, so the host is not
-  guessed. On supabase that base is the API host, not `supabase.com`.
-- **`{name}` at the start**, like `{BASE_PATH}` or `{url}`, is a base the code keeps in a variable,
-  named the way the code names it.
-- **`{name}` in a path** is a parameter. `{param_n}` means the code gave it no better name.
-- **In a body**, each value says where the field's value comes from: `input:` is an argument,
-  `state:` is a property of an object, `computed:` is the result of a call, `?` is not known.
-- **`application/json?`** is a content type inferred from the other requests in the same file, not
-  read at the call site. **`~{...}`** is a body whose listed fields are real but incomplete.
-- **`{graphql}`** is a GraphQL operation. Every operation goes to one endpoint, so the operation
-  name, type and variables are the request, and they are written as its body.
-- **`/<package>.<Service>/<Method>`** is a Connect or gRPC-web call. A generated client builds those
-  URLs at call time from the service descriptors it ships, so they are read from the descriptors,
-  every method with its request fields. **`{connect}`** is the client's base URL when the bundle
-  does not name exactly one.
-
-## Options
-
-| | |
-|---|---|
-| `-o DIR` | where results go (default `.jshound/<host>`) |
-| `-q` | do not print each request as it is made |
-| `-v` | also print the analysis log |
-| `--max-chunks N` | stop after this many lazy chunks and imports (default 50000). Hitting it is printed, with how many were declared |
-| `--no-chunks` | do not follow lazy chunks |
-| `--proxy URL` | send every request through a proxy (or set `JSHOUND_PROXY`) |
-| `--proxy-ca FILE` | the CA certificate of a proxy that intercepts TLS |
-| `--client PROFILE` | pin one browser TLS profile instead of rotating when blocked |
-| `--allow-private` | allow URLs in private address space (see Scope) |
-
-## Try it offline
-
-`examples/demo-app` is a five line webpack bundle and its page, already on disk:
-
-```console
-$ jshound examples/demo-app
-GET    https://demo-app.test/api/feature-flags
-POST   https://demo-app.test/t/events                                  {"sid":"?","evt":"?"}
-DELETE https://demo-app.test/v1/sessions/current
-POST   {baseUrl}/v1/media                         multipart/form-data  {"file":"file-upload"}
-POST   {baseUrl}/v1/subscribe                     application/json     {"email":"computed:trim","pageUri":"state:href"}
-GET    {baseUrl}/v1/users/{param_o}/profile
-```
-
-Six requests across four different sinks (`fetch`, `XMLHttpRequest.open`, `sendBeacon`, and a class
-wrapping `fetch`), with a verb on each. The three under `{baseUrl}` belong to a class that takes its
-base URL as a constructor argument, which is why the host is not filled in. A test runs this command
-and checks the output above against it, so it cannot quietly stop being true.
+- **`{...}`** is a value jshound could not resolve, written as the code writes it: `{baseUrl}`,
+  `{window.__CONFIG__.apiBaseUrl}`. In a path, `{ref}` is a parameter, and `{param_o}` is the
+  function parameter `o`.
+- **A path with no host**, like `/api/surveys/`, goes through code jshound does not follow to its
+  base yet. `requests.jsonl` names the file it came from.
+- **Body values** say where each field's value comes from: `input:` an argument, `state:` a property
+  of an object, `computed:` the result of a call, `?` unknown.
+- **`application/json?`** is a content type inferred from the file's other requests rather than read
+  at the call site. **`~{...}`** is a body that has more fields than the ones listed.
+- **`{graphql}`** is a GraphQL operation, with its name, type and variables as the body.
 
 ## How it works
 
-1. **Collect the whole bundle.** A code split app loads most of its code later and never writes
-   those URLs down. Webpack ships a function that builds them, so jshound reads that function out of
-   the syntax tree, evaluates it for every chunk id it can find, fetches the results, and repeats
-   until a round turns up nothing new. Nothing the target ships is executed.
-
-2. **Find the call sites, not the strings.** Every file is parsed with Babel, looking for the places
-   a request is made: `fetch`, `axios`, `XMLHttpRequest.open`, `sendBeacon`, `EventSource`,
-   `WebSocket`, and the wrapper most codebases put in front of them.
-
-3. **Resolve each argument back to a value.** `${this.baseUrl}/orgs/${id}/members` is three values
-   from three places, often in different files. Every export, constant and property assignment in
-   the bundle is indexed first, and each argument is traced through it. A value the bundle disagrees
-   about is left as a named slot rather than filled with one guess.
-
-4. **Build the request from the call.** The method comes from the options object or the wrapper's
-   default, the body from the object being serialised, the content type from a `FormData`, a
-   `JSON.stringify` or an explicit header, and the headers from the client's own defaults.
-
-## How well it works
-
-Against Grafana's own published OpenAPI spec, jshound recovers 89% of the documented API paths from
-the JavaScript alone, with the right HTTP method on every one it matches. On the same files, jsluice
-and LinkFinder recover 44%. Run end to end against 48 public apps with nothing signed into, 47 of
-which let it in, it read 41,217 files and found 13,034 requests, 3,499 of them GraphQL operations.
-The method and every number are in [bench/RESULTS.md](bench/RESULTS.md), and a 30-second comparison
-you can run yourself is in [bench/COMPARISON.md](bench/COMPARISON.md).
-
-## Scope
-
-Scope governs what you may test, not what you may read. A chunk named by the page's own runtime is
-that page's code wherever it is hosted: supabase's lives on `frontend-assets.supabase.com`, and
-neither that nor any other CDN host is in anyone's scope file. jshound fetches those scripts and
-sends those hosts nothing else.
-
-It refuses any URL a target names in private address space (loopback, RFC1918, link local) unless
-the target you gave it is itself private, or you pass `--allow-private`.
+![Collect, parse, trace, write: one request traced from a config module, through an axios client, to its call site](docs/how-it-works.svg)
 
 ## Bundlers it handles
 
@@ -189,30 +110,50 @@ the target you gave it is itself private, or you pass `--allow-private`.
 | Vite / Rollup | yes | n/a | paths are written down (`__vite__mapDeps`); flat ESM has no registry to walk |
 | esbuild | yes | n/a | same |
 | Parcel | yes | n/a | the runtime global is suffixed per build (`parcelRequire5707`) and the chunk table is an object, not an array |
-| Metro (React Native) | n/a | n/a | ships one bundle, no chunks; detected by `__METRO_GLOBAL_PREFIX__`, since its `__d`/`__r` registry is too generic to match |
+| Metro (React Native) | n/a | n/a | ships one bundle, no chunks; detected by `__METRO_GLOBAL_PREFIX__` |
 | webpack Module Federation | yes | yes | the builder carries no id map, so ids are taken from the `__webpack_require__.e(480)` call sites |
 
-Module ids come in three flavours: numeric (`{134: fn}`), named (`{"src/vector/app.tsx": fn}`) and
-deterministic (`{"++os": fn}`). The registry is recognised by *shape*, because a key-format test
-rejected 848 real modules on GitLab.
+## Scope
 
-## What it does not do
+jshound requests the target you give it, and the JavaScript files that target's pages load, wherever
+they are hosted. For supabase that is mostly `frontend-assets.supabase.com`. These are public static
+files that any visitor's browser downloads. Those other hosts get nothing but those GETs.
 
-- **It does not confirm anything against the server.** These are the requests the client is built
-  to make. Some will be gone or gated.
-- **It does not log in.** Code that only loads for a signed in user is not in what an anonymous
-  browser downloads, so its requests are not found.
-- **It can be blocked.** A WAF that challenges the first request is reported as `blocked by <vendor>`.
-  jshound imitates the newest Chrome, Firefox and Safari its curl_cffi knows, in that order, so keep
-  curl_cffi current: a year-old browser gets challenged where a current one gets through.
-  `--proxy` helps with rate limits and IP bans but not with a challenge.
-- **An app that builds its script tags at runtime** hides those scripts from a fetch, and their
-  requests are missing.
+It refuses any URL a target names in private address space (loopback, RFC1918, link local), unless
+the target you gave it is itself private or you pass `--allow-private`.
+
+## Options
+
+| | |
+|---|---|
+| `-o DIR` | where results go (default `.jshound/<host>`) |
+| `-q` | do not print each request as it is made |
+| `-v` | also print the analysis log |
+| `--max-chunks N` | stop after this many lazy chunks and imports (default 50000) |
+| `--no-chunks` | do not follow lazy chunks |
+| `--proxy URL` | send every request through a proxy (or set `JSHOUND_PROXY`) |
+| `--proxy-ca FILE` | the CA certificate of a proxy that intercepts TLS |
+| `--client PROFILE` | pin one browser TLS profile instead of rotating when blocked |
+| `--allow-private` | allow URLs in private address space (see Scope) |
+
+## Limitations
+
+- **The requests are read from code, not tested.** A request can be in the bundle and still be gone
+  from the server, behind a feature flag, or limited to admins. jshound tells you what the client
+  can send, not what the server accepts.
+- **Code that loads only after sign-in is not found.** If an app downloads its billing pages only
+  once you are logged in, jshound, which is not logged in, never sees that code.
+- **A WAF can block it.** If the first request gets a challenge page, for example Cloudflare's, the
+  run reports `blocked by Cloudflare` and reads nothing. jshound imitates the newest Chrome, Firefox
+  and Safari that curl_cffi knows, so keep curl_cffi up to date. `--proxy` helps with rate limits and
+  IP bans, not with challenges.
+- **Scripts added at runtime are missed.** A script the page inserts with
+  `document.createElement("script")`, using a URL it gets from an API call, is not in anything
+  jshound downloads.
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md). A change to extraction is measured by diffing requests, not by
-comparing totals: `bench/regress.sh` does that, and the reason it exists is in its header.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
