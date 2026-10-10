@@ -95,63 +95,64 @@ the call, the sink it came from, and whether the path resolved fully or still co
 
 ## 48 public apps, end to end
 
-Every app in `bench/targets.txt`, run on 2026-10-09 with the one command, from one machine, as
+Every app in `bench/targets.txt`, run on 2026-10-10 with the one command, from one machine, as
 `python3 bench/live.py bench/targets.txt --tag <tag>` reruns it. Nothing was signed into, so this
 is what a logged-out browser downloads. Sites change weekly; the method is the claim, not the digits.
 
-46 of 48 apps read: **41,355 files, 12,849 requests**, 5,317 of them with a
-body and 3,498 GraphQL operations. 37 declared chunks could not be fetched, no file failed to
-scan, and no limit was reached. Blocked: www.reddit.com (HTTP 403), www.tesla.com (Akamai).
-All 48 took 37 minutes; the largest, lovable.dev at 10,362 files, took 107 seconds.
+47 of 48 apps read: **41,217 files, 13,034 requests**, 5,522 of them with a body, 3,499 GraphQL
+operations and 231 Connect RPC methods. 37 declared chunks could not be fetched, no file failed to
+scan, and no limit was reached. Blocked: www.reddit.com (HTTP 403). All 48 took 42 minutes; the
+largest, lovable.dev at 10,362 files, took 139 seconds.
 
 | app | files read | requests | with a body | GraphQL | time |
 |---|---:|---:|---:|---:|---:|
-| lovable.dev | 10,362 | 2,048 | 618 | 0 | 107s |
-| claude.ai | 2,921 | 1,624 | 299 | 1 | 170s |
-| play.grafana.org | 761 | 1,513 | 80 | 0 | 111s |
-| app.hex.tech | 1,448 | 1,332 | 1,227 | 1,217 | 101s |
-| us.posthog.com | 2,140 | 998 | 61 | 1 | 98s |
-| railway.com | 872 | 975 | 967 | 966 | 62s |
-| gitlab.com/explore | 1,394 | 825 | 660 | 622 | 196s |
-| app.twenty.com | 1,161 | 460 | 439 | 436 | 85s |
-| discord.com/app | 5,793 | 418 | 194 | 10 | 187s |
-| supabase.com/dashboard | 2,282 | 347 | 172 | 4 | 121s |
-| svelte.dev | 56 | 342 | 4 | 0 | 12s |
-| dashboard.clerk.com | 153 | 313 | 52 | 0 | 27s |
-| app.amplitude.com | 596 | 271 | 253 | 216 | 40s |
-| open.spotify.com | 166 | 144 | 0 | 0 | 65s |
-| demo.home-assistant.io | 1,031 | 132 | 11 | 0 | 37s |
-| www.dropbox.com | 6 | 116 | 8 | 0 | 38s |
-| coda.io | 26 | 109 | 40 | 0 | 27s |
-| retool.com | 45 | 94 | 2 | 0 | 12s |
-| chatgpt.com | 920 | 85 | 38 | 0 | 49s |
-| www.tldraw.com | 193 | 77 | 24 | 0 | 36s |
-| x.com | 2,125 | 76 | 32 | 0 | 51s |
-| meta.discourse.org | 167 | 69 | 18 | 0 | 47s |
-| app.cal.com | 84 | 68 | 9 | 0 | 24s |
-| github.com | 1,313 | 63 | 38 | 20 | 54s |
-| linear.app | 725 | 44 | 19 | 5 | 25s |
+| lovable.dev | 10,362 | 2,082 | 644 | 0 | 139s |
+| claude.ai | 2,921 | 1,744 | 418 | 1 | 202s |
+| play.grafana.org | 761 | 1,513 | 80 | 0 | 109s |
+| app.hex.tech | 1,448 | 1,332 | 1,227 | 1,217 | 111s |
+| us.posthog.com | 2,140 | 998 | 61 | 1 | 106s |
+| railway.com | 872 | 975 | 967 | 966 | 69s |
+| gitlab.com/explore | 1,394 | 825 | 660 | 622 | 198s |
+| app.twenty.com | 1,161 | 460 | 439 | 436 | 91s |
+| discord.com/app | 5,793 | 418 | 194 | 10 | 190s |
+| supabase.com/dashboard | 2,282 | 347 | 172 | 4 | 140s |
+| svelte.dev | 56 | 342 | 4 | 0 | 13s |
+| dashboard.clerk.com | 153 | 313 | 52 | 0 | 30s |
+| app.amplitude.com | 596 | 271 | 253 | 216 | 44s |
+| open.spotify.com | 166 | 144 | 0 | 0 | 71s |
+| demo.home-assistant.io | 1,031 | 132 | 11 | 0 | 39s |
+| www.dropbox.com | 6 | 116 | 63 | 0 | 40s |
+| coda.io | 26 | 109 | 40 | 0 | 30s |
+| retool.com | 45 | 94 | 2 | 0 | 13s |
+| www.tldraw.com | 193 | 77 | 24 | 0 | 40s |
+| x.com | 2,125 | 76 | 32 | 0 | 57s |
+| chatgpt.com | 695 | 72 | 30 | 0 | 60s |
+| meta.discourse.org | 167 | 69 | 18 | 0 | 53s |
+| app.cal.com | 84 | 68 | 9 | 0 | 28s |
+| github.com | 1,313 | 63 | 38 | 20 | 82s |
+| linear.app | 725 | 44 | 19 | 5 | 28s |
 | zapier.com/app/dashboard | 89 | 43 | 12 | 0 | 24s |
-| app.slack.com | 17 | 42 | 2 | 0 | 12s |
+| app.slack.com | 17 | 42 | 2 | 0 | 13s |
+| mixpanel.com | 684 | 41 | 2 | 0 | 31s |
 | www.solidjs.com | 1,056 | 41 | 2 | 0 | 41s |
-| mixpanel.com | 684 | 41 | 2 | 0 | 30s |
-| nuxt.com | 195 | 28 | 11 | 0 | 43s |
-| www.figma.com | 48 | 22 | 7 | 0 | 19s |
-| vercel.com | 72 | 19 | 1 | 0 | 23s |
-| www.notion.so | 1,717 | 19 | 2 | 0 | 78s |
-| app.element.io | 12 | 12 | 1 | 0 | 18s |
-| www.loom.com | 76 | 9 | 2 | 0 | 16s |
+| airtable.com | 69 | 33 | 10 | 1 | 37s |
+| nuxt.com | 195 | 28 | 11 | 0 | 46s |
+| www.figma.com | 48 | 22 | 7 | 0 | 21s |
+| vercel.com | 72 | 19 | 1 | 0 | 22s |
+| www.notion.so | 1,717 | 19 | 2 | 0 | 74s |
+| app.element.io | 12 | 12 | 1 | 0 | 21s |
+| www.tesla.com | 14 | 11 | 2 | 0 | 22s |
+| www.loom.com | 76 | 9 | 2 | 0 | 20s |
+| app.hubspot.com | 6 | 5 | 2 | 0 | 5s |
 | excalidraw.com | 114 | 5 | 2 | 0 | 34s |
-| app.hubspot.com | 6 | 5 | 2 | 0 | 4s |
+| material.angular.dev | 119 | 4 | 0 | 0 | 13s |
 | qwik.dev | 7 | 4 | 3 | 0 | 3s |
-| material.angular.dev | 119 | 4 | 0 | 0 | 11s |
-| webflow.com | 44 | 4 | 3 | 0 | 15s |
-| angular.dev | 196 | 3 | 0 | 0 | 36s |
-| remix.run | 113 | 1 | 0 | 0 | 4s |
+| webflow.com | 44 | 4 | 3 | 0 | 16s |
+| angular.dev | 196 | 3 | 0 | 0 | 40s |
+| sentry.io | 37 | 2 | 1 | 0 | 7s |
 | astro.build | 9 | 1 | 0 | 0 | 2s |
 | emberjs.com | 8 | 1 | 0 | 0 | 14s |
-| sentry.io | 28 | 1 | 0 | 0 | 5s |
-| airtable.com | 5 | 1 | 0 | 0 | 11s |
+| remix.run | 113 | 1 | 0 | 0 | 4s |
 
 A small count is usually the page, not the tool: astro.build, emberjs.com and sentry.io's home
 pages are marketing sites that call almost nothing, and notion.so serves logged-out visitors a site
