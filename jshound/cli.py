@@ -111,6 +111,20 @@ def _inputs(a):
         given += [ln.strip() for ln in sys.stdin if ln.strip() and not ln.lstrip().startswith("#")]
     out, seen = [], set()
     for t in given:
+        # A mistake gets a sentence, not a fetch. `/nonexistent/dir` was requested as the URL
+        # `https:///nonexistent/dir` and reported "unreachable", and `htps://x` was attempted as is.
+        if not os.path.isdir(t):
+            looks_like_path = t.startswith(("/", "./", "../", "~")) or "\\" in t
+            if os.path.isfile(t):
+                out.append(("error", f"{t} is a file; jshound reads a site, or a folder of files a run saved", t))
+                continue
+            if looks_like_path:
+                out.append(("error", f"no such directory: {t}", t))
+                continue
+            scheme = t.split("://", 1)[0].lower() if "://" in t else ""
+            if scheme and scheme not in ("http", "https"):
+                out.append(("error", f"{t}: only http and https URLs can be fetched", t))
+                continue
         if os.path.isdir(t):
             d = os.path.abspath(t).rstrip("/")
             # `.jshound/claude.com/js` is a corpus this tool wrote, and re-reading it should put the
@@ -181,6 +195,10 @@ def cmd_map(a):
     try:
         for kind, src, name in targets:
             label = name.ljust(width)
+            if kind == "error":
+                print(f"{label}  -    {src}", file=sys.stderr)
+                worst = 1
+                continue
             if a.out:
                 out_dir = os.path.join(a.out, _safe_name(name)) if len(targets) > 1 else a.out
             elif kind == "dir" and os.path.basename(src) == "js":

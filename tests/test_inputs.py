@@ -159,3 +159,31 @@ def test_chunk_map_raises_when_the_extractor_cannot_run(tmp_path, monkeypatch):
 def test_chunk_map_still_works_normally():
     res = __import__("jshound").chunk_map(open(A_FILE).read())
     assert len(res["chunks"]) == 3 and res["stats"]["idsResolved"] == 3
+
+
+def _cli(*args, stdin=""):
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return subprocess.run([sys.executable, "-m", "jshound.cli", *args], input=stdin,
+                          capture_output=True, text=True, cwd=root, timeout=120)
+
+
+def test_a_mistake_gets_a_sentence_not_a_fetch(tmp_path):
+    """`/nonexistent/dir` was fetched as `https:///nonexistent/dir` and reported "unreachable", and
+    `htps://x` was attempted as it was typed. Each is now one line saying what is wrong, exit 1."""
+    out = str(tmp_path / "out")
+    r = _cli("/nonexistent/dir", "-o", out)
+    assert r.returncode == 1 and "no such directory" in r.stderr, r.stderr
+    r = _cli("htps://example.com", "-o", out)
+    assert r.returncode == 1 and "only http and https" in r.stderr, r.stderr
+    f = tmp_path / "app.js"
+    f.write_text("fetch('/x')")
+    r = _cli(str(f), "-o", out)
+    assert r.returncode == 1 and "is a file" in r.stderr, r.stderr
+    assert "ERR" not in r.stderr, "nothing should have been requested"
+
+
+def test_nothing_to_read_is_an_error():
+    r = _cli(stdin="")
+    assert r.returncode == 1 and "nothing to read" in r.stderr
