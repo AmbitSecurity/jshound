@@ -573,10 +573,16 @@ function analyse(src) {
   const spec = new Set();
   const shortfall = idsResolved < idsSeen;
   if (out.size === 0 || shortfall) {
-    const rx = /(?:^|["'`,\[\s(=])((?:\.{0,2}\/)?(?:[A-Za-z0-9_@.-]+\/)*[A-Za-z0-9_@.-]+\.m?js)(?:\?[^"'`,\]\s)]*)?/g;
+    // The extension has to END there. Without the lookahead, claude.ai's list of SQL function names,
+    // `...rpads.ltrim.md5...json_to_recordset.jsonb_agg.jsonb_object_agg...`, matched up to the `.js` of
+    // `.jsonb_object_agg`, and a 900-character "chunk" was fetched from two hosts.
+    const rx = /(?:^|["'`,\[\s(=])((?:\.{0,2}\/)?(?:[A-Za-z0-9_@.-]+\/)*[A-Za-z0-9_@.-]+\.m?js)(?![A-Za-z0-9_$])(?:\?[^"'`,\]\s)]*)?/g;
     for (const m of src.matchAll(rx)) {
       const s = m[1];
       if (!s || s.length < 7 || s.length > 2048) continue;
+      // A built chunk's name has a few dot-separated parts (`checklist_main.Dnck2r-82sxtd83.digested.js`),
+      // never dozens: a dotted list of words that happens to end in `.js` is not a file.
+      if ((s.split("/").pop().match(/\./g) || []).length > 8) continue;
       // a chunk path lives in a directory or carries a build hash; bare "index.js" is neither, and matching it
       // would flood the fetch queue with 404s, which was measured as a net loss (supabase 377 -> 264).
       // A BUILT chunk carries a content hash; a module identifier does not. Requiring one is what separates

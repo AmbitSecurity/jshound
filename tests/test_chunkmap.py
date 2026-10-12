@@ -55,3 +55,15 @@ def test_a_chain_of_id_tests_gives_each_id_its_own_url():
     got = set(jshound.chunk_urls(src))
     assert {"11.aaaaaaaa.js", "22.bbbbbbbb.js", "33.cccccccc.js", "44.dddddddd.js"} <= got, got
     assert not any(u.startswith("22.aaaaaaaa") or u.startswith("44.aaaaaaaa") for u in got)
+
+
+def test_a_dotted_list_of_words_is_not_a_chunk():
+    """claude.ai ships a list of SQL function names joined by dots, `...rpads.ltrim.md5...
+    jsonb_agg.jsonb_object_agg...`. The text scan matched it up to the `.js` of `.jsonb_object_agg`
+    and fetched a 900-character "chunk" from two hosts."""
+    words = ".".join(["abs", "acos", "atan2d", "rpads", "ltrim", "md5", "octet_length", "position",
+                      "json_to_recordset", "jsonb_agg", "jsonb_object_agg", "justify_days"])
+    src = 'var k="' + words + '".split(".");import("./assets/route-a1b2c3d4.js");'
+    res = jshound.chunk_map(src)
+    every = res["chunks"] + res["speculative"]
+    assert not any("ltrim" in c for c in every), every
