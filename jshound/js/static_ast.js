@@ -593,6 +593,8 @@ const DATE_FORMAT = (s) =>
   /^[YMDHhmsSAaZzWwEeQqkKgGtTlLoOxX:,.\/\- \[\]]+$/.test(s) &&
   /(YYYY|YY|MM|DD|HH|hh|mm|ss|SSS)/.test(s);
 
+// A path that names a static file: an image, a font, a stylesheet, media, or a script.
+const _STATIC_FILE = /\.(?:png|jpe?g|gif|svg|webp|avif|ico|bmp|woff2?|ttf|otf|eot|css|mp4|webm|mov|m4v|mp3|wav|ogg|m?js|map)$/i;
 const LOOKS_PATH = (s) =>
   typeof s === "string" &&
   !DATE_FORMAT(s) &&
@@ -5099,6 +5101,10 @@ function extract(src) {
     if (!pathish && !realBody && !o.registry_key && !isSocket) return;
     if (!pathish && (realBody || o.registry_key)) o._bodyOnly = true;
     if (/\b(example\.(com|org|net)|localhost|127\.0\.0\.1|schema\.org|w3\.org)\b/.test(o.template)) return; // lib placeholders
+    // A STATIC FILE IS NOT AN API REQUEST. LOOKS_PATH turned away a relative path naming an image or a
+    // font, but a full URL passed on the scheme alone, so Discord's `.mp4` CDN assets, HubSpot's
+    // `bundle.production.js` and an `.svg` icon came out as endpoints. Same rule for both now.
+    if (!isSocket && _STATIC_FILE.test(o.template.split(/[?#]/)[0])) return;
     // THE WRAPPER ITSELF IS NOT AN ENDPOINT. `req = (p, o) => fetch(BASE + p, o)` emitted
     // `https://api.x.test{param:p}/` beside every real request its callers make. A URL whose whole path is
     // the enclosing wrapper's own parameter says where the wrapper sends things; its call sites say what.

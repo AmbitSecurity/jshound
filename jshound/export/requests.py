@@ -19,6 +19,7 @@ and the obvious guess is wrong as often as it is right: the one GraphQL URL in s
 is a GraphiQL screen, while its two operations come from a third-party consent manager posting
 somewhere else entirely.
 """
+import re
 
 
 def _graphql_request(op, op_type, variables, r, uri=None, document=None):
@@ -27,6 +28,12 @@ def _graphql_request(op, op_type, variables, r, uri=None, document=None):
             "body_shape": {"operationName": op, "variables": variables},
             "content_type": "application/json", "document": document,
             "_page": r.get("_page"), "_host": r.get("_host"), "_file": r.get("_file")}
+
+
+# A path that names a static file: an image, a font, a stylesheet, media, or a script. The extractor
+# drops these from what it reports as requests; this is the same rule for the routes it reports.
+_STATIC_FILE = re.compile(r"\.(?:png|jpe?g|gif|svg|webp|avif|ico|bmp|woff2?|ttf|otf|eot|css|mp4|webm|mov|m4v|"
+                          r"mp3|wav|ogg|m?js|map)$", re.I)
 
 
 def requests_only(records):
@@ -44,6 +51,10 @@ def requests_only(records):
         if kind == "endpoint":
             out.append(r)
         elif kind == "route":
+            # A route table can name a script: HubSpot's lists its own `bundle.production.js` files,
+            # which are not pages anyone navigates to, and not API requests.
+            if _STATIC_FILE.search(str(r.get("template") or "").split("?")[0].split("#")[0]):
+                continue
             m = r.get("method")
             out.append({**r, "_kind": "endpoint",
                         "method": m if m and m != "UNKNOWN" else "GET"})
