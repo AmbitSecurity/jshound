@@ -1,10 +1,10 @@
 name: release
 
-# Push a tag like v0.1.0 and this builds the package and publishes it to PyPI.
+# Push a tag like v0.1.0 and this builds the package and attaches it to a GitHub release.
 #
-# It uses PyPI's trusted publishing, so no API token is stored anywhere. One-time setup on pypi.org:
-# add a "pending publisher" for project `jshound` with this repository, workflow `release.yml` and
-# environment `pypi`. Until that exists, the publish job fails and nothing is uploaded.
+# Publishing to PyPI is off until the repository variable PYPI_PUBLISH is set to "true". It uses PyPI's
+# trusted publishing, so no API token is stored anywhere. One-time setup on pypi.org: add a "pending
+# publisher" for project `jshound` with this repository, workflow `release.yml` and environment `pypi`.
 
 on:
   push:
@@ -26,8 +26,24 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: dist, path: dist/ }
 
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - name: attach the built package to the release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
   publish:
     needs: build
+    if: vars.PYPI_PUBLISH == 'true'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
