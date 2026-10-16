@@ -179,6 +179,16 @@ function indexExports(ast, file) {
         } else if (d && d.type === "FunctionDeclaration" && d.id) {
           if (isTransform(d)) _EXPORTS.set(key(d.id.name), { transform: true });
         }
+        // URL builders, exported by name or as a function declaration
+        const named = d && d.type === "FunctionDeclaration" && d.id ? [[d.id.name, d.id]]
+                    : d && d.type === "VariableDeclaration" ? (d.declarations || []).filter((v) => v.id && v.id.type === "Identifier").map((v) => [v.id.name, v.id])
+                    : [];
+        for (const sp of p.node.specifiers || [])
+          if (sp.type === "ExportSpecifier" && sp.local && sp.exported) named.push([sp.exported.name ?? sp.exported.value, sp.local]);
+        for (const [nm, node] of named) {
+          const bld = _builderOf(node, p.scope);
+          if (bld) _EXPORTS.set(key(nm), Object.assign({}, _EXPORTS.get(key(nm)) || {}, { builder: bld }));
+        }
         for (const sp of p.node.specifiers || []) {
           if (sp.type !== "ExportSpecifier" || !sp.local || !sp.exported) continue;
           const b = p.scope.getBinding(sp.local.name);
@@ -196,10 +206,49 @@ function indexExports(ast, file) {
 
 // Pass one, bundled half: the URL-shaped strings each webpack or Turbopack module exports, so another
 // module's `d.API_URL` reads the value module `d` exports rather than a guess by property name.
+// A URL BUILDER: a function whose result is a URL made from its parameters, Grafana's
+// `getAPIBaseURL = (group, version) => `/apis/${group}/${version}/namespaces/${ns()}``. Recorded as a
+// template with the parameters as placeholders, so a call in another module fills them in.
+function _builderOf(valueNode, scope) {
+  let fn = valueNode, sc = scope;
+  if (fn && fn.type === "Identifier") {
+    const b = scope && scope.getBinding && scope.getBinding(fn.name);
+    const d = b && b.path && b.path.node;
+    fn = d && (d.type === "FunctionDeclaration" ? d : d.type === "VariableDeclarator" && d.init ? d.init : null);
+    sc = b ? b.scope : scope;
+  }
+  if (!fn || !/Function/.test(fn.type || "") || !(fn.params || []).length) return null;
+  const paramNames = fn.params.map((q) => (q.type === "Identifier" ? q.name : "\x00"));
+  const ret = _returned(fn);
+  if (!ret) return null;
+  const t = resolveUrl(ret, sc, paramNames);
+  const tm = t && t.template;
+  if (!tm || !tm.includes("\x01") || !/^(?:\/|https?:\/\/)/.test(tm)) return null;
+  if (!/\/[\w-]/.test(tm.replace(/\x01\w+\x01|\{[^}]*\}/g, ""))) return null;
+  return { tmpl: tm, paramNames };
+}
+// A builder another module exports, from a callee: `(0,n.TP)(...)`, or `b(...)` with `b` imported.
+function _exportedBuilder(callee, scope) {
+  let c = callee;
+  if (c && c.type === "SequenceExpression") c = c.expressions[c.expressions.length - 1];
+  if (!c) return null;
+  if (c.type === "Identifier") { const iv = importedValue(c.name, scope); return (iv && iv.builder) || null; }
+  if ((c.type === "MemberExpression" || c.type === "OptionalMemberExpression") && !c.computed && c.property) {
+    const mid = _moduleOf(c.object, scope);
+    if (mid != null) { const ex = _modExport(mid, c.property.name ?? c.property.value); return (ex && ex.builder) || null; }
+  }
+  return null;
+}
+
 function indexBundledExports(ast) {
   for (const ex of _bundledExports(ast)) {
     const k = "mod:" + ex.id + "\u0000" + ex.name;
-    if (_EXPORTS.has(k) || !ex.value) continue;
+    if (!ex.value) continue;
+    try {
+      const bld = _builderOf(ex.value, ex.path.scope);
+      if (bld) _EXPORTS.set(k, Object.assign({}, _EXPORTS.get(k) || {}, { builder: bld }));
+    } catch {}
+    if (_EXPORTS.has(k) && _EXPORTS.get(k).str) continue;
     try {
       const r = strFromNode(ex.value, ex.path.scope, 0, null);
       const v = r && !r.dyn && typeof r.s === "string" ? r.s : null;
@@ -368,8 +417,10 @@ function _bundledExports(ast) {
         }
         return;
       }
-      // webpack: n.d(t, {name: () => local})
-      if (c.property.name === "d" && n.arguments.length === 2 && n.arguments[1].type === "ObjectExpression") {
+      // webpack: n.d(t, {name: () => local}), and the newer n.d(t, {getters}, {name: value}), whose third
+      // argument holds the exported values themselves. Grafana exports `getAPIBaseURL` that way.
+      if (c.property.name === "d" && (n.arguments.length === 2 || n.arguments.length === 3) &&
+          n.arguments[1].type === "ObjectExpression") {
         const id = _factoryId(p);
         if (id == null) return;
         for (const pr of n.arguments[1].properties) {
@@ -377,6 +428,12 @@ function _bundledExports(ast) {
           const name = pr.key.name ?? pr.key.value;
           const v = pr.type === "ObjectMethod" ? _returned(pr) : (pr.value && /Function/.test(pr.value.type) ? _returned(pr.value) : null);
           if (name != null && v) out.push({ id, name: String(name), value: v, path: p });
+        }
+        const vals = n.arguments[2];
+        if (vals && vals.type === "ObjectExpression") for (const pr of vals.properties) {
+          if (pr.type !== "ObjectProperty" || !pr.key || !pr.value) continue;
+          const name = pr.key.name ?? pr.key.value;
+          if (name != null) out.push({ id, name: String(name), value: pr.value, path: p });
         }
       }
     } catch {}
@@ -494,6 +551,11 @@ function clientOf(node, scope, depth) {
       // A getter that hands the client back: `cs()`, `(0,A.getClient)()`, `useApi()`
       let c = node.callee;
       if (c && c.type === "SequenceExpression") c = c.expressions[c.expressions.length - 1];
+      // RTK Query's `api.enhanceEndpoints(...)` and `api.injectEndpoints(...)` return the same api, so
+      // its base is the base of whatever they were called on. Grafana chains both onto its createApi.
+      if (node.type !== "NewExpression" && c && (c.type === "MemberExpression" || c.type === "OptionalMemberExpression") &&
+          !c.computed && c.property && /^(enhanceEndpoints|injectEndpoints)$/.test(c.property.name || ""))
+        return clientOf(c.object, scope, depth + 1);
       if (node.type !== "NewExpression" && c) {
         if (c.type === "Identifier") {
           const iv = importedValue(c.name, scope);
@@ -984,6 +1046,14 @@ function strFromNode(node, scope, depth, paramNames) {
     }
     case "OptionalCallExpression":
     case "CallExpression": {
+      // A URL BUILDER ANOTHER MODULE EXPORTS: its template, with this call's arguments in it.
+      {
+        const bld = _exportedBuilder(node.callee, scope);
+        if (bld) {
+          const out = _composeWrapper(bld, node.arguments || [], scope, paramNames);
+          return { s: out, dyn: /\{[^}]*\}|\x01/.test(out) };
+        }
+      }
       // THERE WERE TWO `case "CallExpression"` ARMS IN THIS SWITCH. The first handled .concat() chains and
       // then unconditionally returned {EXPR}, which made this one, encoder unwrapping, user-defined URL
       // builder inlining, everything below, unreachable. It had never run. The duplicate arrived when a
@@ -1031,6 +1101,23 @@ function strFromNode(node, scope, depth, paramNames) {
         }
       }
 
+      // A FUNCTION OF NO ARGUMENTS IS ITS BODY. Grafana's `namespace = () => config.namespace` sits in
+      // every k8s-style API path, and read through, the slot is `{namespace}` rather than a numbered one.
+      if (c && c.type === "Identifier" && !(node.arguments || []).length && depth < 6) {
+        const b0 = scope && scope.getBinding && scope.getBinding(c.name);
+        const d0 = b0 && b0.path && b0.path.node;
+        const f0 = d0 && (d0.type === "FunctionDeclaration" ? d0 : d0.type === "VariableDeclarator" && d0.init && /Function/.test(d0.init.type) ? d0.init : null);
+        if (f0 && !(f0.params || []).length) {
+          const ret0 = _returned(f0);
+          // Only a body with no runtime choice in it. lovable's i18n helper is
+          // `() => store ? store.origin ?? "http://fallback.com" : window.location.origin`, and reading it
+          // took the server branch's placeholder host for the browser's own origin.
+          if (ret0 && ret0.type !== "ConditionalExpression" && ret0.type !== "LogicalExpression") {
+            const r0 = strFromNode(ret0, b0.scope, depth + 1, null);
+            if (r0 && typeof r0.s === "string" && r0.s && !/^\{(?:EXPR|deep|call:[^}]*)\}$/.test(r0.s)) return r0;
+          }
+        }
+      }
       // `.replace("/platform", "")` on a string we know is just that string, edited. supabase builds its API
       // client's base as `API_URL?.replace("/platform","")`.
       if (c && (c.type === "MemberExpression" || c.type === "OptionalMemberExpression") && !c.computed && c.property &&
@@ -4455,10 +4542,27 @@ function _queryFromUrlArg(node, scope) {
   return out.length ? out.slice(0, 1000) : null;
 }
 
+// The object an RTK Query endpoint's `query` returns is that endpoint's request, which collectRtk
+// reports with its api's base. Read again as a table entry, it was the same request without the base:
+// 302 bare copies of Grafana's endpoints once their bases resolved.
+function _inRtkEndpoint(path) {
+  const fn = path.getFunctionParent && path.getFunctionParent();
+  const prop = fn && fn.parentPath;
+  if (!prop || prop.node.type !== "ObjectProperty" || !prop.node.key) return false;
+  const k = prop.node.key.name ?? prop.node.key.value;
+  if (k !== "query" && k !== "queryFn") return false;
+  const obj = prop.parentPath, call = obj && obj.parentPath;
+  if (!call || call.node.type !== "CallExpression" || call.node.arguments[0] !== obj.node) return false;
+  const c = call.node.callee;
+  return !!(c && (c.type === "MemberExpression" || c.type === "OptionalMemberExpression") && c.property &&
+            /^(query|mutation|infiniteQuery)$/.test(c.property.name || ""));
+}
+
 function collectEndpointTables(ast) {
   const eps = [];
   traverse(ast, { ObjectExpression(path) {
     try {
+      if (_inRtkEndpoint(path)) return;
       let url = null, method = null, body = null, bodySch = null, hdrs = null, query = null, bodyFn = null;
       let security = null, media = null;
       for (const p of path.node.properties) {
@@ -5754,7 +5858,9 @@ function extract(src) {
   for (const f of found) delete f._fn;
 
   // structured data-layer collectors (gated so they're near-free when absent)
-  if (/fetchBaseQuery|reducerPath|createApi\(/.test(src)) for (const r of collectRtk(ast)) found.push(r);
+  // `injectEndpoints` and `enhanceEndpoints` too: a file that only adds endpoints to an api defined in
+  // another file holds none of the other three, and Grafana declares most of its endpoints that way.
+  if (/fetchBaseQuery|reducerPath|createApi\(|injectEndpoints|enhanceEndpoints/.test(src)) for (const r of collectRtk(ast)) found.push(r);
   if (/useSWR|["']swr["']/.test(src)) for (const r of collectSwr(ast)) found.push(r);
   if (/method:\s*["'](?:get|post|put|patch|delete)/i.test(src) && /\b(url|path|endpoint|uri):/.test(src))
     for (const r of collectEndpointTables(ast)) found.push(r);

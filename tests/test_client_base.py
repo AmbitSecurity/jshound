@@ -176,3 +176,46 @@ def test_a_comma_expression_argument_is_its_last_part(tmp_path):
                   'export async function use(r,q){return o(r,q)}',
     })
     assert urls == {("GET", "https://api.example.test/v1/projects/{param_n}/logs")}, urls
+
+
+def test_rtk_query_through_a_url_builder_another_module_exports(tmp_path):
+    """Grafana's k8s-style APIs: the base is `getAPIBaseURL(group, version)`, a URL builder another
+    module exports through webpack's three-argument export form, and the api is extended with
+    `.enhanceEndpoints(...).injectEndpoints(...)` before its endpoints are declared. All 710 of
+    Grafana's RTK Query endpoints came out as bare paths like `/checks`."""
+    urls = _urls(tmp_path, {
+        "a.js": '(self.webpackChunk=self.webpackChunk||[]).push([[1],{32748(e,t,a){var r=a(95801);'
+                'let i=()=>r.$.namespace;a.d(t,{},{Ge:i,TP:(e,t)=>`/apis/${e}/${t}/namespaces/${i()}`})}}]);',
+        "b.js": '(self.webpackChunk=self.webpackChunk||[]).push([[2],{56821(e,t,a){var r=a(75816),n=a(32748),'
+                'i=a(19496);let s=(0,n.TP)("advisor.grafana.app","v0alpha1"),o=(0,r.xP)({reducerPath:"advisor",'
+                'baseQuery:(0,i.W)({baseURL:s}),endpoints:()=>({})}).enhanceEndpoints({addTagTypes:["Check"]})'
+                '.injectEndpoints({endpoints:e=>({listCheck:e.query({query:e=>({url:"/checks"})}),'
+                'getCheck:e.query({query:e=>({url:`/checks/${e.name}`})}),'
+                'addCheck:e.mutation({query:e=>({url:"/checks",method:"POST",body:e})})})})}}]);',
+    })
+    # and no copy of the same request without its base
+    assert urls == {("GET", "/apis/advisor.grafana.app/v0alpha1/namespaces/{namespace}/checks"),
+                    ("GET", "/apis/advisor.grafana.app/v0alpha1/namespaces/{namespace}/checks/{name}"),
+                    ("POST", "/apis/advisor.grafana.app/v0alpha1/namespaces/{namespace}/checks")}, urls
+
+
+def test_endpoints_injected_in_another_file_are_rtk_endpoints(tmp_path):
+    """Grafana declares most endpoints with `api.injectEndpoints(...)` in a file that holds no
+    `createApi`, and those files were never read as RTK Query at all."""
+    urls = _urls(tmp_path, {
+        "api.js": 'import{createApi as c,fetchBaseQuery as f}from"@reduxjs/toolkit/query/react";'
+                  'export const api=c({reducerPath:"x",baseQuery:f({baseUrl:"/api"}),endpoints:()=>({})});',
+        "rules.js": 'import{api as N}from"./api.js";export const{useRunBacktestMutation:J}=N.injectEndpoints('
+                    '{endpoints:e=>({runBacktest:e.mutation({query:e=>({url:"/v1/rule/backtest",method:"POST",body:e})})})});',
+    })
+    assert urls == {("POST", "/api/v1/rule/backtest")}, urls
+
+
+def test_a_helper_that_chooses_at_runtime_is_not_read_through(tmp_path):
+    """lovable's i18n origin helper picks a server placeholder or the browser's origin at runtime;
+    reading one branch of it produced `http://fallback.com/...` as a request."""
+    urls = _urls(tmp_path, {
+        "app.js": 'const Ff=()=>Hs?Hs.getStore()?.origin??"http://fallback.com":typeof window<"u"?'
+                  'window.location.origin:"http://fallback.com";export function p(e){return fetch(`${Ff()}/${e}`,{method:"POST"})}',
+    })
+    assert not any("fallback.com" in u for _m, u in urls), urls
