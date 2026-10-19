@@ -103,6 +103,10 @@ _PAGE_RELATIVE = {"fetch", "XHR.open", "sendBeacon", "EventSource", "WebSocket",
                   "axios", "route-const", "connect-descriptor", None}
 
 
+_LOCATION_ORIGIN = re.compile(r"^\{(?:window\.)?location\.(?:origin|host)\}$", re.I)
+_LOCATION_HREF = re.compile(r"^\{(?:window\.)?location\.href\}$", re.I)
+
+
 def _url(r):
     """The absolute URL when the base is known, the path as found when it is not.
 
@@ -120,6 +124,22 @@ def _url(r):
         return t
     if origin and "://" in origin:
         return origin + path
+    page = r.get("_page") or (f"https://{r['_host']}/" if r.get("_host") else "")
+    if origin:
+        # A SLOT NAMING THE PAGE'S OWN LOCATION is the page's origin, whatever made the request.
+        # Read as a path, the page was put in front of it: `https://lovable.dev/{window_location_origin}/...`.
+        # A bare `{origin}` could be any object's `.origin`, a parsed URL or a message event, so it stays
+        # a slot, written where it stands, and so does any of these with no page on record.
+        pu = urlsplit(page)
+        if not pu.netloc:
+            return t
+        if _LOCATION_ORIGIN.match(origin):
+            base = f"{pu.scheme}://{pu.netloc}"
+        elif _LOCATION_HREF.match(origin):
+            base = page.split("#")[0].rstrip("/")
+        else:
+            return t
+        return base + (path if path.startswith(("/", "{", "?")) else "/" + path)
     sink = r.get("sink")
     # A URL the server wrote into the document is resolved against the document, like a link.
     # A wrapper that hands the path to fetch is a fetch: claude.ai's `/api/...` calls go through
@@ -131,7 +151,6 @@ def _url(r):
     # Gluing the path onto the host printed `https://play.grafana.orgapis/...` for a path with no slash.
     # No page on record (a folder with no origin map) leaves the host that served the file as the
     # only stand-in for it.
-    page = r.get("_page") or (f"https://{r['_host']}/" if r.get("_host") else "")
     return urljoin(page, t) if urlsplit(page).netloc else t
 
 
@@ -178,4 +197,8 @@ def display_url(r):
     if origin == UNRESOLVED_ORIGIN:
         lead = u[:u.index("}") + 1] if u.startswith("{") and "}" in u else ""
         return lead if path == "/" else lead + path
+    # A slot standing where the origin goes, `{origin}`, or the page's location with no page on record,
+    # is kept in front as written. Dropping it made hex.tech's `{origin}/orgs` read as a plain `/orgs`.
+    if origin and "://" not in origin:
+        return origin if path == "/" else origin + path
     return path
