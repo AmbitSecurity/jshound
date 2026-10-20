@@ -219,3 +219,20 @@ def test_a_helper_that_chooses_at_runtime_is_not_read_through(tmp_path):
                   'window.location.origin:"http://fallback.com";export function p(e){return fetch(`${Ff()}/${e}`,{method:"POST"})}',
     })
     assert not any("fallback.com" in u for _m, u in urls), urls
+
+
+def test_a_hook_reached_through_a_chain_of_local_wrappers(tmp_path):
+    """claude.ai's `useApiQuery(url, options)`, exported from a shared chunk, hands the URL down four
+    local functions before it reaches fetch: the hook, the query-options builder, the query function's
+    helper, and a fetch helper. Only a function that called a known sink directly was read as a
+    wrapper, so the hook was not one and its 300-odd calls printed without a host."""
+    urls = _urls_on(tmp_path, "https://app.example.test/", {
+        "shared.js": 'async function wU(e,t={}){return fetch(e,{...t,credentials:"include"})}'
+                     'const pq=async(e,t,n)=>wU(t,n);'
+                     'const gq=(t,e,n,r,i,a,o)=>pq(t,e,{method:a,body:o});'
+                     'const _q=(e,t,n)=>({queryKey:[e],queryFn:async()=>gq(null,e,t,n,void 0,"GET")});'
+                     'const vq=(e,t,n)=>{let r=_q(e,t,n);return useQuery(r)};export{vq as s};',
+        "page.js": 'import{s as sn}from"./shared.js";'
+                   'export function VO(e){return sn(`/api/organizations/${e}/hybrid_descriptor`,{queryKey:["x",e],enabled:!!e})}',
+    })
+    assert ("GET", "https://app.example.test/api/organizations/{param_e}/hybrid_descriptor") in urls, urls

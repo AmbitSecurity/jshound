@@ -3598,6 +3598,10 @@ function collectWrappers(ast) {
   // 11,559 records became 4,703 with no error surfaced, because the batch runner only reports a failure
   // when the process also produces no stdout. `toString`, `valueOf` and `hasOwnProperty` are the same trap.
   const wrappers = Object.create(null);
+  // Every function looked at, for the later rounds, and the wrappers found so far by function node,
+  // which those rounds read a call through.
+  const candidates = [];
+  let localByFn = null;
   const consider = (name, params, fnPath, isMethod) => {
     // Keyed by NAME alone, this kept the first function of that name and ignored the rest. In a minified
     // bundle every other function is called `t`, so a second scope's `t` inherited the first one's URL
@@ -3606,6 +3610,7 @@ function collectWrappers(ast) {
     // let the call site match on the binding it actually resolves to.
     if (!name || !params.length) return;
     if ((wrappers[name] || []).some((w) => w.fnNode === fnPath.node)) return;
+    if (!localByFn) candidates.push([name, params, fnPath, isMethod]);
     // A parameter WITH A DEFAULT is an AssignmentPattern, not an Identifier, and was being mapped to a
     // sentinel that matches nothing, so `post(path, data, params, headers, suffix = ".json")` never even
     // recognised `suffix` as a parameter, and the default that completes the URL was invisible. The name
@@ -3620,6 +3625,19 @@ function collectWrappers(ast) {
       CallExpression(p) {
         if (best) return;
         const n = p.node, c = n.callee;
+        // THE SINK IS A WRAPPER FOUND IN AN EARLIER ROUND, in this file.
+        if (localByFn && c && c.type === "Identifier") {
+          const lw = localByFn.get(_fnOfBinding(c.name, p.scope));
+          if (lw && lw.fnNode !== fnPath.node) {
+            const tm = _composeWrapper(lw, n.arguments, p.scope, paramNames);
+            if (tm.includes("\x01")) {
+              best = tm; bestViaFetch = !!lw.viaFetch;
+              const oa = n.arguments.find((a) => a && a.type === "ObjectExpression");
+              bestMethod = (oa && optsInfo(oa, p.scope).method) || lw.method || null;
+              return;
+            }
+          }
+        }
         // THE SINK IS A WRAPPER ANOTHER MODULE EXPORTS. claude.ai's `w(e,t){return c(e,t)}`, where `c` is
         // imported and is `fetchAsDocumentAccount(e,t)`, which hands `e` to fetch. Read through it.
         const ext = _exportedWrapper(c, p.scope);
@@ -3759,6 +3777,36 @@ function collectWrappers(ast) {
     }
     if (!changed) break;
   }
+  // A CHAIN OF WRAPPERS. claude.ai's `useApiQuery(url, options)` hands the URL to a query-options
+  // builder, whose query function calls a helper, which calls a fetch helper. Only a function calling a
+  // known sink directly was a wrapper, so the hook was not one. Each round now also reads a call through
+  // a wrapper the last round found, until a round adds nothing. Only functions that call one of the
+  // new wrappers are looked at again.
+  const calleeNames = new Map();
+  const callsIn = (fp) => {
+    if (!calleeNames.has(fp.node)) {
+      const names = new Set();
+      try { fp.traverse({ CallExpression(q) { if (q.node.callee && q.node.callee.type === "Identifier") names.add(q.node.callee.name); } }); } catch {}
+      calleeNames.set(fp.node, names);
+    }
+    return calleeNames.get(fp.node);
+  };
+  let fresh = new Set(Object.keys(wrappers));
+  for (let round = 0; round < 6 && fresh.size; round++) {
+    localByFn = new Map();
+    for (const ws of Object.values(wrappers)) for (const w of ws) if (!w.isMethod) localByFn.set(w.fnNode, w);
+    const next = new Set();
+    for (const [nm, ps, fp, im] of candidates) {
+      if ((wrappers[nm] || []).some((w) => w.fnNode === fp.node)) continue;
+      const called = callsIn(fp);
+      if (![...fresh].some((x) => called.has(x))) continue;
+      const before = (wrappers[nm] || []).length;
+      consider(nm, ps, fp, im);
+      if ((wrappers[nm] || []).length > before) next.add(nm);
+    }
+    fresh = next;
+  }
+  localByFn = null;
   return wrappers;
 }
 // The function an identifier ACTUALLY resolves to at this call site. Two scopes each declaring `t` are two
